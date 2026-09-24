@@ -1,0 +1,27 @@
+# Provisional: replace once the desktop stack is chosen
+# (Electron, Tauri, Qt, .NET, ...).
+
+# Build output
+build/
+Build/
+dist/
+out/
+target/
+release/
+Debug/
+Release/
+*.exe
+*.app
+*.dmg
+*.AppImage
+*.msi
+*.deb
+
+# Toolchain caches and dependencies
+node_modules/
+.venv/
+__pycache__/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json

@@ -1,0 +1,50 @@
+# Test gate for a repository that currently ships documentation only.
+#
+# Tests live in their own workflow: they run on pull requests, while the release
+# workflow runs on pushes to the default branch. Mixing the two means a broken
+# release blocks a pull request, or the reverse.
+#
+# Replace the test step with the project's real toolchain and test command as soon
+# as source code lands; see the repository standards in AGENTS.md.
+#
+# AGENTS.md is deliberately not linted: it is canonical content synced from
+# repo-template and must not be edited here.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true # a superseded pull request run is pointless
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Lint Markdown
+        run: npx --yes markdownlint-cli2@0.23.3 "README.md"
+
+      - name: Validate repository standards
+        run: |
+          set -euo pipefail
+          test -s README.md
+          test -s AGENTS.md
+          test -s LICENSE
+          python3 -c "import json; json.load(open('.releaserc.json'))"
+          python3 -c "import json; json.load(open('.markdownlint.json'))"
+          echo "repository standards OK"
