@@ -13,9 +13,11 @@
 1. **唯一上游** —— 只有本模块 import `litearm`; 前端永不碰串口。
 2. **状态与命令分离** —— `_poll_loop` 以 50Hz 读 `arm.get_state().value` (SDK 的
    **缓存帧**, 不发串口帧), 与 `_executor` 上跑的慢命令 (movej 可能十几秒) 互不阻塞。
-3. **命令串行** —— 所有 SDK 调用都在 `ThreadPoolExecutor(max_workers=1)` 上跑;
+3. **命令串行** —— 普通 SDK 调用都在 `ThreadPoolExecutor(max_workers=1)` 上跑;
    运动互斥 (`motion_in_flight`) 在**提交之前**判定, 在途时新运动命令**立刻被拒**
-   (不排队)。
+   (不排队)。⚠ **降能量方向的安全命令例外** (`estop`/`disable`): 它们走另一条
+   单线程执行器, 与在途运动**并行** —— 否则"永远可达"会被一条阻塞到 `move_timeout`
+   的 `movej` 吃掉 (见 `ENERGY_DOWN_COMMANDS`)。
 4. **安全在本地程序里** —— 客户端断开**不**杀会话; `estop`/`disable` 这种降能量动作
    只需会话存在, 不依赖浏览器是否活着。
 """
@@ -56,6 +58,20 @@ STATE_PUSH_INTERVAL_S = 0.02
 #: ⚠ `estop`/`disable`/`zero_g_stop` **不在此列**: 降能量方向的动作永远可达,
 #: 这正是原则 4 要的 (急停不能因为"运动互斥"而被挡住)。
 MOTION_COMMANDS = frozenset({"home", "movej", "movel"})
+
+#: 降能量方向的安全命令 —— 不仅豁免运动互斥, 还**不排在**普通命令的执行器后面。
+#:
+#: ⚠ 光"不在 `MOTION_COMMANDS` 里"是不够的: 所有 SDK 调用原本共用同一条单线程
+#: 执行器, 而 `movej`/`movel`/`home` 会阻塞到`move_timeout` (真机默认 15s) 甚至更久。
+#: 于是急停虽然过了互斥判定, 却仍要**排队**等运动结束 —— 实测按住 2s 的 movej 时
+#: `estop` 要等 1.8s 才返回。这与计划 3.2「永远可达」直接冲突。这组命令改走
+#: `_safety_executor`, 与普通命令**并行**执行。
+#: ⚠ SDK 侧本来就为这种并发留了口子: `emergency_stop`/`disable` 明确**不取**
+#: `_cart_serial` 锁 (见 litearm-python `arm.py` 的锁序说明), 就是为了让持锁者
+#: 阻塞到 `move_timeout` 时它们仍然可达。
+#: ⚠ 只收**安全动作**: `zero_g_stop` 虽然也降能量, 但它会改写会话自己的零重力记录
+#: (`_note_zero_g`), 与状态轮询共享状态, 不放进这条并行通道。
+ENERGY_DOWN_COMMANDS = frozenset({"estop", "disable"})
 
 #: 命令白名单 —— (方法名 → 中文说明)。**唯一**的准入判据: 表里没有的一律
 #: `UnknownCommandError`, 不接受任意方法调用 (计划 3.2)。
@@ -158,6 +174,10 @@ class Session:
         #: `thread_name_prefix` 便于排障时一眼看出是谁。
         self._executor = ThreadPoolExecutor(max_workers=1,
                                             thread_name_prefix="litearm-cmd")
+        #: 降能量方向的安全命令专用 (见 `ENERGY_DOWN_COMMANDS`) —— 单线程保证两条急停
+        #: 之间仍串行, 但它**不排队等运动**: 这是「永远可达」的实现点。
+        self._safety_executor = ThreadPoolExecutor(max_workers=1,
+                                                   thread_name_prefix="litearm-safety")
         self._stop = threading.Event()
         self._poll_thread: Optional[threading.Thread] = None
 
@@ -353,6 +373,7 @@ class Session:
         self._stop.set()
         self._stop_polling()
         self._executor.shutdown(wait=True)
+        self._safety_executor.shutdown(wait=True)
         arm = self._take_arm()
         if arm is not None:
             self._close_arm(arm)
@@ -464,6 +485,8 @@ class Session:
         3. 运动互斥 (`MotionBusyError`) —— 在途时新的运动命令立刻被拒, **不排队**。
 
         通过之后提交到单线程执行器, 由它保证与其它 SDK 调用严格串行。
+        ⚠ `estop`/`disable` 走**另一条**执行器 (见 `ENERGY_DOWN_COMMANDS`), 与在途
+        运动并行 —— 这是「降能量动作永远可达」的落点。
         返回值是 SDK 原生返回值 (已按需取 `.value` / 转 dict), 由 server 层压成 JSON。
         """
         params = dict(p or {})
@@ -481,8 +504,13 @@ class Session:
                 self._motion_count += 1
 
         try:
-            return self._executor.submit(self._run_command, arm, m, params,
-                                         on_event).result()
+            # ⚠ 降能量方向的动作走**另一条**执行器: 与在途运动并行, 不排队等它结束
+            # (见 `ENERGY_DOWN_COMMANDS`)。这是「急停永远可达」的落点 —— 只在准入处
+            # 豁免运动互斥是不够的, 那样它仍会排在阻塞十几秒的 movej 后面。
+            executor = (self._safety_executor if m in ENERGY_DOWN_COMMANDS
+                        else self._executor)
+            return executor.submit(self._run_command, arm, m, params,
+                                   on_event).result()
         finally:
             if m in MOTION_COMMANDS:
                 with self._lock:

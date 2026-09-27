@@ -32,7 +32,7 @@ from fastapi.staticfiles import StaticFiles
 from . import __version__
 from .errors import error_to_dict
 from .statemap import jsonable
-from .session import Session
+from .session import ENERGY_DOWN_COMMANDS, Session
 
 log = logging.getLogger("litearm_studio_daemon.server")
 
@@ -60,6 +60,20 @@ class _Client:
 
 def _is_loopback(host: str) -> bool:
     return host in LOOPBACK_HOSTS
+
+
+def _is_energy_down_frame(raw: str) -> bool:
+    """这条上行帧是不是降能量方向的安全命令 (要绕开有序队列, 立刻处理)。
+
+    ⚠ 解析失败 / 形状不对一律当**普通帧** —— 交给 `_on_upstream` 回 BadMessage,
+    坏 JSON 没必要走旁路。这里只偷看 `t`/`m` 两个字段, 真正的校验仍在 `_on_upstream`。
+    """
+    try:
+        msg = json.loads(raw)
+    except (ValueError, TypeError):
+        return False
+    return (isinstance(msg, dict) and msg.get("t") == "cmd"
+            and msg.get("m") in ENERGY_DOWN_COMMANDS)
 
 
 def pick_free_http_port(host: str = "127.0.0.1", start: int = 8765,
@@ -146,6 +160,22 @@ class Daemon:
         client = _Client(q=asyncio.Queue(maxsize=256))
         self.clients.append(client)
         pump = asyncio.create_task(self._pump(ws, client))
+        #: 普通上行帧的**有序**队列 —— 单条 worker 顺序消费, 保证「先发的先执行」
+        #: (前端有依赖顺序的连招: set_speed 之后再 movej)。
+        queue: asyncio.Queue[str] = asyncio.Queue()
+        worker = asyncio.create_task(self._drain(ws, client, queue))
+        #: 降能量方向的安全帧**不进队列** —— 直接起任务, 于是不必等在途运动结束。
+        #: 这是「急停永远可达」在传输层的另一半 (另一半是 `Session` 的专用执行器):
+        #: 原来的 `await self._on_upstream(...)` 会把 `receive_text` 也一起挡住,
+        #: 连急停帧都读不出来。
+        bypass: set[asyncio.Task] = set()
+
+        def _bypass_done(task: asyncio.Task) -> None:
+            bypass.discard(task)
+            if not task.cancelled() and task.exception() is not None:
+                # 客户端可能已经走了 ⇒ 回帧失败很正常, 记 debug 即可, 不许炸事件循环。
+                log.debug("旁路安全命令处理异常", exc_info=task.exception())
+
         try:
             # 连接时先 `hello`, 随后立刻 `conn` (计划 3.1 的握手顺序)。
             await self._send_direct(ws, client, {
@@ -161,7 +191,12 @@ class Daemon:
                     })
             while True:
                 raw = await ws.receive_text()
-                await self._on_upstream(ws, client, raw)
+                if _is_energy_down_frame(raw):
+                    task = asyncio.create_task(self._on_upstream(ws, client, raw))
+                    bypass.add(task)
+                    task.add_done_callback(_bypass_done)
+                else:
+                    await queue.put(raw)
         except WebSocketDisconnect:
             pass
         except Exception:  # noqa: BLE001 - 一个客户端坏了不该影响别人
@@ -172,7 +207,17 @@ class Daemon:
                 self.clients.remove(client)
             except ValueError:
                 pass
+            for task in bypass:
+                task.cancel()
+            worker.cancel()
             pump.cancel()
+
+    async def _drain(self, ws: WebSocket, client: _Client,
+                     queue: "asyncio.Queue[str]") -> None:
+        """顺序消费普通上行帧 (单条 worker ⇒ 保序)。"""
+        while True:
+            raw = await queue.get()
+            await self._on_upstream(ws, client, raw)
 
     async def _send_direct(self, ws: WebSocket, client: _Client, message: dict) -> None:
         async with client.lock:
