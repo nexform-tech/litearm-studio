@@ -3,159 +3,127 @@ title: "LiteArm"
 subtitle: "快速上手指南"
 title-meta: "LiteArm 快速上手指南"
 author: "NEXFORM 新元体"
-version: "v1.0"
-date: "2026 年 9 月 8 日"
+version: "v2.0"
+date: "2026 年 9 月 27 日"
 ---
 
 # LiteArm 快速上手指南
 
-## 1. 系统架构与通信
+## 1. 系统架构与环境要求
 
-机械臂通过 USB-CAN 适配器连接运行控制服务的主机（用户电脑或独立工控机/计算盒）。系统原生支持单机同屏操作与分布式局域网控制两种模式：
+LiteArm Studio 是「本地 Python 程序 + 浏览器界面」：程序独占到机械臂的 USB 串口，界面由该程序托管，并通过本机回环上的 WebSocket 与它通信。**没有 server，也没有要填的 IP。**
 
-![系统架构与通信拓扑](images/zh/system_architecture.png)
-
-### 部署模式
-- 单机直连模式：控制服务与 Studio 上位机均运行在同一台电脑上，Studio 直接连接 `127.0.0.1:7449`；
-- 独立主机模式：控制服务运行在连接机械臂的独立工控机或计算盒上，用户在局域网内通过另一台电脑的 Studio 连接其 IP。
-
-### 默认通信参数
-- 上位机通信端口：`7449`（WebSocket，单机填写 `127.0.0.1`，跨机填写主机局域网 IP）
-- Python SDK 端口：`7447`（RPC / Zenoh）
-- CAN 接口：默认 `can0`（波特率 1M，服务启动时自动初始化拉起）
+```
+浏览器窗口 (React UI，由本地程序托管)
+   │  HTTP  → 静态资源、/api/health
+   │  WS    → 状态推送(下行) / 命令(上行)
+   ▼
+litearm-studio-daemon  (Python，只监听 127.0.0.1)
+   ▼
+litearm-python  ──USB CDC (1d50:606f @921600)──>  STM32  ──CAN──>  电机
+```
 
 ### 环境要求
-- 控制端（后端服务）：Ubuntu 22.04 LTS，配备支持 SocketCAN 的 USB-CAN 适配器
-- 操作端（Studio 上位机）：Ubuntu 20.04+ 或 Windows 10/11
+
+- 控制主机：Linux 或 Windows，有一个空闲 USB 口；Python 3.10+
+- 机械臂控制器已上电并通过 USB 连接（USB CDC，VID:PID `1d50:606f`）
+- 只有自己构建界面时才需要 Node.js 20+ 与 pnpm
 
 ---
 
-## 2. 后端服务部署 (litearm-server)
+## 2. 安装
 
-### 2.1 安装软件包
-
-在连接机械臂的 Ubuntu 主机（电脑或工控盒）上执行：
+`litearm-python` 不在 PyPI 上，必须先克隆并本地安装：
 
 ```bash
-sudo dpkg -i litearm-server_<版本号>_amd64.deb
+git clone https://github.com/nexform-tech/litearm-python.git
+git clone https://github.com/nexform-tech/litearm-studio.git
+cd litearm-studio
+
+pip install -e ../litearm-python
+pip install -e "daemon[test]"
 ```
 
-> 安装后自动注册系统服务 `litearm-server-bin.service`。服务启动时会自动初始化并启用 `can0`（1M 波特率）。
-
-### 2.2 配置运行模式
-
-配置文件：`/etc/litearm-server.env`
-
-- 实机模式：连接 USB-CAN 适配器与机械臂，保持默认配置即可。
-- 仿真模式（Dry-Run）：若未连接物理机械臂或 CAN 硬件，需开启仿真模式以防驱动报错：
-  ```env
-  LITEARM_EXTRA_ARGS="--dry-run"
-  ```
-
-### 2.3 启动服务
+构建本地程序要托管的界面（`dist/` 已存在可跳过）：
 
 ```bash
-# 启动后台服务
-sudo systemctl start litearm-server-bin
-
-# 查看状态与日志
-sudo systemctl status litearm-server-bin
-sudo journalctl -u litearm-server-bin -f -n 50
-```
-
-> 日志输出 WebSocket 监听于 `7449` 端口即表示启动成功。
-
-### 2.4 终端调试与无头操控（可选）
-
-如需前台调试或在纯终端环境下验证控制：
-
-```bash
-# 前台调试启动
-litearm-server --dry-run --log-level DEBUG
-
-# CLI 快速验证（读取关节角度）
-python3 -c "import litearm; arm=litearm.Arm('tcp/127.0.0.1:7447'); \
-    print('关节角:', arm.get_state().q); arm.close()"
-
-# CLI 回零
-python3 -c "import litearm; arm=litearm.Arm('tcp/127.0.0.1:7447'); \
-    arm.home(); arm.close()"
+pnpm install && pnpm build
 ```
 
 ---
 
-## 3. 上位机安装 (LiteArm Studio)
+## 3. 启动
 
-### Windows
-运行 `LiteArm Studio-Setup-<版本号>.exe` 完成安装并启动。
-若提示缺少 WebView2，请下载安装 [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)。
-
-### Linux / Ubuntu
 ```bash
-# DEB 包安装（推荐）
-sudo dpkg -i "LiteArm Studio_<版本号>_amd64.deb"
-litearm-studio
+# 离线：用 SDK 的假传输跑完整会话，不需要任何硬件
+litearm-studio-daemon --fake
 
-# 或使用 AppImage
-chmod +x "LiteArm Studio_<版本号>_amd64.AppImage"
-./"LiteArm Studio_<版本号>_amd64.AppImage"
+# 真机：自动发现 USB CDC 设备
+litearm-studio-daemon
+
+# 指定串口 / 端口 / 不自动开窗口
+litearm-studio-daemon --port /dev/ttyACM1 --http-port 9000 --no-open
 ```
+
+启动后会打印实际监听的地址（默认 `http://127.0.0.1:8765/`；被占用会自动换并打印新端口），并在有 Chromium 系浏览器时以 `--app=` 模式开窗，否则退回普通标签页。
+
+| | |
+| --- | --- |
+| 控制台 | `http://127.0.0.1:<port>/` |
+| WebSocket | `ws://127.0.0.1:<port>/ws` |
+| 健康检查 | `http://127.0.0.1:<port>/api/health` |
+
+> [!IMPORTANT]
+> 本地程序**只监听 `127.0.0.1`**，没有开给局域网的开关 —— 一个能驱动机械臂的接口不该被发布出去。
 
 ---
 
-## 4. 首次联调测试
+## 4. 首次冒烟验证
 
-### 步骤 1：连接控制服务
-1. 启动 LiteArm Studio。
-2. 点击顶栏左侧的连接状态徽标，打开「控制器连接设置」。
-3. 根据部署形态输入 IP 地址，端口保持 `7449`，点击「连接」：
-   - 单机直连：保持默认 `127.0.0.1`；
-   - 独立工控盒 / 主机：输入该主机的实际局域网 IP 地址。
+### 第 1 步 —— 连接与使能
 
-![连接设置弹窗示意](images/zh/02_header_endpoint_modal.png)
+1. 打开控制台（本地程序会替你打开）。
+2. 顶栏显示连接状态；连上后会显示本次解析到的 **端口名 · 固件版本**。若会话未建立，点 **连接**。
+3. 确认 3D 模型正常渲染，J1–J7 有实时读数。
+4. 点击控制栏上的 **使能** 开关。
 
-> 成功标志：徽标变为绿色圆点并显示 `已连接`，右侧控制频率正常跳动（约 250 Hz）。
-
-### 步骤 2：检查 3D 模型
-进入「单臂控制」页面，确认左侧 3D 机械臂模型正常渲染，右侧 J1~J7 关节角度显示有效数值。
-
-### 步骤 3：动作验证
+### 第 2 步 —— 验证运动
 
 > [!WARNING]
-> 实机模式下请确保机械臂运动范围内无障碍物及人员，可随时通过上位机「STOP」按钮停止动作。
+> 使能或下发运动前，请清空机械臂工作范围，确保没有人员与障碍物。**STOP** 会下发急停，且在运动过程中依然可达。
 
-1. 使能：点击控制面板上的「使能」开关。
-2. 点动测试：在关节控制区选择 J1 轴，将速度设为 10%~20%，点击 `+` 微动 1°~2°，确认 3D 模型与机械臂平稳响应。
-3. 回零测试：点击「一键回零位」，确认机械臂平稳返回零位姿态。
+1. **点动**：选中 J1，速度设 10–20 %，用滑条轻微点动，确认动作平滑。
+2. **回零**：点击回零位，执行固件的低速度回零。
+3. **STOP**：按一次，确认机械臂立刻降能量。
+
+### 第 3 步 —— 遥测
+
+打开「遥测」页：机械臂连接后会自动创建会话、在本机记录采样，**导出 CSV** 可把选中会话写盘。
 
 ---
 
-## 5. 常见问题 (FAQ)
+## 5. 常见问题
 
-### Q1：上位机提示连接失败或超时？
-1. 确认连接地址为 `127.0.0.1`，端口为 `7449`。
-2. 检查本地后端服务是否正在运行：
-   ```bash
-   sudo systemctl status litearm-server-bin
-   ```
-3. 若服务未运行，执行 `sudo systemctl start litearm-server-bin`；若状态为 `failed`，请按 Q2 排查。
-4. （若跨电脑局域网连接）：检查两台设备是否可互相 `ping` 通，并在后端电脑上放行对应端口：`sudo ufw allow 7449/tcp`。
+### 启动报找不到 `litearm` 模块
 
-### Q2：后端服务启动失败 (failed) 或频繁重启？
-- 查看详细日志：`sudo journalctl -u litearm-server-bin -e`
-- 原因 1：未插入 USB-CAN 适配器或设备未识别
-  - 服务启动时会自动拉起 `can0`。若未插 USB-CAN 或设备识别为其他名称，服务会直接退出。
-  - 检查系统是否识别到 CAN 模块：
-    ```bash
-    ip link show can0
-    dmesg | grep -i can
-    ```
-  - 若系统分配的接口名为其他名称（例如 `can1`），在 `/etc/litearm-server.env` 中配置 `LITEARM_IFACE="can1"`。
-- 原因 2：无硬件纯仿真测试
-  - 若手头未连接机械臂或 CAN 模块，需在 `/etc/litearm-server.env` 中配置 `LITEARM_EXTRA_ARGS="--dry-run"`（见 2.2 节）后重启服务。
-- 原因 3：机械臂未正常通电或接线松动
-  - 检查机械臂供电电源是否正常开启，并确认电源线与 CAN 总线（CAN-H / CAN-L）接线牢固。
+`litearm-python` 不在 PyPI 上，需从检出目录安装：`pip install -e ../litearm-python`。
 
-### Q3：3D 视口黑屏或 WebGL 初始化失败？
-- 确认系统显卡驱动正常。
-- 若在虚拟机或远程桌面中使用，需开启「3D 图形加速」。
+### 提示「未发现 STM32 CDC 设备」
+
+- 检查 USB 线缆与控制器供电。
+- 确认设备以 VID:PID `1d50:606f` 枚举。
+- 若它出现在别的设备路径下，显式指定：`litearm-studio-daemon --port /dev/ttyACM1`。
+- Linux 下确认当前用户有权限打开串口设备（`dialout` 组）。
+
+### 界面能打开但一直没有状态
+
+- 访问 `http://127.0.0.1:<port>/api/health`，`connected` 必须为 `true`。
+- 若 `conn.status` 是 `error`，`conn.error` 字段就是原因（设备不存在、固件不匹配、链路故障）。
+
+### 8765 端口被占用
+
+本地程序会自动往后找空闲端口并打印，请以打印出的地址为准，不要假定是 8765。
+
+### 关掉窗口后界面没了，但机械臂还连着
+
+这是刻意设计：关窗口**不会**打断已在执行的会话。要结束会话请在界面里点 **断开** 或 **STOP**，或直接停掉本地程序进程。

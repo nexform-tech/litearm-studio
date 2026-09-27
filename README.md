@@ -2,44 +2,44 @@
 
 **English** | [简体中文](README_ZH.md)
 
-**LiteArm Studio** is the next-generation graphical host application and control studio designed for LiteArm 7-DoF collaborative robotic arms. Built with React 19, TypeScript, Three.js and Vite, it delivers real-time motion control, 3D kinematic visualization, trajectory lead-through teaching, and telemetry diagnostics in the browser.
+**LiteArm Studio** is the operator console for LiteArm 7-DoF collaborative robotic arms. It is a browser UI served by a local Python daemon: the daemon is the **only** process that touches the hardware, and the UI talks to it over a WebSocket on `127.0.0.1`.
 
 ---
 
-## 📖 Documentation & User Manuals
+## Architecture
 
-- 📘 **[User Manual (English)](docs/USER_MANUAL.md)**
-- 📕 **[用户操作手册 (简体中文)](docs/USER_MANUAL_ZH.md)**
+```
+browser window (React UI)
+   │  HTTP  → static assets, /api/health
+   │  WS    → state push (down) / commands (up)
+   ▼
+litearm-studio-daemon  (Python, loopback only, `daemon/`)
+   ▼
+litearm-python  ──USB CDC (1d50:606f)──>  STM32  ──CAN──>  motors
+```
 
----
-
-## ✨ Key Features
-
-- 🦾 **Single-Arm Motion Control**:
-  - Real-time 3D digital twin rendering with interactive URDF kinematics and frame axes;
-  - Joint space slider control (J1–J7) with instant dispatch and batched staging modes;
-  - Cartesian directional jogging (Base and Tool frames) and linear interpolation motions (`movel`);
-  - High-priority software emergency stop (**STOP**), one-click homing, ready pose positioning, and fault clearing.
-- 🎬 **Trajectory Lead-Through Teaching**:
-  - Drag-and-teach recording in zero-gravity mode sampled at 100 Hz;
-  - On-controller trajectory library management, multi-rate playback (0.25× to 2.0×), loop execution, and emergency takeover.
-- 📈 **Telemetry & Diagnostics**:
-  - Real-time 10 Hz joint state sampling (angles, velocities, torques, temperatures, tracking errors);
-  - Client-side IndexedDB session recording with customizable retention caps (10–500 MB) and CSV export;
-  - Real-time streaming, keyword search, and level filtering for controller system logs.
-- ⚙️ **Calibration & System Settings**:
-  - End-effector payload mass and center-of-mass (COM) compensation;
-  - Base mounting orientation calibration (Standard, Inverted, Wall-Mount);
-  - Joint safety limits, closed-loop servo PD gains, hardware diagnostics, and daemon service restart.
+- **The daemon owns the arm.** It auto-discovers the USB CDC device (or takes `--port`), pushes normalised state at 50 Hz from the SDK's cached frames, and runs every SDK call on a single-threaded executor. Emergency stop and disable run on a separate lane so they stay reachable while a motion is in progress.
+- **The daemon also serves the UI.** It hosts the built assets and opens a Chromium `--app=` window (falling back to a normal tab). Closing the window does **not** tear down an arm session.
+- **Loopback only.** Binding anything else is refused in code — exposing an interface that can drive an arm on a LAN is treated as an incident, not a setting.
 
 ---
 
-## 🛠️ Technology Stack
+## ✨ Features
 
-- **Frontend Core**: React 19, TypeScript, Vite 8, Tailwind CSS v4
-- **3D Visualization**: Three.js, URDF-Loader
-- **State & Data**: IndexedDB (client-side telemetry), Radix UI Primitives, Lucide Icons, Sonner
-- **Internationalization**: i18next (English / 简体中文)
+- 🦾 **Single-arm motion control**
+  - Real-time 3D digital twin (URDF) with interactive frame axes;
+  - Joint space sliders (J1–J7) whose ranges come from the controller's own soft limits (`get_joint_params`), with staged/batched dispatch;
+  - Cartesian jogging in base and tool frames, plus linear `movel` to a target pose;
+  - Ready pose, firmware homing, zero-gravity drag teaching, enable/disable, fault clearing;
+  - High-priority **STOP** (emergency stop) that is reachable during motion.
+- 📈 **Telemetry**
+  - 10 Hz joint sampling (angles, velocities, torques, temperatures, driver error codes);
+  - Client-side IndexedDB session recording with a configurable retention cap (10–500 MB) and CSV export.
+- 🌐 **Internationalization** — English / 简体中文.
+
+### Not in this build
+
+Trajectory teaching/playback, the controller-log page, gripper / dexterous-hand panels and per-joint impedance or hold modes are out of scope ([docs/REFACTOR_PLAN.md](docs/REFACTOR_PLAN.md) §5–6). The settings and calibration pages (payload, gains, limits, self-test) are not wired to the daemon yet; the daemon commands exist but no UI reaches them.
 
 ---
 
@@ -47,29 +47,47 @@
 
 ### 1. Prerequisites
 
-- **Node.js**: `v20.0.0` or higher
-- **Package Manager**: `pnpm` (`corepack enable` or `npm install -g pnpm`)
-- **Robot Controller**: powered on and connected over USB; the host reaches the arm through the
-  [`litearm-python`](https://github.com/nexform-tech/litearm-python) SDK (no server and no IP address)
-
-### 2. Web Development
+- **Node.js** `v20.0.0`+ and **pnpm** (`corepack enable` or `npm install -g pnpm`)
+- **Python** 3.10+ for the local daemon
+- `litearm-python` — not on PyPI, so clone it and install from the checkout:
 
 ```bash
-# Clone both the SDK and Studio repositories side-by-side
-git clone https://github.com/nexform-tech/litearm-js.git
-git clone https://github.com/nexform-tech/litearm-studio.git
-
-cd litearm-studio
-pnpm install
-
-# Start local development server
-pnpm dev
+git clone https://github.com/nexform-tech/litearm-python.git
 ```
 
-Open your browser at `http://localhost:5173`.
+### 2. Run the whole application
 
-> **Project status:** the transport layer is being re-pointed from the retired `litearm-server` to a
-> local control daemon. See [docs/REFACTOR_PLAN.md](docs/REFACTOR_PLAN.md).
+```bash
+cd litearm-studio
+pip install -e ../litearm-python
+pip install -e "daemon[test]"     # installs fastapi/uvicorn and the `litearm-studio-daemon` entry point
+pnpm install && pnpm build         # build the UI the daemon will serve
+
+litearm-studio-daemon --fake       # offline: full session on the SDK's fake transport, no hardware
+# litearm-studio-daemon            # real arm: auto-discovers the USB CDC device
+# litearm-studio-daemon --port /dev/ttyACM1 --http-port 9000 --no-open
+```
+
+The console prints the URL it bound to (default `http://127.0.0.1:8765/`, auto-incrementing if busy) and opens a window.
+
+### 3. UI-only development
+
+```bash
+pnpm install
+pnpm dev        # http://localhost:5173 — proxies /ws and /api to 127.0.0.1:8765
+```
+
+Run `litearm-studio-daemon --fake --no-open` alongside it.
+
+---
+
+## 📖 Documentation
+
+- 📘 **[User Manual (English)](docs/USER_MANUAL.md)** — ⚠️ still describes the retired server-based build; being rewritten.
+- 📕 **[用户操作手册 (简体中文)](docs/USER_MANUAL_ZH.md)** — ⚠️ 同上。
+- **[Quickstart](docs/QUICKSTART.md)** / **[快速开始](docs/QUICKSTART_ZH.md)**
+- **[Refactor plan](docs/REFACTOR_PLAN.md)** — architecture, interface contract and scope decisions.
+- **[Daemon README](daemon/README.md)**
 
 ---
 
@@ -77,17 +95,18 @@ Open your browser at `http://localhost:5173`.
 
 | Command | Description |
 | :--- | :--- |
-| `pnpm dev` | Start Vite local web development server |
-| `pnpm build` | Production build for Web distribution (`dist/`) |
-| `pnpm preview` | Preview production web build locally |
-| `pnpm test` | Run unit tests via Vitest |
-| `pnpm lint` | Fast static analysis via oxlint |
-| `pnpm exec tsc -b` | TypeScript static typecheck |
+| `pnpm dev` | Start the Vite dev server (proxies to a local daemon) |
+| `pnpm build` | Production UI build into `dist/` (what the daemon serves) |
+| `pnpm preview` | Preview the production build locally |
+| `pnpm test` | Unit tests (Vitest) |
+| `pnpm lint` | Static analysis (oxlint) |
+| `pnpm exec tsc -b` | TypeScript typecheck |
+| `python -m pytest daemon/tests -q` | Daemon unit tests (no hardware needed) |
 
 ---
 
 ## 📄 License
 
-This project is licensed under the **Apache License 2.0** - see the [LICENSE](LICENSE) file for details.
+Licensed under the **Apache License 2.0** — see [LICENSE](LICENSE).
 
 Copyright © 2026 NexForm / YuDao. All rights reserved.
