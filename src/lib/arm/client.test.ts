@@ -182,6 +182,15 @@ describe('ArmClient (daemon WebSocket)', () => {
       [() => client.zeroGStart(), { m: 'zero_g_start', p: {} }],
       [() => client.zeroGStop(), { m: 'zero_g_stop', p: {} }],
       [() => client.getJointParams(), { m: 'get_joint_params', p: {} }],
+      [() => client.setPayload(1.2, [0.01, 0.02, 0.03]), { m: 'set_payload', p: { mass: 1.2, com: [0.01, 0.02, 0.03] } }],
+      [() => client.setGravityScale([1, 1, 1, 1, 1, 1, 1]), { m: 'set_gravity_scale', p: { values: [1, 1, 1, 1, 1, 1, 1] } }],
+      [() => client.setInertiaScale([1, 1, 1, 1, 1, 1, 1]), { m: 'set_inertia_scale', p: { values: [1, 1, 1, 1, 1, 1, 1] } }],
+      [() => client.setGravityVector([0, 0, -1]), { m: 'set_gravity_vector', p: { g: [0, 0, -1] } }],
+      [() => client.setJointParam(2, 50, 2, 10), { m: 'set_joint_param', p: { idx: 2, kp: 50, kd: 2, tau_max: 10 } }],
+      [() => client.setJointLimits(2, -1.5, 1.5), { m: 'set_joint_limits', p: { idx: 2, q_min: -1.5, q_max: 1.5 } }],
+      [() => client.saveParams(), { m: 'save_params', p: {} }],
+      [() => client.resetFactoryParams(), { m: 'reset_factory_params', p: {} }],
+      [() => client.kinBench(), { m: 'kin_bench', p: {} }],
     ]
     for (const [run, expected] of cases) {
       const p = run()
@@ -190,6 +199,31 @@ describe('ArmClient (daemon WebSocket)', () => {
       ws.receive({ t: 'res', id: frame.id, ok: true, v: null })
       await p
     }
+  })
+
+  it('readPayload() reads back mass (item 4) and com (item 5 sub 0..2)', async () => {
+    const { client, ws } = connectedClient()
+    const promise = client.readPayload()
+    const frames = ws.frames().filter((f) => f.t === 'cmd')
+    expect(frames.map((f) => f.p)).toEqual([
+      { item: 4, sub: 0 },
+      { item: 5, sub: 0 },
+      { item: 5, sub: 1 },
+      { item: 5, sub: 2 },
+    ])
+    // 固件把负质量静默钳成 0 —— 读回的必须是生效值。
+    const values = [0, -0.25, 0.1, 1]
+    frames.forEach((f, i) => ws.receive({ t: 'res', id: f.id, ok: true, v: values[i] }))
+    await expect(promise).resolves.toEqual({ mass: 0, com: [-0.25, 0.1, 1] })
+  })
+
+  it('readGravityScale() asks for feed-forward vector item 7', async () => {
+    const { client, ws } = connectedClient()
+    const promise = client.readGravityScale()
+    const frame = ws.lastFrame('cmd')!
+    expect(frame).toMatchObject({ m: 'get_ff_vec', p: { item: 7 } })
+    ws.receive({ t: 'res', id: frame.id, ok: true, v: [1, 2, 3, 4, 5, 6, 7] })
+    await expect(promise).resolves.toEqual([1, 2, 3, 4, 5, 6, 7])
   })
 
   it('rejects commands while the socket is not open', async () => {

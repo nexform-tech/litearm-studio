@@ -297,6 +297,92 @@ export class ArmClient {
     return this._sendCmd('get_joint_params') as Promise<JointParams[]>
   }
 
+  // ───────────────── 参数 / 标定 / 自检（设置页用，计划 §5「直接接线」） ─────────────────
+  // ⚠ 前馈 item 编号不是猜的（见 daemon `session.py` 与 SDK `arm.py`）：
+  //   4 = 载荷质量, 5 = 质心(sub 0..2), 6 = 重力向量(sub 0..2),
+  //   7 = 重力系数(7 值), 8 = 惯量系数(7 值)。
+
+  /** 载荷质量 + 质心。⚠ 固件会**静默钳幅**（质量夹到 0、质心夹到 ±1），
+   *  要拿到真正生效的值必须读回 —— 见 `readPayload()`。 */
+  async setPayload(mass: number, com: [number, number, number]): Promise<unknown> {
+    return this._sendCmd('set_payload', { mass, com })
+  }
+
+  /** 读回生效的载荷质量与质心（固件钳幅后的真值）。 */
+  async readPayload(): Promise<{ mass: number; com: [number, number, number] }> {
+    const [mass, x, y, z] = await Promise.all([
+      this._ffScalar(4, 0),
+      this._ffScalar(5, 0),
+      this._ffScalar(5, 1),
+      this._ffScalar(5, 2),
+    ])
+    return { mass, com: [x, y, z] }
+  }
+
+  async setGravityScale(values: number[]): Promise<unknown> {
+    return this._sendCmd('set_gravity_scale', { values })
+  }
+
+  async readGravityScale(): Promise<number[]> {
+    return this._ffVec(7)
+  }
+
+  async setInertiaScale(values: number[]): Promise<unknown> {
+    return this._sendCmd('set_inertia_scale', { values })
+  }
+
+  async readInertiaScale(): Promise<number[]> {
+    return this._ffVec(8)
+  }
+
+  async setGravityVector(g: [number, number, number]): Promise<unknown> {
+    return this._sendCmd('set_gravity_vector', { g })
+  }
+
+  async readGravityVector(): Promise<[number, number, number]> {
+    const [x, y, z] = await Promise.all([
+      this._ffScalar(6, 0),
+      this._ffScalar(6, 1),
+      this._ffScalar(6, 2),
+    ])
+    return [x, y, z]
+  }
+
+  /** 逐轴 MIT 刚度/阻尼/力矩钳幅（RAM，需 `saveParams()` 才持久化）。 */
+  async setJointParam(idx: number, kp: number, kd: number, tau_max: number): Promise<unknown> {
+    return this._sendCmd('set_joint_param', { idx, kp, kd, tau_max })
+  }
+
+  /** 逐轴软限位（RAM，需 `saveParams()` 才持久化）。 */
+  async setJointLimits(idx: number, qMin: number, qMax: number): Promise<unknown> {
+    return this._sendCmd('set_joint_limits', { idx, q_min: qMin, q_max: qMax })
+  }
+
+  /** 持久化到 flash。⚠ 固件要求**失能态**；daemon 不代劳 `disable()`，拒绝会原样回传。 */
+  async saveParams(): Promise<unknown> {
+    return this._sendCmd('save_params')
+  }
+
+  /** 恢复出厂参数。⚠ 同上，固件要求失能态。 */
+  async resetFactoryParams(): Promise<unknown> {
+    return this._sendCmd('reset_factory_params')
+  }
+
+  /** 固件运动学自检 + 链路诊断计数（CRC 错、FIFO 丢帧）。 */
+  kinBench(): Promise<unknown> {
+    return this._sendCmd('kin_bench')
+  }
+
+  private async _ffScalar(item: number, sub: number): Promise<number> {
+    const v = await this._sendCmd('get_ff_scalar', { item, sub })
+    return typeof v === 'number' ? v : Number(v) || 0
+  }
+
+  private async _ffVec(item: number): Promise<number[]> {
+    const v = await this._sendCmd('get_ff_vec', { item })
+    return Array.isArray(v) ? v.map((x) => (typeof x === 'number' ? x : Number(x) || 0)) : []
+  }
+
   // ─────────────────────────── 内部实现 ───────────────────────────
 
   private _openSocket() {
