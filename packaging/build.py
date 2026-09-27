@@ -25,6 +25,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+# ⚠ Windows 控制台默认是 cp1252: 打中文会抛 `UnicodeEncodeError`, 让**整个构建步骤**
+# 判失败 —— 实测 CI 上 PyInstaller 已经成功, 却死在后一句 `print` 上。先切 UTF-8。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+    except Exception:  # noqa: BLE001 - 非标准流/老解释器就保持原样
+        pass
+
 ROOT = Path(__file__).resolve().parents[1]
 DAEMON_SRC = ROOT / "daemon" / "src"
 UI_DIST = ROOT / "dist"
