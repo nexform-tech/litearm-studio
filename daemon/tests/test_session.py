@@ -324,3 +324,71 @@ def test_save_params_is_rejected_while_enabled(fake_session: Session) -> None:
 def test_save_params_succeeds_when_disabled(fake_session: Session) -> None:
     fake_session.execute("disable", {})
     assert fake_session.execute("save_params", {}) is None
+
+
+# ------------------------------------------------- 载荷 / 前馈系数 / 固件自检
+
+def test_set_payload_is_visible_on_readback(fake_session: Session) -> None:
+    fake_session.execute("set_payload", {"mass": 1.25, "com": [0.1, -0.2, 0.05]})
+    assert fake_session.execute("get_ff_scalar", {"item": 4, "sub": 0}) == \
+        pytest.approx(1.25)
+    for sub_idx, want in enumerate((0.1, -0.2, 0.05)):
+        got = fake_session.execute("get_ff_scalar", {"item": 5, "sub": sub_idx})
+        assert got == pytest.approx(want)
+
+
+def test_set_payload_defaults_com_to_zero(fake_session: Session) -> None:
+    fake_session.execute("set_payload", {"mass": 0.5})
+    assert fake_session.execute("get_ff_scalar", {"item": 5, "sub": 0}) == \
+        pytest.approx(0.0)
+
+
+def test_gravity_and_inertia_scale_roundtrip(fake_session: Session) -> None:
+    gs = [1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6]
+    isc = [0.9] * 7
+    fake_session.execute("set_gravity_scale", {"values": gs})
+    fake_session.execute("set_inertia_scale", {"values": isc})
+    assert fake_session.execute("get_ff_vec", {"item": 7}) == pytest.approx(gs)
+    assert fake_session.execute("get_ff_vec", {"item": 8}) == pytest.approx(isc)
+
+
+def test_gravity_vector_roundtrip(fake_session: Session) -> None:
+    fake_session.execute("set_gravity_vector", {"g": [0.0, 0.0, -9.81]})
+    got = [fake_session.execute("get_ff_scalar", {"item": 6, "sub": i})
+           for i in range(3)]
+    assert got == pytest.approx([0.0, 0.0, -9.81])
+
+
+def test_kin_bench_returns_timings_and_link(fake_session: Session) -> None:
+    bench = fake_session.execute("kin_bench", {})
+    assert isinstance(bench, dict)
+    assert set(bench) == {"raw", "timings", "link"}
+    assert isinstance(bench["raw"], str) and bench["raw"]
+    assert isinstance(bench["timings"], dict)
+    assert isinstance(bench["link"], dict)
+
+
+def test_reset_factory_params_requires_disarmed(fake_session: Session) -> None:
+    from litearm.errors import CommandRejectedError
+
+    fake_session.execute("enable", {})
+    with pytest.raises(CommandRejectedError):
+        fake_session.execute("reset_factory_params", {})
+    fake_session.execute("disable", {})
+    assert fake_session.execute("reset_factory_params", {}) is None
+
+
+@pytest.mark.parametrize("method,params", [
+    ("set_payload", {}),                                   # 缺 mass
+    ("set_payload", {"mass": 1.0, "com": [0.0, 0.0]}),     # com 长度不对
+    ("set_gravity_scale", {"values": [1.0] * 3}),          # 需 7 值
+    ("set_inertia_scale", {}),                             # 缺 values
+    ("set_gravity_vector", {"g": [0.0, 0.0]}),             # 需 3 值
+    ("get_ff_vec", {}),                                    # 缺 item
+    ("get_ff_scalar", {"item": "7"}),                      # item 非整数
+])
+def test_calibration_commands_validate_their_arguments(fake_session: Session,
+                                                       method: str,
+                                                       params: dict) -> None:
+    with pytest.raises(ValueError):
+        fake_session.execute(method, params)

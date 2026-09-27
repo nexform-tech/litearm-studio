@@ -72,6 +72,15 @@ COMMANDS: Dict[str, str] = {
     "set_joint_param": "改写单关节 MIT 刚度/阻尼/力矩钳幅 (RAM, 须 save_params 才持久化)",
     "set_joint_limits": "改写单关节软限位 (RAM, 须 save_params 才持久化)",
     "save_params": "把当前参数持久化到 flash (固件要求失能态)",
+    "reset_factory_params": "恢复出厂参数 (固件要求失能态)",
+    # ---- 载荷 / 前馈系数 / 固件自检 (计划第 5 节列为「有对应, 直接接线」) ----
+    "set_payload": "设末端载荷质量与质心 (前馈 item 4/5)",
+    "set_gravity_scale": "设重力前馈系数 (前馈 vec item 7, 7 值)",
+    "set_inertia_scale": "设惯量前馈系数 (前馈 vec item 8, 7 值)",
+    "set_gravity_vector": "设重力方向向量 (前馈 scalar item 6, 3 值)",
+    "get_ff_vec": "读回前馈向量 (item 7=重力系数 / 8=惯量系数)",
+    "get_ff_scalar": "读回前馈标量 (item 4=载荷质量 / 5=质心 / 6=重力向量)",
+    "kin_bench": "固件运动学自检 + 链路诊断计数",
 }
 
 
@@ -533,6 +542,33 @@ class Session:
                 # 决定"什么时候可以下电"是安全决策, 该由界面/操作员来做。
                 arm.save_params()
                 return None
+            if m == "reset_factory_params":
+                # 同上: 固件要求失能态 (擦写窗口 CPU 停顿, 电机不能无监督保持使能)。
+                arm.params.reset_factory()
+                return None
+            if m == "set_payload":
+                arm.set_payload(_num(p, "mass"),
+                                _vector(p.get("com") or [0.0, 0.0, 0.0], 3, "com"))
+                return None
+            if m == "set_gravity_scale":
+                arm.set_gravity_scale(_vector(p.get("values"), 7, "values"))
+                return None
+            if m == "set_inertia_scale":
+                arm.set_inertia_scale(_vector(p.get("values"), 7, "values"))
+                return None
+            if m == "set_gravity_vector":
+                arm.set_gravity_vector(_vector(p.get("g"), 3, "g"))
+                return None
+            if m == "get_ff_vec":
+                # ⚠ item 编号**不是猜的**: `arm.set_gravity_scale` 就是 `set_ff_vec(7, …)`,
+                # `set_inertia_scale` 就是 `set_ff_vec(8, …)` (见 SDK 的 arm.py)。
+                return statemap.jsonable(arm.get_ff_vec(_int(p, "item")).value)
+            if m == "get_ff_scalar":
+                sub_idx = p.get("sub", 0)
+                return statemap.jsonable(
+                    arm.get_ff_scalar(_int(p, "item"), _int_value(sub_idx, "sub")).value)
+            if m == "kin_bench":
+                return statemap.jsonable(arm.diag.kin_bench().value)
             # 白名单与实现**各写一遍**是刻意的: 只在准入处查表的话, 表里加一条而忘了
             # 实现会静默返回 None (前端看到"成功"却什么都没发生)。
             raise UnknownCommandError(m, sorted(COMMANDS))
@@ -629,6 +665,28 @@ def _num(p: dict, key: str) -> float:
     if isinstance(v, bool) or not isinstance(v, (int, float)):
         raise ValueError(f"{key} 需数值")
     return float(v)
+
+
+def _int(p: dict, key: str) -> int:
+    return _int_value(p.get(key), key)
+
+
+def _int_value(v: Any, key: str) -> int:
+    if isinstance(v, bool) or not isinstance(v, int):
+        raise ValueError(f"{key} 需整数")
+    return int(v)
+
+
+def _vector(v: Any, n: int, key: str) -> List[float]:
+    """收一个**定长数值向量** —— 长度不对就在这里拒, 不必等固件回 ERR。"""
+    if not isinstance(v, (list, tuple)) or len(v) != n:
+        raise ValueError(f"{key} 需 {n} 个数值")
+    out: List[float] = []
+    for x in v:
+        if isinstance(x, bool) or not isinstance(x, (int, float)):
+            raise ValueError(f"{key} 需 {n} 个数值")
+        out.append(float(x))
+    return out
 
 
 def _joint_param_dict(jp: Any) -> dict:
