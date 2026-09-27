@@ -16,6 +16,7 @@ export function TopBar() {
   const titleMap: Record<string, string> = {
     '/control': t('nav:controlTitle'),
     '/log': t('nav:logTitle'),
+    '/settings': t('nav:settingsTitle'),
   }
   const title = titleMap[pathname] ?? t('nav:controlTitle')
 

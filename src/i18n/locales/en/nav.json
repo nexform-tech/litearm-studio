@@ -3,6 +3,8 @@
   "controlTitle": "Robot Arm Console",
   "log": "Telemetry",
   "logTitle": "Telemetry Records",
+  "settings": "Settings",
+  "settingsTitle": "Controller Parameters",
   "connect": "Connect",
   "themeToDark": "Switch to dark theme",
   "themeToLight": "Switch to light theme",

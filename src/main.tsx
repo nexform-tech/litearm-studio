@@ -4,7 +4,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import './styles/index.css'
 import './i18n'
 import { AppShell } from './layout/AppShell'
-import { SoloConsole, TelemetryLogsPage } from './routes'
+import { SettingsPage, SoloConsole, TelemetryLogsPage } from './routes'
 import { telemetryRecorder } from './features/telemetry/telemetryRecorder'
 import { armClient } from './lib/arm/client'
 import { ErrorBoundary } from './components/ErrorBoundary'
@@ -47,6 +47,7 @@ createRoot(document.getElementById('root')!).render(
               <Route path="/solo" element={<Navigate to="/control" replace />} />
               <Route path="/log" element={<TelemetryLogsPage />} />
               <Route path="/telemetry" element={<Navigate to="/log" replace />} />
+              <Route path="/settings" element={<SettingsPage />} />
               <Route path="*" element={<Navigate to="/control" replace />} />
             </Route>
           </Routes>

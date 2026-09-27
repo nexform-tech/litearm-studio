@@ -15,8 +15,9 @@ describe('i18n Internationalization', () => {
     expect(i18n.t('common:connected')).toBe('已连接')
     expect(i18n.t('common:enable')).toBe('使能')
     expect(i18n.t('solo:controlBar.clearFault')).toBe('清错')
-    expect(i18n.t('settings:system.title')).toBe('控制器系统监控')
-    expect(i18n.t('settings:system.cpuLoad')).toBe('CPU 负荷')
+    expect(i18n.t('nav:settings')).toBe('设置')
+    expect(i18n.t('settings:payload.title')).toBe('末端负载')
+    expect(i18n.t('settings:tabs.joints')).toBe('增益与限位')
   })
 
   it('switches to English (en) and returns corresponding keys', async () => {
@@ -29,9 +30,10 @@ describe('i18n Internationalization', () => {
     expect(i18n.t('common:connected')).toBe('Connected')
     expect(i18n.t('common:enable')).toBe('Enable')
     expect(i18n.t('solo:controlBar.clearFault')).toBe('Clear Error')
-    expect(i18n.t('settings:header.title')).toBe('System & Controller Settings')
-    expect(i18n.t('settings:system.title')).toBe('Controller System Diagnostics')
-    expect(i18n.t('settings:system.confirmRestart')).toBe('Confirm Restart')
+    expect(i18n.t('nav:settingsTitle')).toBe('Controller Parameters')
+    expect(i18n.t('settings:header.title')).toBe('Controller Parameters & Calibration')
+    expect(i18n.t('settings:tabs.diagnostics')).toBe('Diagnostics')
+    expect(i18n.t('settings:joints.factory')).toBe('Restore factory')
   })
 
   it('updates document.documentElement.lang on language change', async () => {
