@@ -158,17 +158,17 @@ class Daemon:
     async def handle_ws(self, ws: WebSocket) -> None:
         await ws.accept()
         client = _Client(q=asyncio.Queue(maxsize=256))
-        self.clients.append(client)
-        pump = asyncio.create_task(self._pump(ws, client))
         #: 普通上行帧的**有序**队列 —— 单条 worker 顺序消费, 保证「先发的先执行」
         #: (前端有依赖顺序的连招: set_speed 之后再 movej)。
         queue: asyncio.Queue[str] = asyncio.Queue()
-        worker = asyncio.create_task(self._drain(ws, client, queue))
         #: 降能量方向的安全帧**不进队列** —— 直接起任务, 于是不必等在途运动结束。
         #: 这是「急停永远可达」在传输层的另一半 (另一半是 `Session` 的专用执行器):
         #: 原来的 `await self._on_upstream(...)` 会把 `receive_text` 也一起挡住,
         #: 连急停帧都读不出来。
         bypass: set[asyncio.Task] = set()
+        pump: Optional[asyncio.Task] = None
+        worker: Optional[asyncio.Task] = None
+        registered = False
 
         def _bypass_done(task: asyncio.Task) -> None:
             bypass.discard(task)
@@ -177,7 +177,10 @@ class Daemon:
                 log.debug("旁路安全命令处理异常", exc_info=task.exception())
 
         try:
-            # 连接时先 `hello`, 随后立刻 `conn` (计划 3.1 的握手顺序)。
+            # ⚠ **先把两条握手帧写完, 再把客户端注册进 `self.clients`**: 一旦注册,
+            # 50Hz 的状态广播就能经 `_pump` 插进 `hello`/`conn` 之间, 握手顺序
+            # (计划 3.1) 就不再保证。代价只是握手这几毫秒里的广播不进这个队列 ——
+            # 下一拍 (20ms) 就有新的, 新窗口不会因此空一下。
             await self._send_direct(ws, client, {
                 "t": "hello", "daemon": self.version, "sdk": self.session.sdk_version,
             })
@@ -189,6 +192,10 @@ class Daemon:
                     await self._send_direct(ws, client, {
                         "t": "state", "stamp": 0.0, "state": st,
                     })
+            self.clients.append(client)
+            registered = True
+            pump = asyncio.create_task(self._pump(ws, client))
+            worker = asyncio.create_task(self._drain(ws, client, queue))
             while True:
                 raw = await ws.receive_text()
                 if _is_energy_down_frame(raw):
@@ -203,14 +210,17 @@ class Daemon:
             log.debug("WS 客户端异常结束", exc_info=True)
         finally:
             # ⚠ **只**摘掉这个客户端自己 —— 不碰会话 (计划 2 节原则 4)。
-            try:
-                self.clients.remove(client)
-            except ValueError:
-                pass
+            if registered:
+                try:
+                    self.clients.remove(client)
+                except ValueError:
+                    pass
             for task in bypass:
                 task.cancel()
-            worker.cancel()
-            pump.cancel()
+            if worker is not None:
+                worker.cancel()
+            if pump is not None:
+                pump.cancel()
 
     async def _drain(self, ws: WebSocket, client: _Client,
                      queue: "asyncio.Queue[str]") -> None:
