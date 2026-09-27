@@ -97,7 +97,10 @@ litearm-python  ──USB CDC (1d50:606f @921600)──>  STM32  ──CAN──
 | `get_tcp` | `arm.get_tcp().value` | 当前末端位姿 |
 | `ik` | `arm.ik(pose)` | 逆解 |
 | `zero_g_start` / `zero_g_stop` | `arm.zero_g_start` / `arm.zero_g_stop` | 拖动示教 |
-| `clear_faults` | — | 见上 |
+| `get_joint_params` | `arm.params.all_joint_params()` | 逐轴读回 kp/kd/tau_max/软限位（控制页滑条量程要用） |
+| `set_joint_param` | `arm.params.set_joint_param(idx, kp, kd, tau_max)` | 逐轴写（RAM） |
+| `set_joint_limits` | `arm.params.set_joint_limits(idx, q_min, q_max)` | 逐轴写（RAM） |
+| `save_params` | `arm.save_params()` | 持久化到 flash（固件要求失能态） |
 
 ### 3.3 状态字段
 

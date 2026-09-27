@@ -255,3 +255,72 @@ def test_connect_completion_failure_lands_in_error_not_silence(monkeypatch) -> N
         assert s.connected is False
     finally:
         s.close()
+
+
+# ------------------------------------------------- 关节级参数命令
+
+def test_get_joint_params_returns_one_entry_per_joint(fake_session: Session) -> None:
+    params = fake_session.execute("get_joint_params", {})
+    assert isinstance(params, list)
+    assert len(params) == 7
+    for i, jp in enumerate(params):
+        assert jp["idx"] == i
+        for key in ("kp", "kd", "tau_max", "q_min", "q_max"):
+            assert isinstance(jp[key], float), f"{key} 应是 float"
+        assert jp["q_min"] < jp["q_max"]
+
+
+def test_set_joint_limits_is_visible_on_readback(fake_session: Session) -> None:
+    fake_session.execute("set_joint_limits", {"idx": 2, "q_min": -0.25, "q_max": 0.75})
+    jp = fake_session.execute("get_joint_params", {})[2]
+    assert jp["q_min"] == pytest.approx(-0.25)
+    assert jp["q_max"] == pytest.approx(0.75)
+
+
+def test_set_joint_param_is_visible_on_readback(fake_session: Session) -> None:
+    fake_session.execute("set_joint_param",
+                         {"idx": 1, "kp": 12.5, "kd": 0.75, "tau_max": 3.5})
+    jp = fake_session.execute("get_joint_params", {})[1]
+    assert jp["kp"] == pytest.approx(12.5)
+    assert jp["kd"] == pytest.approx(0.75)
+    assert jp["tau_max"] == pytest.approx(3.5)
+
+
+@pytest.mark.parametrize("params", [
+    {},                                        # 缺 idx
+    {"idx": -1, "q_min": 0.0, "q_max": 1.0},   # 负数
+    {"idx": 1.5, "q_min": 0.0, "q_max": 1.0},  # 非整数
+    {"idx": 0, "q_min": 0.0},                  # 缺 q_max
+    {"idx": 0, "q_min": "0", "q_max": 1.0},    # 字符串
+])
+def test_set_joint_limits_validates_its_arguments(fake_session: Session,
+                                                  params: dict) -> None:
+    with pytest.raises(ValueError):
+        fake_session.execute("set_joint_limits", params)
+
+
+@pytest.mark.parametrize("params", [
+    {},                                             # 全缺
+    {"idx": 0, "kd": 1.0, "tau_max": 1.0},          # 缺 kp
+    {"idx": 0, "kp": 1.0, "kd": 1.0},               # 缺 tau_max
+    {"idx": 0, "kp": 1.0, "kd": 1.0, "tau_max": None},
+])
+def test_set_joint_param_validates_its_arguments(fake_session: Session,
+                                                 params: dict) -> None:
+    with pytest.raises(ValueError):
+        fake_session.execute("set_joint_param", params)
+
+
+def test_save_params_is_rejected_while_enabled(fake_session: Session) -> None:
+    """固件要求失能才允许擦写 flash —— 这条拒绝必须**如实传出去**。"""
+    from litearm.errors import CommandRejectedError
+
+    fake_session.execute("enable", {})
+    with pytest.raises(CommandRejectedError) as ei:
+        fake_session.execute("save_params", {})
+    assert ei.value.code == 0x04
+
+
+def test_save_params_succeeds_when_disabled(fake_session: Session) -> None:
+    fake_session.execute("disable", {})
+    assert fake_session.execute("save_params", {}) is None

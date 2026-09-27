@@ -67,6 +67,11 @@ COMMANDS: Dict[str, str] = {
     "ik": "逆解 (arm.ik)",
     "zero_g_start": "进入拖动示教 (arm.zero_g_start)",
     "zero_g_stop": "退出拖动示教 (arm.zero_g_stop)",
+    # ---- 关节级参数 (控制页的滑条量程 / 设置页的增益与限位都要用) ----
+    "get_joint_params": "读回全部关节参数: kp/kd/tau_max/软限位 (逐轴 N 次往返)",
+    "set_joint_param": "改写单关节 MIT 刚度/阻尼/力矩钳幅 (RAM, 须 save_params 才持久化)",
+    "set_joint_limits": "改写单关节软限位 (RAM, 须 save_params 才持久化)",
+    "save_params": "把当前参数持久化到 flash (固件要求失能态)",
 }
 
 
@@ -512,6 +517,22 @@ class Session:
                 arm.zero_g_stop()
                 self._note_zero_g(False, on_event)
                 return None
+            if m == "get_joint_params":
+                # ⚠ SDK 的 `all_joint_params()` 是 **N 次往返的聚合** (每轴一发一收),
+                # 在本执行器线程上串行, 不会与别的 SDK 调用交错。
+                return [_joint_param_dict(jp) for jp in arm.params.all_joint_params()]
+            if m == "set_joint_param":
+                arm.params.set_joint_param(_idx(p), _num(p, "kp"), _num(p, "kd"),
+                                           _num(p, "tau_max"))
+                return None
+            if m == "set_joint_limits":
+                arm.params.set_joint_limits(_idx(p), _num(p, "q_min"), _num(p, "q_max"))
+                return None
+            if m == "save_params":
+                # 固件要求失能态才允许擦写 flash; 这里**不代劳** `disable()` —— 替调用方
+                # 决定"什么时候可以下电"是安全决策, 该由界面/操作员来做。
+                arm.save_params()
+                return None
             # 白名单与实现**各写一遍**是刻意的: 只在准入处查表的话, 表里加一条而忘了
             # 实现会静默返回 None (前端看到"成功"却什么都没发生)。
             raise UnknownCommandError(m, sorted(COMMANDS))
@@ -591,6 +612,39 @@ def _percent(p: dict) -> int:
     if not 0 <= v <= 100:
         raise ValueError("percent 需 0..100")
     return int(v)
+
+
+def _idx(p: dict) -> int:
+    """0 基关节号 —— 与 SDK 的 `params.*` 口径一致 (UI 显示时才 +1 成 J1..Jn)。"""
+    v = p.get("idx")
+    if isinstance(v, bool) or not isinstance(v, int):
+        raise ValueError("idx 需整数 (0 基关节号)")
+    if v < 0:
+        raise ValueError("idx 需 >= 0")
+    return v
+
+
+def _num(p: dict, key: str) -> float:
+    v = p.get(key)
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        raise ValueError(f"{key} 需数值")
+    return float(v)
+
+
+def _joint_param_dict(jp: Any) -> dict:
+    """`JointParam` → 线上 dict。
+
+    ⚠ 键名用 **snake_case** (与 SDK 的 dataclass 字段同名), 不跟状态帧那套 camelCase
+    —— 这里的键就是 SDK 的字段名, 改成 camelCase 只会让两边对不上。
+    """
+    return {
+        "idx": int(jp.idx),
+        "kp": float(jp.kp),
+        "kd": float(jp.kd),
+        "tau_max": float(jp.tau_max),
+        "q_min": float(jp.q_min),
+        "q_max": float(jp.q_max),
+    }
 
 
 def _state_result(state: Any) -> Optional[dict]:
