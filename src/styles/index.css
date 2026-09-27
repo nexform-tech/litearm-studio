@@ -1,0 +1,270 @@
+@import 'tailwindcss';
+
+/* Self-hosted JetBrains Mono (no external font CDN). */
+@import '@fontsource/jetbrains-mono/400.css';
+@import '@fontsource/jetbrains-mono/500.css';
+@import '@fontsource/jetbrains-mono/700.css';
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  color-scheme: light;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --success: oklch(0.6 0.15 145);
+  --success-foreground: oklch(0.985 0 0);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --radius: 0.625rem;
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+
+  /* ── LiteArm 设计令牌 ──────────────────────────────────────────────
+     业务组件（features/**）统一引用这里的令牌，而不是写死颜色；每个
+     令牌在 .dark 里成对覆盖，因此切换主题时不需要改任何组件代码。 */
+  --app-bg: #f6f7f9; /* 应用外壳底色（卡片比它更亮，用于浮起） */
+  --ink: #17212f; /* 最强文本：标题、关键数值 */
+  --ink-strong: #3c4a5c; /* 次级标题、按钮文字 */
+  --ink-muted: #46596f; /* 正文次要文本 */
+  --ink-soft: #5d6b7d; /* 三级文本 */
+  --ink-subtle: #6b7787; /* 非激活态文本 */
+  --ink-faint: #9aa6b6; /* 占位、禁用、图表刻度 */
+  --ink-ghost: #b3bcc8; /* 更弱的禁用态文本 */
+  --line: #e4e9f0; /* 标准描边 */
+  --line-strong: #c3cbd6; /* 强调描边、未选中的开关 */
+  --line-soft: #f1f4f9; /* 极轻分隔线 / 内嵌底色 */
+  --hover: #f4f7fb; /* 行悬浮底色 */
+  --overlay: rgb(255 255 255 / 70%); /* 3D 预览等叠加层上的浮标底色 */
+  --seg-active: #ffffff; /* 分段控件当前项底色（比轨道更亮） */
+  --chip: #17212f; /* 深色胶囊底（浅色主题下即"墨色"） */
+  --chip-fg: #ffffff; /* 深色胶囊上的文字 */
+  --chip-muted: #46596f; /* 深色胶囊上的次要描边 */
+  --link: #2563eb;
+  --info: #2563eb;
+  --info-soft: #eaf2ff;
+  --info-line: #cddcfa;
+  --ok: #137a44;
+  --ok-soft: #eaf7ef;
+  --ok-line: #c6e9d3;
+  --warn: #8a6410;
+  --warn-soft: #fff7e2;
+  --warn-line: #f2c86b;
+  --danger: #c62b30;
+  --danger-soft: #fdecec;
+  --danger-line: #f3c9ca;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+/* Fluid root font-size: every rem-based size in the app (spacing, type,
+   card/control dimensions) scales together with the viewport, instead of
+   the app clipping/scrolling panels that no longer fit a shorter or
+   narrower screen. Calibrated so 1rem == 16px at a 1920x1080 reference
+   viewport (the size the design's original px values were tuned for),
+   and clamped so text never becomes unreadably small or comically large. */
+html {
+  font-size: clamp(13px, 0.9vh + 0.35vw, 17px);
+}
+
+body {
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--link);
+  text-decoration: none;
+}
+a:hover {
+  color: color-mix(in oklab, var(--link) 82%, black);
+  text-decoration: underline;
+}
+
+@theme inline {
+  --font-heading: var(--font-sans);
+  --font-sans:
+    system-ui, -apple-system, 'PingFang SC', 'HarmonyOS Sans SC', 'Microsoft YaHei', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  /* LiteArm 设计令牌 → Tailwind 工具类（bg-chip / text-ink-muted ...）。
+     inline 让工具类保留变量引用，从而跟随 .dark 实时换色。 */
+  --color-app-bg: var(--app-bg);
+  --color-ink: var(--ink);
+  --color-ink-strong: var(--ink-strong);
+  --color-ink-muted: var(--ink-muted);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-subtle: var(--ink-subtle);
+  --color-ink-faint: var(--ink-faint);
+  --color-ink-ghost: var(--ink-ghost);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-line-soft: var(--line-soft);
+  --color-seg-active: var(--seg-active);
+  --color-chip: var(--chip);
+  --color-chip-fg: var(--chip-fg);
+  --color-chip-muted: var(--chip-muted);
+  --color-link: var(--link);
+  --color-info-soft: var(--info-soft);
+  --color-info-line: var(--info-line);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-ok-line: var(--ok-line);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-warn-line: var(--warn-line);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-danger-line: var(--danger-line);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+.dark {
+  color-scheme: dark;
+  --background: #0e151d;
+  --foreground: #e7edf6;
+  --card: #1a2330;
+  --card-foreground: #e7edf6;
+  --popover: #1a2330;
+  --popover-foreground: #e7edf6;
+  --primary: #e7edf6;
+  --primary-foreground: #131a24;
+  --secondary: #26313f;
+  --secondary-foreground: #e7edf6;
+  --muted: #232e3b;
+  --muted-foreground: #a7b4c7;
+  --accent: #26313f;
+  --accent-foreground: #e7edf6;
+  --destructive: #f0707a;
+  --success: #4ade80;
+  --success-foreground: #10241a;
+  --border: #2c3745;
+  --input: #35424f;
+  --ring: #5b6b80;
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
+
+  /* 深色主题下的令牌取值：保持与浅色主题相同的明度关系
+     （页面 < 导航栏 < 卡片 < 悬浮/当前项），只是整体反转。 */
+  --app-bg: #0e151d;
+  --ink: #e7edf6;
+  --ink-strong: #ccd6e4;
+  --ink-muted: #a7b4c7;
+  --ink-soft: #98a6ba;
+  --ink-subtle: #8f9db2;
+  --ink-faint: #6f7d90;
+  --ink-ghost: #5d6b7f;
+  --line: #2c3745;
+  --line-strong: #3d4a5c;
+  --line-soft: #232e3b;
+  --hover: rgb(255 255 255 / 6%);
+  --overlay: rgb(13 22 33 / 78%);
+  --seg-active: #38455a;
+  --chip: #e7edf6;
+  --chip-fg: #131a24;
+  --chip-muted: #64748b;
+  --link: #7aaeff;
+  --info: #7aaeff;
+  --info-soft: #16233a;
+  --info-line: #294067;
+  --ok: #4ade80;
+  --ok-soft: #16301f;
+  --ok-line: #245034;
+  --warn: #f5c76b;
+  --warn-soft: #33280f;
+  --warn-line: #5c4718;
+  --danger: #f08a8f;
+  --danger-soft: #35171a;
+  --danger-line: #5c2a2e;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+}

@@ -1,10 +1,8 @@
-# Provisional: replace once the desktop stack is chosen
-# (Electron, Tauri, Qt, .NET, ...).
-
 # Build output
 build/
 Build/
 dist/
+dist-ssr/
 out/
 target/
 release/
@@ -19,9 +17,46 @@ Release/
 
 # Toolchain caches and dependencies
 node_modules/
+.pnpm-store/
 .venv/
 __pycache__/
+*.pyc
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
 compile_commands.json
+
+# Logs
+/logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Tests & coverage
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+
+# Editor & OS files
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Environment variables
+.env*
+!.env.production
+
+# Controller runtime / backup files
+controller-backup/

@@ -1,0 +1,142 @@
+{
+  "modes": {
+    "position": "位置",
+    "drag": "拖动",
+    "impedance": "阻抗"
+  },
+  "submodes": {
+    "joint": "关节",
+    "cartesian": "笛卡尔"
+  },
+  "poseCard": {
+    "title": "当前位姿"
+  },
+  "controlBar": {
+    "clearFault": "清错",
+    "readyPose": "就绪姿态",
+    "readyPoseTitle": "移动至推荐工作就绪姿态 Home",
+    "zeroPose": "回零位",
+    "zeroPoseTitle": "移动至零位 (各轴 0 rad)",
+    "speed": "速度",
+    "trajPlayingLocked": "轨迹回放中 · 手动点动已锁定",
+    "stopTakeover": "中止接管",
+    "startPlayback": "▶ 开始回放",
+    "stopPlayback": "■ 停止回放"
+  },
+  "cartesian": {
+    "title": "笛卡尔空间",
+    "baseFrame": "基坐标系",
+    "toolFrame": "工具坐标系",
+    "simHint": "仿真模式仅支持关节空间操作",
+    "jogSubMode": "方向点动",
+    "targetSubMode": "目标位姿 movel",
+    "origin": "原点",
+    "transStep": "平移步长",
+    "rotStep": "旋转步长",
+    "transTitle": "平移 · mm",
+    "rotTitle": "旋转 · deg",
+    "targetPoseTitle": "目标位置 [X, Y, Z] (m) 与姿态角 [Roll, Pitch, Yaw] (rad)",
+    "syncCurrentPose": "⇠ 同步当前位姿",
+    "movelBtn": "直线运动到目标位姿 (movel)",
+    "movelMoving": "正在移动...",
+    "pad": {
+      "fwd": "前",
+      "back": "后",
+      "left": "左",
+      "right": "右",
+      "up": "上",
+      "down": "下",
+      "toolFwd": "工具前",
+      "toolBack": "工具后",
+      "toolLeft": "工具左",
+      "toolRight": "工具右",
+      "feed": "进给",
+      "retract": "退回",
+      "rotBaseX": "绕基X",
+      "rotBaseY": "绕基Y",
+      "rotBaseZ": "绕基Z",
+      "rotToolX": "绕工具X",
+      "rotToolY": "绕工具Y",
+      "rotToolZ": "绕工具Z",
+      "pose": "姿态",
+      "toolPose": "工具姿态"
+    }
+  },
+  "jointSpace": {
+    "title": "关节空间",
+    "jointsRange": "J1–J7",
+    "send": "发送",
+    "sendTitle": "发送运动命令",
+    "releaseOnly": "松手即下发",
+    "releaseOnlyTitle": "松手（释放滑条）时才下发指令"
+  },
+  "gripper": {
+    "title": "末端执行器",
+    "subtitle": "LiteGrip 平行夹爪 · 行程 0–{{max}} mm",
+    "openingPosition": "开合位置",
+    "open": "张开",
+    "close": "闭合",
+    "closeLabel": "闭合 0",
+    "openLabel": "{{max}} mm 张开",
+    "paramsTitle": "夹爪参数",
+    "targetForce": "目标夹持力",
+    "moveSpeed": "移动速度",
+    "faultStatus": "夹爪异常",
+    "opFailed": "{{op}}失败：{{message}}"
+  },
+  "hand": {
+    "title": "末端执行器",
+    "subtitle": "LinkerHand 灵巧手 · 10自由度多关节",
+    "torqueLimit": "最大力矩限制",
+    "presetGestures": "快捷动作与手势库",
+    "clearFaults": "清除故障",
+    "faultStatus": "灵巧手异常",
+    "opFailed": "{{op}}失败：{{message}}",
+    "gestures": {
+      "open": "全张开",
+      "openDesc": "所有手指伸展至0位",
+      "close": "全闭合",
+      "closeDesc": "所有手指完全闭合",
+      "pinch": "拇食指捏合",
+      "pinchDesc": "拇指与食指精准对捏",
+      "point": "食指指向",
+      "pointDesc": "食指伸直，其余手指闭合",
+      "ok": "OK 手势",
+      "okDesc": "拇指与食指成环",
+      "peace": "胜利 V 手势",
+      "peaceDesc": "食指与中指伸展",
+      "rock": "摇滚手势",
+      "rockDesc": "食指与小指伸展",
+      "thumb_up": "竖起拇指",
+      "thumb_upDesc": "拇指竖起点赞"
+    }
+  },
+  "trajectory": {
+    "title": "轨迹",
+    "simHint": "仿真模式不支持轨迹操作",
+    "refresh": "刷新",
+    "namePlaceholder": "轨迹名称（可选）",
+    "record": "录制",
+    "stopAndSave": "停止并保存",
+    "playing": "回放中",
+    "delete": "删除",
+    "deleteTitle": "删除轨迹",
+    "deleteConfirmText": "确定删除轨迹「{{name}}」？删除后不可恢复。",
+    "lockNoteIdle": "回放期间点动与滑条会锁定，急停始终可用。",
+    "lockNoteActive": "点动与滑条已锁定 · 急停可用 · 按下中止接管可立即取回控制权。"
+  },
+  "preview": {
+    "title": "3D 实时预览",
+    "axes": "坐标系",
+    "focus": "聚焦",
+    "topView": "俯视",
+    "expand": "全屏预览",
+    "loading": "3D 模型加载中…"
+  },
+  "metrics": {
+    "tracking": "跟踪误差",
+    "current": "相电流",
+    "power": "总功率",
+    "safety": "安全边界"
+  }
+}

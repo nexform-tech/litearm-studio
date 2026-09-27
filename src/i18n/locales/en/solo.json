@@ -1,0 +1,142 @@
+{
+  "modes": {
+    "position": "Position",
+    "drag": "Drag",
+    "impedance": "Impedance"
+  },
+  "submodes": {
+    "joint": "Joint",
+    "cartesian": "Cartesian"
+  },
+  "poseCard": {
+    "title": "Current Pose"
+  },
+  "controlBar": {
+    "clearFault": "Clear Error",
+    "readyPose": "Ready Pose",
+    "readyPoseTitle": "Move to recommended ready pose Home",
+    "zeroPose": "Zero Pose",
+    "zeroPoseTitle": "Move to zero pose (all axes 0 rad)",
+    "speed": "Speed",
+    "trajPlayingLocked": "Trajectory playing · Manual jog locked",
+    "stopTakeover": "Abort Takeover",
+    "startPlayback": "▶ Play",
+    "stopPlayback": "■ Stop"
+  },
+  "cartesian": {
+    "title": "Cartesian Space",
+    "baseFrame": "Base Frame",
+    "toolFrame": "Tool Frame",
+    "simHint": "Sim mode only supports joint space operations",
+    "jogSubMode": "Directional Jog",
+    "targetSubMode": "Target Pose movel",
+    "origin": "Origin",
+    "transStep": "Trans Step",
+    "rotStep": "Rot Step",
+    "transTitle": "Translation · mm",
+    "rotTitle": "Rotation · deg",
+    "targetPoseTitle": "Target position [X, Y, Z] (m) & Orientation [Roll, Pitch, Yaw] (rad)",
+    "syncCurrentPose": "⇠ Sync Current Pose",
+    "movelBtn": "Linear motion to target pose (movel)",
+    "movelMoving": "Moving...",
+    "pad": {
+      "fwd": "Forward",
+      "back": "Back",
+      "left": "Left",
+      "right": "Right",
+      "up": "Up",
+      "down": "Down",
+      "toolFwd": "Tool Fwd",
+      "toolBack": "Tool Back",
+      "toolLeft": "Tool Left",
+      "toolRight": "Tool Right",
+      "feed": "Feed",
+      "retract": "Retract",
+      "rotBaseX": "Rot Base X",
+      "rotBaseY": "Rot Base Y",
+      "rotBaseZ": "Rot Base Z",
+      "rotToolX": "Rot Tool X",
+      "rotToolY": "Rot Tool Y",
+      "rotToolZ": "Rot Tool Z",
+      "pose": "Pose",
+      "toolPose": "Tool Pose"
+    }
+  },
+  "jointSpace": {
+    "title": "Joint Space",
+    "jointsRange": "J1–J7",
+    "send": "Send",
+    "sendTitle": "Send motion command",
+    "releaseOnly": "Send on Release",
+    "releaseOnlyTitle": "Only send command when slider is released"
+  },
+  "gripper": {
+    "title": "End Effector",
+    "subtitle": "LiteGrip Parallel Gripper · Stroke 0–{{max}} mm",
+    "openingPosition": "Opening Position",
+    "open": "Open",
+    "close": "Close",
+    "closeLabel": "Close 0",
+    "openLabel": "{{max}} mm Open",
+    "paramsTitle": "Gripper Parameters",
+    "targetForce": "Target Force",
+    "moveSpeed": "Move Speed",
+    "faultStatus": "Gripper Fault",
+    "opFailed": "{{op}} failed: {{message}}"
+  },
+  "hand": {
+    "title": "End Effector",
+    "subtitle": "LinkerHand Dexterous Hand · 10-DOF Multi-Joint",
+    "torqueLimit": "Max Torque Limit",
+    "presetGestures": "Preset Gestures & Actions",
+    "clearFaults": "Clear Faults",
+    "faultStatus": "Hand Fault",
+    "opFailed": "{{op}} failed: {{message}}",
+    "gestures": {
+      "open": "Open",
+      "openDesc": "All fingers extended to 0",
+      "close": "Close",
+      "closeDesc": "All fingers fully closed",
+      "pinch": "Pinch",
+      "pinchDesc": "Thumb and index finger precision pinch",
+      "point": "Point",
+      "pointDesc": "Index finger extended, other fingers closed",
+      "ok": "OK Gesture",
+      "okDesc": "Thumb and index finger form a ring",
+      "peace": "Victory / V",
+      "peaceDesc": "Index and middle fingers extended",
+      "rock": "Rock On",
+      "rockDesc": "Index and pinky fingers extended",
+      "thumb_up": "Thumbs Up",
+      "thumb_upDesc": "Thumb extended upwards"
+    }
+  },
+  "trajectory": {
+    "title": "Trajectory",
+    "simHint": "Sim mode does not support trajectory operations",
+    "refresh": "Refresh",
+    "namePlaceholder": "Trajectory name (optional)",
+    "record": "Record",
+    "stopAndSave": "Stop & Save",
+    "playing": "Playing",
+    "delete": "Delete",
+    "deleteTitle": "Delete Trajectory",
+    "deleteConfirmText": "Delete trajectory \"{{name}}\"? This cannot be undone.",
+    "lockNoteIdle": "Jogging and sliders are locked during playback. Emergency stop is always available.",
+    "lockNoteActive": "Jogging and sliders locked · Emergency stop active · Click abort takeover to reclaim control immediately."
+  },
+  "preview": {
+    "title": "3D Live Preview",
+    "axes": "Axes",
+    "focus": "Focus",
+    "topView": "Top View",
+    "expand": "Fullscreen",
+    "loading": "Loading 3D model…"
+  },
+  "metrics": {
+    "tracking": "Tracking Error",
+    "current": "Phase Current",
+    "power": "Total Power",
+    "safety": "Safety Boundary"
+  }
+}

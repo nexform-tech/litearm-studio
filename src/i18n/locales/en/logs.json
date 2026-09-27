@@ -1,0 +1,15 @@
+{
+  "tabsController": "Controller Logs",
+  "searchPlaceholder": "Search logs…",
+  "loading": "Loading…",
+  "noLogs": "No logs yet",
+  "time": "Time",
+  "level": "Level",
+  "content": "Message",
+  "controllerNotConnected": "Arm not connected — controller logs unavailable",
+  "total": "Total {{count}}",
+  "prevPage": "Prev",
+  "nextPage": "Next",
+  "pauseAutoRefresh": "Pause Auto-Refresh",
+  "resumeAutoRefresh": "Resume Auto-Refresh"
+}

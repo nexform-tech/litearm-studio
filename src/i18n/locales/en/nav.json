@@ -1,0 +1,19 @@
+{
+  "control": "Control",
+  "controlTitle": "Robot Arm Console",
+  "log": "Logs",
+  "logTitle": "Log List",
+  "settings": "Settings",
+  "settingsTitle": "Settings",
+  "connectionSettings": "Controller Connection Settings",
+  "endpointHostLabel": "IP Address",
+  "endpointPortLabel": "Port",
+  "endpointPortInvalid": "Port must be a number between 1 and 65535",
+  "endpointHelp": "Built-in default is 192.168.1.1:7449. Changes will be saved locally and persist after refresh.",
+  "editEndpoint": "Edit controller endpoint",
+  "connect": "Connect",
+  "themeToDark": "Switch to dark theme",
+  "themeToLight": "Switch to light theme",
+  "themeDarkLabel": "Dark",
+  "themeLightLabel": "Light"
+}

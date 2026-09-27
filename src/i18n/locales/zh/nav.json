@@ -1,0 +1,19 @@
+{
+  "control": "控制",
+  "controlTitle": "机械臂控制台",
+  "log": "日志",
+  "logTitle": "日志列表",
+  "settings": "设置",
+  "settingsTitle": "设置",
+  "connectionSettings": "控制器连接设置",
+  "endpointHostLabel": "IP 地址",
+  "endpointPortLabel": "端口",
+  "endpointPortInvalid": "端口需为 1-65535 的数字",
+  "endpointHelp": "默认地址为 192.168.1.1:7449。修改后将保存到本地，刷新后仍生效。",
+  "editEndpoint": "修改控制器端点",
+  "connect": "连接",
+  "themeToDark": "切换为深色配色",
+  "themeToLight": "切换为浅色配色",
+  "themeDarkLabel": "深色",
+  "themeLightLabel": "浅色"
+}
