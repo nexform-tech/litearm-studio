@@ -77,6 +77,32 @@ jobs:
         working-directory: litearm-studio
         run: pnpm build
 
+      # ---- 本地守护进程 (Python) ----
+      # 它同样跑在必需的 `test` 检查里: 只挂在另一个 job 上的话, Python 侧的失败
+      # 挡不住合并。
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # litearm-python 不在 PyPI 上, 只能从它自己的仓库检出后装。
+      - name: Checkout LiteArm Python SDK
+        uses: actions/checkout@v4
+        with:
+          repository: nexform-tech/litearm-python
+          path: litearm-python
+
+      - name: Install the SDK and the daemon
+        working-directory: litearm-studio
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ../litearm-python
+          pip install -e "daemon[test]"
+
+      - name: Daemon unit tests (pytest)
+        working-directory: litearm-studio
+        run: python -m pytest daemon/tests -q
+
       - name: Validate repository standards
         working-directory: litearm-studio
         run: |

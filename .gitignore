@@ -21,6 +21,7 @@ node_modules/
 .venv/
 __pycache__/
 *.pyc
+*.egg-info/
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
