@@ -273,6 +273,12 @@ def test_fake_end_to_end_flow(fake_session: Session) -> None:
     fake_session.execute("enable", {})
 
     fake_session.execute("movej", {"q": Q7, "speed": 0.3})
+    # ⚠ `state()` 读的是 **50Hz 轮询线程的缓存帧**, 而 `execute("movej")` 返回的是 SDK
+    # 自己的收尾帧 —— 两者之间有一个最多一拍 (20ms) 的窗口。直接断言 `state()["q"]`
+    # 会读到时**运动前**的那一帧: 实测 40 次单跑里红 13 次 (整套用例并行时更容易红),
+    # 而这条用例又挂在必需的 `test` 检查里。故等推送追上, 而不是削弱断言。
+    assert _wait(lambda: (fake_session.state() or {}).get("q", [None])[0]
+                 == pytest.approx(0.1, abs=1e-3)), f"状态没跟上运动: {fake_session.state()}"
     state = fake_session.state()
     assert state is not None
     assert state["q"][0] == pytest.approx(0.1, abs=1e-3)
