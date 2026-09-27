@@ -20,7 +20,6 @@
   "startedAt": "开始时间",
   "endedAt": "结束时间",
   "sessionStatus": "状态",
-  "robotSerial": "序列号",
   "samples": "采样数",
   "view": "查看",
   "export": "导出 CSV",

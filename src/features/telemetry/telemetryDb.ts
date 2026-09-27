@@ -27,7 +27,6 @@ type SessionRow = {
   endedAt: number | null
   /** 建立会话时的串口名（daemon `conn.port`）——本地程序自动发现，仅作记录。 */
   port: string
-  robotSerial: string
   estimatedBytes: number
 }
 
@@ -45,12 +44,17 @@ const SAMPLE_STORE = 'samples'
 // 估算（校准自 V8 结构化克隆实测 + 索引项开销）。
 export const MAX_SESSIONS = 200
 
+/** 状态串的基准字节数 —— 估算里拿 `state` 的实际字节数减去它，因为常量 70 已经含了
+ *  一个短状态串的开销。取 7 是为了**保持既有估算口径不变**（会动到
+ *  `estimateSampleBytes` 的校准与相关用例，改前先想清楚）。 */
+const STATE_BASELINE_BYTES = 7
+
 /** 估算一条采样在 IndexedDB 中的体积（字节）。
  *  校准自 V8 structuredClone 序列化实测：7 关节样本约 550B（JSON 约 427B），
  *  另加索引项（主键 + sessionId + bySessionTsId）约 64B 的保守开销。
  *  该估算值同时用于写入时的会话累计与裁剪时的扣减，保证口径一致。 */
 export function estimateSampleBytes(sample: NewTelemetrySample): number {
-  const stateExtra = new TextEncoder().encode(sample.state).length - 'holding'.length
+  const stateExtra = new TextEncoder().encode(sample.state).length - STATE_BASELINE_BYTES
   return (
     70 + // 记录头 + id/sessionId/ts + 各数组头
     8 * (sample.q.length + sample.dq.length + sample.tau.length + sample.errs.length) +
@@ -141,11 +145,11 @@ class TelemetryDb {
     })
   }
 
-  async addSession(startedAt: number, port: string, robotSerial: string): Promise<number> {
+  async addSession(startedAt: number, port: string): Promise<number> {
     const db = await this.open()
     const tx = db.transaction(SESSION_STORE, 'readwrite')
     const id = await this.request(
-      tx.objectStore(SESSION_STORE).add({ startedAt, endedAt: null, port, robotSerial, estimatedBytes: 0 }),
+      tx.objectStore(SESSION_STORE).add({ startedAt, endedAt: null, port, estimatedBytes: 0 }),
     )
     await this.done(tx)
     return id as number

@@ -32,7 +32,7 @@ describe('useTelemetryState', () => {
 
   it('retries and shows samples once a new session gets data', async () => {
     // 模拟刚打开上位机：新会话已建但记录器还没落盘任何采样
-    const id = await telemetryDb.addSession(Date.now() / 1000, '/dev/ttyACM0', 'GENERIC-V4')
+    const id = await telemetryDb.addSession(Date.now() / 1000, '/dev/ttyACM0')
 
     const { result } = renderHook(() => useTelemetryState())
     await waitFor(() => expect(result.current.sessions).toHaveLength(1))
@@ -50,7 +50,7 @@ describe('useTelemetryState', () => {
   })
 
   it('loadOlder keeps advancing past the view cap and retains the oldest window', async () => {
-    const id = await telemetryDb.addSession(Date.now() / 1000, '/dev/ttyACM0', 'GENERIC-V4')
+    const id = await telemetryDb.addSession(Date.now() / 1000, '/dev/ttyACM0')
     await telemetryDb.addSamples(
       id,
       Array.from({ length: 2100 }, (_, i) => sample(i + 1)),
@@ -76,10 +76,10 @@ describe('useTelemetryState', () => {
   }, 15000)
 
   it('keeps the selected newest session after saving the retention cap', async () => {
-    const old = await telemetryDb.addSession(Date.now() / 1000 - 100, '/dev/ttyACM0', 'GENERIC-V4')
+    const old = await telemetryDb.addSession(Date.now() / 1000 - 100, '/dev/ttyACM0')
     await telemetryDb.addSamples(old, [sample(Date.now() / 1000 - 99)])
     // 最新会话刚建立、还没有采样（当前记录会话）
-    const newest = await telemetryDb.addSession(Date.now() / 1000, '/dev/ttyACM0', 'GENERIC-V4')
+    const newest = await telemetryDb.addSession(Date.now() / 1000, '/dev/ttyACM0')
 
     const { result } = renderHook(() => useTelemetryState())
     await waitFor(() => expect(result.current.selectedId).toBe(newest))

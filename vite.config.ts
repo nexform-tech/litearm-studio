@@ -69,7 +69,7 @@ export default defineConfig({
     watch: {
       // 构建缓存/产物目录不参与监听：Windows SDK 缓存含符号链接循环（ELOOP），
       // 且这些目录变更无需触发 HMR，避免 dev 服务被文件监听器搞崩。
-      ignored: ['**/.git/**', '**/node_modules/**', '**/.build-*/**', '**/dist-*/**', '**/src-tauri/target/**'],
+      ignored: ['**/.git/**', '**/node_modules/**', '**/.build-*/**', '**/dist-*/**'],
     },
   },
 })
