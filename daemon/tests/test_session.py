@@ -8,7 +8,9 @@ import threading
 import time
 from typing import Optional
 
+import litearm
 import pytest
+from litearm import Arm
 
 from litearm_studio_daemon.errors import (
     MotionBusyError,
@@ -76,6 +78,56 @@ def test_connect_without_device_lands_in_error_not_crash() -> None:
 def test_disconnect_is_idempotent(fake_session: Session) -> None:
     assert fake_session.disconnect() is True
     assert fake_session.disconnect() is False   # 已经断了 ⇒ no-op
+
+
+def test_disconnect_during_the_handshake_cancels_the_connect(monkeypatch,
+                                                             ) -> None:
+    """握手在途时按断开, 不许被握手完成覆盖成 connected。
+
+    ⚠ 上一版 `disconnect()` 只看「这一刻有没有 arm」, 而握手期间 arm 还是 None ⇒
+    它报了 disconnected 就返回, 随后 `_open` 把会话连上 —— 用户看到已断开, 串口却
+    被占着。这条用例把「代次作废」钉住。
+    """
+    real_connect = Arm.connect
+
+    def slow_connect(self, *args, **kwargs):
+        time.sleep(0.4)
+        return real_connect(self, *args, **kwargs)
+
+    monkeypatch.setattr(Arm, "connect", slow_connect)
+    s = Session(fake=True)
+    try:
+        assert s.connect() is True
+        assert s.arm_info()["status"] == "connecting"
+        assert s.disconnect() is True          # 取消了一次在途握手, 不是 no-op
+        assert s.arm_info()["status"] == "disconnected"
+        time.sleep(0.6)                        # 等握手真的跑完
+        info = s.arm_info()
+        assert info["status"] == "disconnected", f"握手把断开覆盖了: {info}"
+        assert s.connected is False
+    finally:
+        s.close()
+
+
+def test_a_handshake_failure_after_disconnect_is_not_reported_as_error(
+        monkeypatch) -> None:
+    """断开之后的握手失败不许把状态改写成 error —— 用户按的是断开, 不是连接失败。"""
+
+    def failing_connect(self, *args, **kwargs):
+        time.sleep(0.3)
+        raise litearm.TransportError("握手失败")
+
+    monkeypatch.setattr(Arm, "connect", failing_connect)
+    s = Session(fake=True)
+    try:
+        assert s.connect() is True
+        assert s.disconnect() is True
+        time.sleep(0.5)
+        info = s.arm_info()
+        assert info["status"] == "disconnected", f"被改成了 {info['status']}"
+        assert info["error"] is None
+    finally:
+        s.close()
 
 
 # ------------------------------------------------------------------ 命令白名单
