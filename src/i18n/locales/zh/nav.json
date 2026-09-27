@@ -3,8 +3,6 @@
   "controlTitle": "机械臂控制台",
   "log": "遥测",
   "logTitle": "遥测记录",
-  "settings": "设置",
-  "settingsTitle": "设置",
   "connect": "连接",
   "themeToDark": "切换为深色配色",
   "themeToLight": "切换为浅色配色",

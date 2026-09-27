@@ -22,7 +22,6 @@ class TelemetryRecorder {
   private sessionId: number | null = null
   private sessionReady: Promise<number | null> | null = null
   private port = ''
-  private robotSerial = ''
   private startedAt: number | null = null
   private lastSampleAt: number | null = null
   private samplesRecorded = 0
@@ -82,7 +81,6 @@ class TelemetryRecorder {
     return {
       recording: this.sessionId !== null && armClient.status === 'connected',
       port: this.port || (armClient.conn?.port ?? ''),
-      robotSerial: this.robotSerial,
       startedAt: this.startedAt,
       lastSampleAt: this.lastSampleAt,
       samplesRecorded: this.samplesRecorded,
@@ -123,14 +121,11 @@ class TelemetryRecorder {
       this.finalizeTimer = null
     }
     this.port = armClient.conn?.port ?? ''
-    // 新协议（计划 3.3）没有 robotSerial 对应物：设备身份改用 license UID，
-    // 当前尚未接入，先留空。
-    this.robotSerial = ''
     this.startedAt = Date.now() / 1000
     this.lastSampleAt = null
     this.samplesRecorded = 0
     this.sessionReady = telemetryDb
-      .addSession(this.startedAt, this.port, this.robotSerial)
+      .addSession(this.startedAt, this.port)
       .then((id) => {
         this.sessionId = id
         this.notify()

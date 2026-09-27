@@ -2,44 +2,44 @@
 
 [English](README.md) | **简体中文**
 
-**LiteArm Studio** 是专为 LiteArm 七自由度协作机械臂打造的新一代图形化上位机控制台。基于 React 19、TypeScript、Three.js 与 Vite 构建，在浏览器中提供高性能实时运动控制、3D 动力学可视化、轨迹拖拽示教与全周期遥测诊断能力。
+**LiteArm Studio** 是 LiteArm 七自由度协作机械臂的操作上位机。它是「本地 Python 程序 + 浏览器界面」：**只有本地程序碰硬件**，界面通过 `127.0.0.1` 上的 WebSocket 与它通信。
 
 ---
 
-## 📖 文档与操作手册
+## 架构
 
-- 📕 **[用户操作手册 (简体中文)](docs/USER_MANUAL_ZH.md)**
-- 📘 **[User Manual (English)](docs/USER_MANUAL.md)**
+```
+浏览器窗口 (React UI)
+   │  HTTP  → 静态资源、/api/health
+   │  WS    → 状态推送(下行) / 命令(上行)
+   ▼
+litearm-studio-daemon  (Python, 只监听本机, `daemon/`)
+   ▼
+litearm-python  ──USB CDC (1d50:606f)──>  STM32  ──CAN──>  电机
+```
+
+- **本地程序独占机械臂**：自动发现 USB CDC 设备（或 `--port` 指定），以 50 Hz 从 SDK 的缓存帧推送归一化状态；所有 SDK 调用跑在同一条单线程执行器上。急停与失能走**另一条**通道，运动在途时依然可达。
+- **本地程序同时托管界面**：提供静态资源，并以 Chromium `--app=` 模式开无地址栏窗口（找不到就退回普通标签页）。**关掉窗口不会打断已在执行的会话。**
+- **只监听 `127.0.0.1`**：换地址只能改代码 —— 把一个能驱动机械臂的接口暴露到局域网是安全事故，不是配置项。
 
 ---
 
 ## ✨ 核心特性
 
-- 🦾 **单臂运动控制**：
-  - 基于真实 URDF 模型的 3D 数字孪生姿态渲染与空间坐标系可视化；
-  - J1–J7 关节空间独立滑条控制，支持实时松手下发与批量暂存下发模式；
-  - 笛卡尔空间方向点动盘（基座/工具坐标系）与目标位姿直线插补（`movel`）；
-  - 高优先级软件急停（**STOP**）、一键回零位、就绪姿态定位与伺服清错。
-- 🎬 **轨迹拖拽示教与回放**：
-  - 零重力模式下手把手拖拽示教录制（100 Hz 高频采样）；
-  - 控制器端轨迹库管理、多倍速回放（0.25× 至 2.0×）、循环回放与中途安全接管。
-- 📈 **遥测与系统诊断**：
-  - 10 Hz 实时全轴状态采样（角度、角速度、输出力矩、驱动温度与跟踪误差）；
-  - 本地 IndexedDB 数据库会话记录，支持自定义保留上限（10–500 MB）与一键导出 CSV；
-  - 控制器后台服务运行日志实时流式读取、级别过滤与关键词搜索。
-- ⚙️ **系统校准与高级设置**：
-  - 末端工具负载质量与质心偏置（COM）重力补偿校准；
-  - 机械臂安装姿态校准（正装、倒吊装、侧立装）；
-  - 关节安全限位边界监控、驱动器闭环 PD 增益调节与后台守护服务安全重启。
+- 🦾 **单臂运动控制**
+  - 基于真实 URDF 模型的 3D 数字孪生与坐标系可视化；
+  - J1–J7 关节滑条，量程取自控制器自己的软限位（`get_joint_params`），支持实时下发与批量暂存下发；
+  - 笛卡尔空间点动（基座/工具坐标系）与目标位姿直线运动（`movel`）；
+  - 就绪姿态、固件低速度回零、零重力拖动示教、使能/失能、清除故障；
+  - 高优先级 **STOP**（急停），运动过程中依然可达。
+- 📈 **遥测**
+  - 10 Hz 全轴采样（角度、角速度、力矩、驱动温度、驱动错误码）；
+  - 本地 IndexedDB 会话记录，保留上限可配（10–500 MB），支持导出 CSV。
+- 🌐 **国际化** —— 简体中文 / English。
 
----
+### 本版不做
 
-## 🛠️ 技术栈
-
-- **前端核心**：React 19, TypeScript, Vite 8, Tailwind CSS v4
-- **3D 可视化**：Three.js, URDF-Loader
-- **数据与组件**：IndexedDB（本地遥测引擎）, Radix UI, Lucide Icons, Sonner
-- **国际化**：i18next（简体中文 / English）
+轨迹拖拽示教与回放、控制器日志页、夹爪/灵巧手面板、逐关节阻抗与保持模式（见 [docs/REFACTOR_PLAN.md](docs/REFACTOR_PLAN.md) §5–6）。设置与校准页（负载、增益、限位、自检）**尚未接线**：本地程序已有对应命令，但界面还到不了。
 
 ---
 
@@ -47,40 +47,61 @@
 
 ### 1. 环境准备
 
-- **Node.js**：`v20.0.0` 或更高版本
-- **包管理器**：`pnpm`（`corepack enable` 或 `npm install -g pnpm`）
-- **机械臂控制器**：已上电并通过 USB 连接；上位机经 [`litearm-python`](https://github.com/nexform-tech/litearm-python) SDK 直连（无需 server，也无需 IP）
-
-### 2. 网页端开发调试
+- **Node.js** `v20.0.0`+ 与 **pnpm**（`corepack enable` 或 `npm install -g pnpm`）
+- **Python** 3.10+（运行本地程序）
+- `litearm-python` —— **不在 PyPI 上**，需克隆后本地安装：
 
 ```bash
-# 将 SDK 与上位机项目克隆到同级目录下
-git clone https://github.com/nexform-tech/litearm-js.git
-git clone https://github.com/nexform-tech/litearm-studio.git
-
-cd litearm-studio
-pnpm install
-
-# 启动本地开发服务器
-pnpm dev
+git clone https://github.com/nexform-tech/litearm-python.git
 ```
 
-在浏览器中打开 `http://localhost:5173`。
+### 2. 跑起完整应用
 
-> **项目状态**：传输层正从已下线的 `litearm-server` 迁移到本地控制程序，详见 [docs/REFACTOR_PLAN.md](docs/REFACTOR_PLAN.md)。
+```bash
+cd litearm-studio
+pip install -e ../litearm-python
+pip install -e "daemon[test]"     # 装 fastapi/uvicorn，并提供 litearm-studio-daemon 入口
+pnpm install && pnpm build         # 构建本地程序要托管的界面
+
+litearm-studio-daemon --fake       # 离线：用 SDK 的假传输跑完整会话，不碰硬件
+# litearm-studio-daemon            # 真机：自动发现 USB CDC 设备
+# litearm-studio-daemon --port /dev/ttyACM1 --http-port 9000 --no-open
+```
+
+启动后会打印实际监听的地址（默认 `http://127.0.0.1:8765/`，被占用会自动换端口）并打开窗口。
+
+### 3. 只调前端
+
+```bash
+pnpm install
+pnpm dev        # http://localhost:5173 —— 把 /ws 与 /api 代理到 127.0.0.1:8765
+```
+
+另开一个终端跑 `litearm-studio-daemon --fake --no-open` 即可。
 
 ---
 
-## 📋 常用开发命令
+## 📖 文档
+
+- 📕 **[用户操作手册 (简体中文)](docs/USER_MANUAL_ZH.md)** —— ⚠️ 仍在描述已下线的 server 版，正在重写。
+- 📘 **[User Manual (English)](docs/USER_MANUAL.md)** —— ⚠️ 同上。
+- **[快速开始](docs/QUICKSTART_ZH.md)** / **[Quickstart](docs/QUICKSTART.md)**
+- **[重构计划](docs/REFACTOR_PLAN.md)** —— 架构、接口契约与范围决策。
+- **[本地程序说明](daemon/README.md)**
+
+---
+
+## 📋 常用命令
 
 | 命令 | 说明 |
 | :--- | :--- |
-| `pnpm dev` | 启动 Vite 本地开发服务器 |
-| `pnpm build` | 前端生产构建（输出 `dist/`） |
+| `pnpm dev` | 启动 Vite 开发服务器（代理到本机 daemon） |
+| `pnpm build` | 前端生产构建（输出 `dist/`，即 daemon 托管的内容） |
 | `pnpm preview` | 本地预览生产构建产物 |
 | `pnpm test` | 运行 Vitest 单元测试 |
-| `pnpm lint` | 执行 oxlint 快速静态代码检查 |
-| `pnpm exec tsc -b` | TypeScript 静态类型检查 |
+| `pnpm lint` | 执行 oxlint 静态检查 |
+| `pnpm exec tsc -b` | TypeScript 类型检查 |
+| `python -m pytest daemon/tests -q` | 本地程序单元测试（不需要硬件） |
 
 ---
 

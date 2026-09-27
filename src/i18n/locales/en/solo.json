@@ -7,9 +7,6 @@
     "joint": "Joint",
     "cartesian": "Cartesian"
   },
-  "poseCard": {
-    "title": "Current Pose"
-  },
   "controlBar": {
     "clearFault": "Clear Error",
     "readyPose": "Ready Pose",
@@ -70,13 +67,6 @@
     "axes": "Axes",
     "focus": "Focus",
     "topView": "Top View",
-    "expand": "Fullscreen",
     "loading": "Loading 3D model…"
-  },
-  "metrics": {
-    "tracking": "Tracking Error",
-    "current": "Phase Current",
-    "power": "Total Power",
-    "safety": "Safety Boundary"
   }
 }

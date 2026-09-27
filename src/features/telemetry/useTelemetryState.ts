@@ -226,7 +226,6 @@ export function useTelemetryState() {
     setRetentionMb: telemetryRecorder.setRetentionMb,
     sessionSamples: recorderStatus.samplesRecorded,
     lastSampleAt: recorderStatus.lastSampleAt,
-    robotSerial: recorderStatus.robotSerial,
     totalSamples,
     totalSessions,
     sessions,

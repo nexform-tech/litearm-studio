@@ -7,9 +7,6 @@
     "joint": "关节",
     "cartesian": "笛卡尔"
   },
-  "poseCard": {
-    "title": "当前位姿"
-  },
   "controlBar": {
     "clearFault": "清错",
     "readyPose": "就绪姿态",
@@ -70,13 +67,6 @@
     "axes": "坐标系",
     "focus": "聚焦",
     "topView": "俯视",
-    "expand": "全屏预览",
     "loading": "3D 模型加载中…"
-  },
-  "metrics": {
-    "tracking": "跟踪误差",
-    "current": "相电流",
-    "power": "总功率",
-    "safety": "安全边界"
   }
 }

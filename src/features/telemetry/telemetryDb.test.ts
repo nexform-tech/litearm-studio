@@ -24,7 +24,7 @@ describe('telemetryDb', () => {
   })
 
   it('adds sessions and samples, lists sessions with counts', async () => {
-    const id = await telemetryDb.addSession(1000, '/dev/ttyACM0', 'GENERIC-V4')
+    const id = await telemetryDb.addSession(1000, '/dev/ttyACM0')
     await telemetryDb.addSamples(id, [sample(1), sample(2)])
 
     const sessions = await telemetryDb.listSessions()
@@ -36,7 +36,7 @@ describe('telemetryDb', () => {
   })
 
   it('returns samples newest-first and filters by before/after ts', async () => {
-    const id = await telemetryDb.addSession(0, 'x', '')
+    const id = await telemetryDb.addSession(0, 'x')
     await telemetryDb.addSamples(id, [sample(1), sample(2), sample(3)])
 
     expect((await telemetryDb.getSamples(id)).map((s) => s.ts)).toEqual([3, 2, 1])
@@ -45,8 +45,8 @@ describe('telemetryDb', () => {
   })
 
   it('queries samples only within the selected session', async () => {
-    const a = await telemetryDb.addSession(0, 'x', '')
-    const b = await telemetryDb.addSession(1, 'y', '')
+    const a = await telemetryDb.addSession(0, 'x')
+    const b = await telemetryDb.addSession(1, 'y')
     await telemetryDb.addSamples(a, [sample(1), sample(3), sample(5)])
     await telemetryDb.addSamples(b, [sample(2), sample(4)])
 
@@ -57,7 +57,7 @@ describe('telemetryDb', () => {
   })
 
   it('pages ascending samples with exact (ts, id) boundaries', async () => {
-    const id = await telemetryDb.addSession(0, 'x', '')
+    const id = await telemetryDb.addSession(0, 'x')
     // 含相同 ts 的采样：分页边界必须不重不漏
     await telemetryDb.addSamples(id, [sample(1), sample(1), sample(2), sample(2), sample(2), sample(3)])
 
@@ -80,7 +80,7 @@ describe('telemetryDb', () => {
 
   it('prunes to max estimated bytes keeping the newest data', async () => {
     const perSample = estimateSampleBytes(sample(1))
-    const id = await telemetryDb.addSession(0, 'x', '')
+    const id = await telemetryDb.addSession(0, 'x')
     await telemetryDb.addSamples(
       id,
       Array.from({ length: 50 }, (_, i) => sample(i + 1)),
@@ -98,8 +98,8 @@ describe('telemetryDb', () => {
   })
 
   it('drops whole oldest sessions before trimming within a session', async () => {
-    const old = await telemetryDb.addSession(0, 'x', '')
-    const newer = await telemetryDb.addSession(1, 'y', '')
+    const old = await telemetryDb.addSession(0, 'x')
+    const newer = await telemetryDb.addSession(1, 'y')
     const perSample = estimateSampleBytes(sample(1))
     await telemetryDb.addSamples(old, Array.from({ length: 10 }, (_, i) => sample(i + 1)))
     await telemetryDb.addSamples(newer, Array.from({ length: 10 }, (_, i) => sample(100 + i)))
@@ -119,7 +119,7 @@ describe('telemetryDb', () => {
 
   it('caps sessions and drops sessions left without samples', async () => {
     const ids: number[] = []
-    for (let i = 0; i < 5; i++) ids.push(await telemetryDb.addSession(i, 'x', ''))
+    for (let i = 0; i < 5; i++) ids.push(await telemetryDb.addSession(i, 'x'))
     await telemetryDb.addSamples(ids[4], [sample(1)])
     // 生产流程中记录器启动时会先收尾上次异常退出的遗留会话（转为已结束）
     await telemetryDb.finalizeOpenSessions()
@@ -132,10 +132,10 @@ describe('telemetryDb', () => {
   })
 
   it('keeps the open recording session even when it has no samples yet', async () => {
-    const old = await telemetryDb.addSession(0, 'x', '')
+    const old = await telemetryDb.addSession(0, 'x')
     await telemetryDb.addSamples(old, [sample(1)])
     // 最新会话刚建立、采样尚未落盘（正在记录中，endedAt 为 null）
-    const newest = await telemetryDb.addSession(1, 'y', '')
+    const newest = await telemetryDb.addSession(1, 'y')
 
     await telemetryDb.pruneToMaxBytes(100_000, 200)
 
@@ -145,10 +145,10 @@ describe('telemetryDb', () => {
 
   it('drops finalized empty sessions but keeps the recording one', async () => {
     // 已结束的空会话：快速断开遗留，不应保留
-    const closedEmpty = await telemetryDb.addSession(0, 'x', '')
+    const closedEmpty = await telemetryDb.addSession(0, 'x')
     await telemetryDb.endSession(closedEmpty, 1)
     // 仍在记录的空会话：刚建立、采样尚未落盘
-    const openEmpty = await telemetryDb.addSession(2, 'y', '')
+    const openEmpty = await telemetryDb.addSession(2, 'y')
 
     await telemetryDb.pruneToMaxBytes(100_000, 200)
 
@@ -158,7 +158,7 @@ describe('telemetryDb', () => {
   })
 
   it('finalizes open sessions left by an abnormal exit', async () => {
-    const open = await telemetryDb.addSession(10, 'x', '')
+    const open = await telemetryDb.addSession(10, 'x')
     await telemetryDb.finalizeOpenSessions()
     expect((await telemetryDb.getSession(open))?.endedAt).not.toBeNull()
   })

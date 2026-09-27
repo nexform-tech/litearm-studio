@@ -182,7 +182,6 @@ export function TelemetryLogsPage() {
                           <span>
                             {t('telemetry:samples')}: <span className="font-mono">{s.sampleCount}</span>
                           </span>
-                          {s.robotSerial ? <span className="font-mono">{s.robotSerial}</span> : null}
                         </div>
                       </div>
                     )

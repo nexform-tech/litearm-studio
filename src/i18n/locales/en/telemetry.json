@@ -20,7 +20,6 @@
   "startedAt": "Started At",
   "endedAt": "Ended At",
   "sessionStatus": "Status",
-  "robotSerial": "Serial",
   "samples": "Samples",
   "view": "View",
   "export": "Export CSV",
