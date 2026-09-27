@@ -120,11 +120,17 @@ export function useSoloState() {
         const normalized = normalizeLimits(raw)
         if (normalized) setJointLimits(normalized)
       })
-      .catch(() => {})
+      .catch((err) => {
+        // ⚠ 不许静默回退：滑条会退回**内置**量程，但界面仍宣称是这台臂的范围。
+        // 静默的话，按滑条的百分比换算出的目标角可能落在固件软限位之外。至少说一声。
+        if (cancelled) return
+        console.warn('get_joint_params failed; falling back to built-in joint limits', err)
+        toast.warning(t('common:errors.jointLimitsFallback'), { id: 'joint-limits-fallback' })
+      })
     return () => {
       cancelled = true
     }
-  }, [connected])
+  }, [connected, t])
 
   const limitsOf = useCallback(
     (i: number) => jointLimits?.[i] ?? JOINT_LIMITS[i] ?? { min: -Math.PI, max: Math.PI },
@@ -211,7 +217,9 @@ export function useSoloState() {
         }
       } catch (err) {
         if (jogHoldingRef.current && gen === jogGenRef.current) {
-          console.error('jog movel failed', err)
+          // ⚠ 之前只 `console.error` —— 点动被拒（运动互斥/未使能/链路故障）时面板
+          // 毫无反应，操作员只能反复按。走统一报错（toast id 相同 ⇒ 不会刷屏）。
+          reportError('笛卡尔点动', err)
           jogHoldingRef.current = false
         }
       } finally {
@@ -220,7 +228,7 @@ export function useSoloState() {
         }
       }
     },
-    [],
+    [reportError],
   )
 
   // 进入仿真：沿用实机模式的当前关节姿态作为纯前端临时模拟的起点，
@@ -515,7 +523,12 @@ export function useSoloState() {
     },
 
     movelTarget: async (targetPos: [number, number, number], targetRpy: [number, number, number]) => {
-      if (!connected || !s.real || !enableOn) return
+      if (!connected || !s.real) return
+      if (!enableOn) {
+        // 原来这里静默 return —— 点「发送」什么都不会发生，操作员只能反复点。
+        toast.warning(t('common:errors.notEnabled'), { id: 'solo-not-enabled' })
+        return
+      }
       try {
         await armClient.movel([...targetPos, ...targetRpy] as Pose6, s.speed / 100)
         setLastError(null)

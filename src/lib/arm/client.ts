@@ -225,11 +225,15 @@ export class ArmClient {
     this._setStatus('disconnected')
   }
 
-  /** 停止当前运动（急停）：降能量方向，永远可达。 */
-  requestStop() {
-    void this._sendCmd('estop').catch(() => {
-      // 未连接时静默忽略：急停按钮在未连接时本就禁用。
-    })
+  /**
+   * 停止当前运动（急停）：降能量方向，永远可达。
+   *
+   * ⚠ **不许在这里吞掉拒绝**：`.catch(() => {})` 会让「按住 STOP 但 daemon 拒绝
+   * （未连接 / 运动互斥 / 链路故障）」变成完全静默 —— 操作员以为停了，其实没停。
+   * 调用方（`useArmConnection`）负责把拒绝变成可见提示。
+   */
+  requestStop(): Promise<unknown> {
+    return this._sendCmd('estop')
   }
 
   // ─────────────────────────── 命令方法 ───────────────────────────

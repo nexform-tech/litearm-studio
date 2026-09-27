@@ -197,10 +197,21 @@ describe('ArmClient (daemon WebSocket)', () => {
     await expect(client.enable()).rejects.toThrow('本地程序未连接')
   })
 
-  it('requestStop() sends estop', () => {
+  it('requestStop() sends estop', async () => {
     const { client, ws } = connectedClient()
-    client.requestStop()
-    expect(ws.lastFrame('cmd')).toMatchObject({ m: 'estop' })
+    const promise = client.requestStop()
+    const frame = ws.lastFrame('cmd')!
+    expect(frame).toMatchObject({ m: 'estop' })
+    ws.receive({ t: 'res', id: frame.id, ok: true, v: null })
+    await promise
+  })
+
+  it('requestStop() surfaces a rejection instead of swallowing it', async () => {
+    const { client, ws } = connectedClient()
+    const promise = client.requestStop()
+    const frame = ws.lastFrame('cmd')!
+    ws.receive({ t: 'res', id: frame.id, ok: false, err: { kind: 'MotionBusyError', msg: '已有运动在途' } })
+    await expect(promise).rejects.toMatchObject({ err: { kind: 'MotionBusyError' } })
   })
 
   it('rejects a second motion while the first is still in flight', async () => {
