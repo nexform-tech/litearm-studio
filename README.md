@@ -79,6 +79,21 @@ pnpm dev        # http://localhost:5173 — proxies /ws and /api to 127.0.0.1:87
 
 Run `litearm-studio-daemon --fake --no-open` alongside it.
 
+### 4. Prebuilt executables
+
+Each release also attaches standalone one-file executables for Windows and Linux
+(`litearm-studio-<version>-<platform>`) plus `SHA256SUMS.txt`. They bundle the daemon, the
+`litearm` SDK and the built UI, so a target machine needs **no Python, no pnpm and no repository
+checkout** — run the file and the console opens in a browser window:
+
+```bash
+./litearm-studio-0.5.0-linux-amd64 --fake     # offline, no hardware
+./litearm-studio-0.5.0-linux-amd64            # real arm, USB auto-discovery
+```
+
+Release assets are produced by the `package` job in `.github/workflows/release.yml`; to build one
+yourself run `pnpm build` and then `python packaging/build.py`.
+
 ---
 
 ## 📖 Documentation

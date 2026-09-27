@@ -64,3 +64,9 @@ blob-report/
 
 # Controller runtime / backup files
 controller-backup/
+
+# Packaging (Phase 5) —— 可执行程序与构建中间产物都不入库
+packaging/dist/
+packaging/build/
+# 打包脚本构建时生成的版本文件 (版本来自 git tag, 不是源码)
+daemon/src/litearm_studio_daemon/_build_version.py
