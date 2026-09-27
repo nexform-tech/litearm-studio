@@ -4,10 +4,9 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import './styles/index.css'
 import './i18n'
 import { AppShell } from './layout/AppShell'
-import { SettingsPage, SoloConsole, TelemetryLogsPage } from './routes'
+import { SoloConsole, TelemetryLogsPage } from './routes'
 import { telemetryRecorder } from './features/telemetry/telemetryRecorder'
 import { armClient } from './lib/arm/client'
-import { getInitialEndpoint } from './lib/arm/endpoint'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { ThemedToaster } from './components/ThemedToaster'
 import { initTheme } from './lib/theme'
@@ -16,9 +15,9 @@ import { initTheme } from './lib/theme'
 // 设过 class，这里再按同一规则算一次，保证 dev/web 版本行为一致。
 initTheme()
 
-// 上位机一打开就连臂并启动遥测记录（与所在页面无关）：
-// 记录器跟随机械臂连接，自动记录到本机 IndexedDB
-armClient.connect(getInitialEndpoint())
+// 上位机一打开就连本机 daemon 并启动遥测记录（与所在页面无关）：
+// daemon 就在本机，连接它是无副作用的；记录器跟随机械臂连接写入 IndexedDB。
+armClient.connect()
 telemetryRecorder.start()
 
 // React 19 dev 构建会对每次 commit 调 performance.measure() 且从不清理，
@@ -48,7 +47,6 @@ createRoot(document.getElementById('root')!).render(
               <Route path="/solo" element={<Navigate to="/control" replace />} />
               <Route path="/log" element={<TelemetryLogsPage />} />
               <Route path="/telemetry" element={<Navigate to="/log" replace />} />
-              <Route path="/settings" element={<SettingsPage />} />
               <Route path="*" element={<Navigate to="/control" replace />} />
             </Route>
           </Routes>

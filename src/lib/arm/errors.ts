@@ -1,14 +1,69 @@
 import i18n from '@/i18n'
 
+/** daemon `res` 帧里 `err` 字段的形状（计划 3.1）。 */
+export type DaemonErrorInfo = {
+  kind?: string
+  msg?: string
+  method?: string
+  cmd?: number
+  code?: number
+}
+
+/** daemon 回传的 `err.kind` → i18n key（common:errors.*）。 */
+const KIND_KEYS: Record<string, string> = {
+  NotConnectedCommandError: 'notConnected',
+  NotConnectedError: 'notConnected',
+  UnknownCommandError: 'unknownCommand',
+  MotionBusyError: 'motionBusy',
+  CommandTimeoutError: 'commandTimeout',
+  TransportError: 'transportError',
+  FirmwareMismatchError: 'firmwareMismatch',
+  MotorFaultError: 'motorFault',
+  CommandRejectedError: 'commandRejected',
+  MotionTimeoutError: 'motionTimeout',
+  BadMessage: 'badMessage',
+}
+
+/** i18n 缺失时的内置中文兜底（不依赖 i18n 初始化）。 */
+const FALLBACK_ZH: Record<string, string> = {
+  notConnected: '机械臂未连接：请先连接本地程序，并在顶栏连接机械臂',
+  unknownCommand: '本地程序不支持该命令（不在命令白名单里）',
+  motionBusy: '机械臂当前正处于运动中，请等待当前动作完成或急停后再试',
+  commandTimeout: '指令执行超时：本地程序未在规定时间内返回响应，请检查机械臂状态',
+  transportError: '与机械臂的通信失败，请检查 USB 连接、设备供电与本地程序状态',
+  firmwareMismatch: '固件版本与本地程序不匹配，请升级控制器固件或本地程序',
+  motorFault: '电机故障：{{message}}，请检查供电或执行清除故障',
+  commandRejected: '控制器拒绝了该命令{{code}}',
+  motionTimeout: '运动超时：控制器未在预期时间内完成动作，请检查机械臂状态',
+  badMessage: '与本地程序的通信协议错误：{{message}}',
+  unknownError: '操作失败：{{message}}',
+}
+
+function interpolate(template: string, vars: Record<string, string>): string {
+  return template.replace(/\{\{(\w+)\}\}/g, (_, key: string) => vars[key] ?? '')
+}
+
+function extractInfo(err: unknown): DaemonErrorInfo | null {
+  if (!err || typeof err !== 'object') return null
+  // ArmCommandError：错误对象挂在 `err` 字段上
+  const direct = (err as { err?: unknown }).err
+  if (direct && typeof direct === 'object') return direct as DaemonErrorInfo
+  const maybeKind = (err as { kind?: unknown }).kind
+  if (typeof maybeKind === 'string') return err as DaemonErrorInfo
+  return null
+}
+
 /**
- * 机械臂与末端设备错误信息语义化转换工具。
- * 将底层驱动、Python 异常、子进程退出码等原始技术报错转换为操作员友好的多语言排查指引。
+ * 把 daemon 回传的结构化错误（`err.kind` / `err.msg` / `err.code`）转换为
+ * 操作员友好的多语言提示。传入普通 Error / 字符串时原样返回其消息。
  */
 export function formatArmError(err: unknown): string {
   if (err == null) return ''
-  const raw = typeof err === 'string' ? err : err instanceof Error ? err.message : String(err)
-  const msg = raw.trim()
-  if (!msg) return ''
+  const info = extractInfo(err)
+  const rawMsg =
+    info?.msg ??
+    (typeof err === 'string' ? err : err instanceof Error ? err.message : String(err))
+  const msg = (rawMsg ?? '').trim()
 
   const t = (key: string, options?: Record<string, unknown>) => {
     if (i18n && typeof i18n.t === 'function') {
@@ -17,112 +72,22 @@ export function formatArmError(err: unknown): string {
     return ''
   }
 
-  // 1. 无有效回复 / 节点未响应 (Zenoh No valid reply received)
-  if (/No valid reply received/i.test(msg) || /query_error/i.test(msg)) {
-    return t('noReply') || '控制器无响应（未收到有效应答）：请求超时或控制器后台未提供该功能接口，请检查 litearm-server 运行状态与版本'
-  }
-
-  // 2. RPC 执行超时
-  if (/RPC\s*timeout/i.test(msg) || /bridge timeout/i.test(msg) || /timed\s*out/i.test(msg)) {
-    return t('rpcTimeout') || '指令执行超时：机械臂控制器未在规定时间内返回响应，请检查机械臂状态'
-  }
-
-  // 3a. 客户端内置 SDK 缺方法：本地同步抛错，根本没发出网络请求，不是服务端/版本问题
-  if (/is not a function/i.test(msg)) {
-    return t('sdkMethodMissing') || '客户端内置 SDK 缺少该功能接口（is not a function），请更新客户端后重试'
-  }
-
-  // 3b. 服务端不提供该方法 / 版本不匹配
-  if (/method not found/i.test(msg) || /unsupported method/i.test(msg) || /Unknown method/i.test(msg)) {
-    return t('methodNotFound') || '当前功能暂不支持或客户端版本不匹配，请检查控制器服务端与客户端版本'
-  }
-
-  // 3c. 末端设备驱动未实现该方法 / 设备守护进程未注册（未挂载）
-  if (/has no method/i.test(msg) || /not registered/i.test(msg)) {
-    if (/not registered/i.test(msg)) {
-      return t('deviceNotMounted') || '末端设备未挂载或守护进程未运行，请先在「设置 → 末端设备」中挂载'
+  const kind = info?.kind
+  if (!msg && !kind) return ''
+  const key = kind ? KIND_KEYS[kind] : undefined
+  if (key) {
+    const vars: Record<string, string> = {
+      message: msg,
+      // CommandRejectedError：固件逐命令错误码（存在时带上）
+      code: info?.code != null ? `（错误码 ${info.code}）` : '',
     }
-    return t('deviceMethodMissing') || '当前末端设备不支持该操作：控制器端设备驱动未实现该方法，请等待控制器服务端更新'
+    const translated = t(key, vars)
+    // i18next 找不到 key 时会原样返回 key，据此回退到内置中文。
+    if (translated && !translated.startsWith('common:errors.')) return translated
+    return interpolate(FALLBACK_ZH[key] ?? FALLBACK_ZH.unknownError, vars)
   }
 
-  // 4. 运动取消
-  if (/MotionCancelled/i.test(msg) || /motion.*cancell?ed/i.test(msg) || /已取消/i.test(msg)) {
-    return t('motionCancelled') || '运动已被取消或中断'
-  }
-
-  // 5. 并发运动 / 忙
-  if (/Another motion is active/i.test(msg) || /motion in progress/i.test(msg) || /运动中禁止/i.test(msg) || /并发指令/i.test(msg)) {
-    return t('motionBusy') || '机械臂当前正处于运动中，请等待当前动作完成或停止后再试'
-  }
-
-  // 6. 末端守护进程提前退出 / 异常退出
-  if (/daemon\s*进程提前退出/i.test(msg) || /daemon.*exit=/i.test(msg)) {
-    const exitMatch = msg.match(/exit=(\d+)/i)
-    const exitCode = exitMatch ? ` (exit=${exitMatch[1]})` : ''
-    return t('daemonExit', { exitCode }) || `末端设备守护进程启动失败${exitCode}：请检查控制器 CAN 接口状态（can0 是否 UP）或末端设备供电与连线`
-  }
-
-  // 7. CAN / 网络不可用 (Errno 100)
-  if (/Network is down/i.test(msg) || /Errno 100/i.test(msg)) {
-    return t('networkDown') || '控制器网络/CAN 接口未启动（Network is down），请检查控制器 can0 状态'
-  }
-
-  // 8. 碰撞 / 自碰风险
-  if (/collision/i.test(msg) || /自碰/i.test(msg) || /碰撞/i.test(msg)) {
-    return t('collision') || '路径规划检测到干涉或碰撞风险，已中止运动'
-  }
-
-  // 9. 关节限位越界
-  if (/joint.*limit.*exceed/i.test(msg) || /超出.*限位/i.test(msg) || /out of (?:range|reach)/i.test(msg) || /越限/i.test(msg)) {
-    return t('limitExceeded') || '目标位置超出机械臂安全工作范围或关节软限位'
-  }
-
-  // 10. 文件 / 轨迹不存在
-  if (/FileNotFound/i.test(msg) || /轨迹.*不存在/i.test(msg) || /文件.*不存在/i.test(msg) || /not found/i.test(msg)) {
-    return t('fileNotFound') || '指定的轨迹文件不存在或已被删除'
-  }
-
-  // 11. 末端设备未找到 / 未配置
-  if (/未提供.*类型的末端设备/i.test(msg) || /末端设备不存在/i.test(msg)) {
-    return t('deviceUnavailable', { message: msg }) || `末端设备不可用：${msg}`
-  }
-
-  // 12. CAN 总线繁忙 / 残留控制进程
-  if (/BusBusyError/i.test(msg) || /CAN\s*总线存在活跃报文/i.test(msg) || /残留控制进程/i.test(msg)) {
-    return t('busBusy') || 'CAN 总线繁忙，检测到活跃控制报文，请先退出其他控制进程'
-  }
-
-  // 13. 关节反馈超时 / 通信缺失
-  if (/FeedbackTimeoutError/i.test(msg) || /未收到全部关节反馈/i.test(msg) || /关节反馈缺失或超时/i.test(msg)) {
-    return t('feedbackTimeout') || '机械臂通信异常：未收到全部关节反馈，请检查电机通信总线与供电'
-  }
-
-  // 14. 电机故障码 (MotorFaultError / ArmFault / 欠压/过流/过温)
-  if (/MotorFaultError/i.test(msg) || /ArmFault/i.test(msg) || /motors still in fault/i.test(msg) || /电机故障/i.test(msg)) {
-    const cleaned = msg.replace(/^.*?(?:MotorFaultError|ArmFault|motors still in fault):\s*/i, '')
-    return t('motorFault', { message: cleaned }) || `电机故障：${cleaned}，请检查供电或执行清除错误`
-  }
-
-  // 15. 安全包络 / 越界保护
-  if (/SafetyViolationError/i.test(msg) || /超出安全包络/i.test(msg) || /关节位置越界/i.test(msg) || /关节速度超限/i.test(msg)) {
-    const cleaned = msg.replace(/^.*?SafetyViolationError:\s*/i, '')
-    return t('safetyViolation', { message: cleaned }) || `触发安全保护：${cleaned}`
-  }
-
-  // 16. 看门狗接管
-  if (/WatchdogError/i.test(msg) || /watchdog\s*已接管/i.test(msg)) {
-    return t('watchdogTripped') || '控制周期超时（看门狗已接管），需重新发起运动'
-  }
-
-  // 17. 机械臂未连接 / 断开
-  if (/NotConnectedError/i.test(msg) || /未\s*connect\(\)/i.test(msg) || /机械臂未连接/i.test(msg)) {
-    return t('notConnected') || '机械臂未连接，请先连接机械臂'
-  }
-
-  // 18. 网络连接 / WebSocket 握手失败
-  if (/WebSocket.*(?:failed|closed|error)/i.test(msg) || /Failed to fetch/i.test(msg) || /Connection refused/i.test(msg) || /ECONNREFUSED/i.test(msg)) {
-    return t('connectionFailed') || '无法连接到机械臂控制器，请检查网络连接、IP 端口与服务端运行状态'
-  }
-
-  return msg
+  if (msg) return msg
+  const fallback = t('unknownError', { message: kind ?? '' }) || ''
+  return fallback.startsWith('common:errors.') ? '' : fallback
 }

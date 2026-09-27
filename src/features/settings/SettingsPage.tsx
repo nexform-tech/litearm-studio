@@ -2,15 +2,14 @@ import { useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
-import { Scale, ShieldCheck, Zap, Activity, Lock, HandMetal } from 'lucide-react'
+import { Scale, ShieldCheck, Zap, Activity, Lock } from 'lucide-react'
 import { useSettingsState } from './useSettingsState'
 import { PayloadPanel } from './PayloadPanel'
 import { SafetyLimitsPanel } from './SafetyLimitsPanel'
 import { GainsPanel } from './GainsPanel'
-import { EndEffectorPanel } from './EndEffectorPanel'
 import { SystemDiagnosticsPanel } from './SystemDiagnosticsPanel'
 
-const VALID_TABS = ['payload', 'safety', 'gains', 'endEffector', 'system'] as const
+const VALID_TABS = ['payload', 'safety', 'gains', 'system'] as const
 type ValidTab = typeof VALID_TABS[number]
 
 export function SettingsPage() {
@@ -49,7 +48,7 @@ export function SettingsPage() {
             {vm.connected ? (
               <Badge variant="success" className="gap-1.5 py-1 text-xs font-mono">
                 <span className="size-2 rounded-full bg-success animate-pulse" />
-                <span>{t('common:connected')} · {vm.endpoint}</span>
+                <span>{t('common:connected')}</span>
               </Badge>
             ) : (
               <Badge variant="outline" className="gap-1.5 py-1 text-xs text-muted-foreground bg-muted/40">
@@ -62,7 +61,7 @@ export function SettingsPage() {
 
         {/* 主选项卡导航 */}
         <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full space-y-4">
-          <TabsList className="grid h-11 w-full grid-cols-2 rounded-xl bg-muted/60 p-1 md:grid-cols-5">
+          <TabsList className="grid h-11 w-full grid-cols-2 rounded-xl bg-muted/60 p-1 md:grid-cols-4">
             <TabsTrigger value="payload" className="gap-1.5 rounded-lg text-xs font-semibold">
               <Scale className="size-3.5" />
               {t('settings:tabs.payload')}
@@ -74,10 +73,6 @@ export function SettingsPage() {
             <TabsTrigger value="gains" className="gap-1.5 rounded-lg text-xs font-semibold">
               <Zap className="size-3.5" />
               {t('settings:tabs.gains')}
-            </TabsTrigger>
-            <TabsTrigger value="endEffector" className="gap-1.5 rounded-lg text-xs font-semibold">
-              <HandMetal className="size-3.5" />
-              {t('settings:tabs.endEffector', '末端设备')}
             </TabsTrigger>
             <TabsTrigger value="system" className="gap-1.5 rounded-lg text-xs font-semibold">
               <Activity className="size-3.5" />
@@ -95,10 +90,6 @@ export function SettingsPage() {
 
           <TabsContent value="gains" className="focus-visible:outline-none">
             <GainsPanel vm={vm} />
-          </TabsContent>
-
-          <TabsContent value="endEffector" className="focus-visible:outline-none">
-            <EndEffectorPanel vm={vm} />
           </TabsContent>
 
           <TabsContent value="system" className="focus-visible:outline-none">

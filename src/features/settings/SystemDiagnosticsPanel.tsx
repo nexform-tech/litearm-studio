@@ -223,7 +223,7 @@ export function SystemDiagnosticsPanel({ vm }: { vm: SettingsState }) {
                 <div>
                   <div className="text-xs font-semibold text-foreground">{t('settings:system.currentEndpoint')}</div>
                   <div className="font-mono text-[0.75rem] text-muted-foreground">
-                    {vm.endpoint || t('common:statusOffline')}
+                    {vm.connected ? t('common:connected') : t('common:statusOffline')}
                   </div>
                 </div>
               </div>

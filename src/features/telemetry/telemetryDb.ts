@@ -25,7 +25,8 @@ type SessionRow = {
   id: number
   startedAt: number
   endedAt: number | null
-  endpoint: string
+  /** 建立会话时的串口名（daemon `conn.port`）——本地程序自动发现，仅作记录。 */
+  port: string
   robotSerial: string
   estimatedBytes: number
 }
@@ -140,11 +141,11 @@ class TelemetryDb {
     })
   }
 
-  async addSession(startedAt: number, endpoint: string, robotSerial: string): Promise<number> {
+  async addSession(startedAt: number, port: string, robotSerial: string): Promise<number> {
     const db = await this.open()
     const tx = db.transaction(SESSION_STORE, 'readwrite')
     const id = await this.request(
-      tx.objectStore(SESSION_STORE).add({ startedAt, endedAt: null, endpoint, robotSerial, estimatedBytes: 0 }),
+      tx.objectStore(SESSION_STORE).add({ startedAt, endedAt: null, port, robotSerial, estimatedBytes: 0 }),
     )
     await this.done(tx)
     return id as number

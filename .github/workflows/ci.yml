@@ -30,23 +30,6 @@ jobs:
         with:
           path: litearm-studio
 
-      # The web UI still consumes the packaged browser bundle of the JS SDK
-      # (package.json: `litearm-js: file:../litearm-js`), and that import
-      # resolves to dist/, so the SDK has to be built and not merely cloned.
-      # The local control daemon replaces this dependency; see
-      # docs/REFACTOR_PLAN.md.
-      - name: Checkout LiteArm JS SDK
-        uses: actions/checkout@v4
-        with:
-          repository: nexform-tech/litearm-js
-          path: litearm-js
-
-      - name: Build LiteArm JS SDK
-        working-directory: litearm-js
-        run: |
-          npm install --no-audit --no-fund
-          npm run build
-
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:

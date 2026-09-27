@@ -24,13 +24,13 @@ describe('telemetryDb', () => {
   })
 
   it('adds sessions and samples, lists sessions with counts', async () => {
-    const id = await telemetryDb.addSession(1000, '127.0.0.1:7449', 'GENERIC-V4')
+    const id = await telemetryDb.addSession(1000, '/dev/ttyACM0', 'GENERIC-V4')
     await telemetryDb.addSamples(id, [sample(1), sample(2)])
 
     const sessions = await telemetryDb.listSessions()
     expect(sessions).toHaveLength(1)
     expect(sessions[0].id).toBe(id)
-    expect(sessions[0].endpoint).toBe('127.0.0.1:7449')
+    expect(sessions[0].port).toBe('/dev/ttyACM0')
     expect(sessions[0].sampleCount).toBe(2)
     expect(await telemetryDb.totalSamples()).toBe(2)
   })

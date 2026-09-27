@@ -1,6 +1,7 @@
 export { armClient } from './client'
-export type { ConnectionStatus, RobotState } from './client'
+export type { ArmCommandError, ConnInfo, ConnectionStatus, JointParams, Pose6, RobotState } from './client'
 export { formatArmError } from './errors'
+export type { DaemonErrorInfo } from './errors'
 export { useArmConnection } from './useArmConnection'
 export { useArmState } from './useArmState'
 export { useArmMetrics } from './useArmMetrics'

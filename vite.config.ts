@@ -60,6 +60,12 @@ export default defineConfig({
     },
   },
   server: {
+    // dev 模式把 /ws 与 /api 代理到本机 daemon（默认 8765），这样 dev 与生产
+    // （daemon 托管静态资源）走同一套「由当前页面推导 URL」的逻辑。
+    proxy: {
+      '/ws': { target: 'http://127.0.0.1:8765', ws: true },
+      '/api': { target: 'http://127.0.0.1:8765' },
+    },
     watch: {
       // 构建缓存/产物目录不参与监听：Windows SDK 缓存含符号链接循环（ELOOP），
       // 且这些目录变更无需触发 HMR，避免 dev 服务被文件监听器搞崩。

@@ -1,8 +1,7 @@
 {
   "modes": {
     "position": "Position",
-    "drag": "Drag",
-    "impedance": "Impedance"
+    "drag": "Drag"
   },
   "submodes": {
     "joint": "Joint",
@@ -17,11 +16,7 @@
     "readyPoseTitle": "Move to recommended ready pose Home",
     "zeroPose": "Zero Pose",
     "zeroPoseTitle": "Move to zero pose (all axes 0 rad)",
-    "speed": "Speed",
-    "trajPlayingLocked": "Trajectory playing · Manual jog locked",
-    "stopTakeover": "Abort Takeover",
-    "startPlayback": "▶ Play",
-    "stopPlayback": "■ Stop"
+    "speed": "Speed"
   },
   "cartesian": {
     "title": "Cartesian Space",
@@ -69,61 +64,6 @@
     "sendTitle": "Send motion command",
     "releaseOnly": "Send on Release",
     "releaseOnlyTitle": "Only send command when slider is released"
-  },
-  "gripper": {
-    "title": "End Effector",
-    "subtitle": "LiteGrip Parallel Gripper · Stroke 0–{{max}} mm",
-    "openingPosition": "Opening Position",
-    "open": "Open",
-    "close": "Close",
-    "closeLabel": "Close 0",
-    "openLabel": "{{max}} mm Open",
-    "paramsTitle": "Gripper Parameters",
-    "targetForce": "Target Force",
-    "moveSpeed": "Move Speed",
-    "faultStatus": "Gripper Fault",
-    "opFailed": "{{op}} failed: {{message}}"
-  },
-  "hand": {
-    "title": "End Effector",
-    "subtitle": "LinkerHand Dexterous Hand · 10-DOF Multi-Joint",
-    "torqueLimit": "Max Torque Limit",
-    "presetGestures": "Preset Gestures & Actions",
-    "clearFaults": "Clear Faults",
-    "faultStatus": "Hand Fault",
-    "opFailed": "{{op}} failed: {{message}}",
-    "gestures": {
-      "open": "Open",
-      "openDesc": "All fingers extended to 0",
-      "close": "Close",
-      "closeDesc": "All fingers fully closed",
-      "pinch": "Pinch",
-      "pinchDesc": "Thumb and index finger precision pinch",
-      "point": "Point",
-      "pointDesc": "Index finger extended, other fingers closed",
-      "ok": "OK Gesture",
-      "okDesc": "Thumb and index finger form a ring",
-      "peace": "Victory / V",
-      "peaceDesc": "Index and middle fingers extended",
-      "rock": "Rock On",
-      "rockDesc": "Index and pinky fingers extended",
-      "thumb_up": "Thumbs Up",
-      "thumb_upDesc": "Thumb extended upwards"
-    }
-  },
-  "trajectory": {
-    "title": "Trajectory",
-    "simHint": "Sim mode does not support trajectory operations",
-    "refresh": "Refresh",
-    "namePlaceholder": "Trajectory name (optional)",
-    "record": "Record",
-    "stopAndSave": "Stop & Save",
-    "playing": "Playing",
-    "delete": "Delete",
-    "deleteTitle": "Delete Trajectory",
-    "deleteConfirmText": "Delete trajectory \"{{name}}\"? This cannot be undone.",
-    "lockNoteIdle": "Jogging and sliders are locked during playback. Emergency stop is always available.",
-    "lockNoteActive": "Jogging and sliders locked · Emergency stop active · Click abort takeover to reclaim control immediately."
   },
   "preview": {
     "title": "3D Live Preview",

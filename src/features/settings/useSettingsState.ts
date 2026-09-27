@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { armClient, formatArmError, useArmConnection } from '@/lib/arm'
-import type { DeviceTypeInfo, ActiveDeviceInfo } from 'litearm-js/browser'
+import { formatArmError, useArmConnection } from '@/lib/arm'
+
+/**
+ * 过渡期桩：设置页的多数 RPC（负载/安装/重力/限位/增益/运维/YAML）在新本地程序里
+ * 还没有对应命令，本阶段设置页只从导航下架、代码保留待下一轮重接。这里保留页面
+ * 结构与类型，调用一律明确失败，而不是引用已下线的旧 SDK 方法。
+ */
+function legacyCall<T = any>(_fn: (arm: any) => T | Promise<T>): Promise<Awaited<T>> {
+  void _fn
+  return Promise.reject(new Error('设置页暂未接入新传输层：本地程序暂无对应命令'))
+}
 
 export type PayloadState = {
   mass: number
@@ -71,7 +80,7 @@ function normalizeScaleArray(v?: number[] | null): number[] {
 }
 
 export function useSettingsState() {
-  const { status, endpoint } = useArmConnection()
+  const { status } = useArmConnection()
   const connected = status === 'connected'
   const canEdit = connected
 
@@ -91,7 +100,7 @@ export function useSettingsState() {
     if (!connected) return
     setLoadingPayload(true)
     try {
-      const p = await armClient.withArm((a) => a.getPayload())
+      const p = await legacyCall((a) => a.getPayload())
       setPayload({
         mass: Number(p.mass) || 0,
         comX: Number(p.com?.[0]) || 0,
@@ -110,8 +119,8 @@ export function useSettingsState() {
       if (!connected) return false
       setSavingPayload(true)
       try {
-        const res = await armClient.withArm((a) => a.setPayload(p.mass, [p.comX, p.comY, p.comZ]))
-        await armClient.withArm((a) => a.savePayload())
+        const res = await legacyCall((a) => a.setPayload(p.mass, [p.comX, p.comY, p.comZ]))
+        await legacyCall((a) => a.savePayload())
         setPayload({
           mass: Number(res.mass) || 0,
           comX: Number(res.com?.[0]) || 0,
@@ -143,7 +152,7 @@ export function useSettingsState() {
     if (!connected) return
     setLoadingInstallation(true)
     try {
-      const inst = await armClient.withArm((a) => a.getInstallation())
+      const inst = await legacyCall((a) => a.getInstallation())
       const rpy = inst.base_rpy || [0, 0, 0]
       setInstallation({
         roll: Number(rpy[0]) || 0,
@@ -162,8 +171,8 @@ export function useSettingsState() {
       if (!connected) return false
       setSavingInstallation(true)
       try {
-        await armClient.withArm((a) => a.setInstallation([roll, pitch, yaw]))
-        await armClient.withArm((a) => a.saveInstallation())
+        await legacyCall((a) => a.setInstallation([roll, pitch, yaw]))
+        await legacyCall((a) => a.saveInstallation())
         setInstallation({ roll, pitch, yaw })
         showAlert('success', `基座安装位姿已应用并写盘保存 (RPY: [${roll}, ${pitch}, ${yaw}])`)
         return true
@@ -197,7 +206,7 @@ export function useSettingsState() {
     if (!connected) return
     setLoadingGravityScale(true)
     try {
-      const g = await armClient.withArm((a) => a.getGravityScale())
+      const g = await legacyCall((a) => a.getGravityScale())
       setGravityScaleState({
         values: normalizeScaleArray(g.scale),
         easing: Array.isArray(g.target) && g.target.length > 0,
@@ -215,8 +224,8 @@ export function useSettingsState() {
       setSavingGravityScale(true)
       try {
         const target = normalizeScaleArray(scale)
-        const res = await armClient.withArm((a) => a.setGravityScale(target, transitionS))
-        await armClient.withArm((a) => a.saveGravityScale())
+        const res = await legacyCall((a) => a.setGravityScale(target, transitionS))
+        await legacyCall((a) => a.saveGravityScale())
         const isEasing = Array.isArray(res.target) && res.target.length > 0
         if (easingTimer.current) {
           clearTimeout(easingTimer.current)
@@ -257,10 +266,10 @@ export function useSettingsState() {
     setLoadingLimits(true)
     try {
       const [jl, zo, cl, cc] = await Promise.all([
-        armClient.withArm((a) => a.getJointLimits()).catch(() => null),
-        armClient.withArm((a) => a.getZeroOffsets()).catch(() => null),
-        armClient.withArm((a) => a.getCartesianLimits()).catch(() => null),
-        armClient.withArm((a) => a.getCollisionConfig()).catch(() => null),
+        legacyCall((a) => a.getJointLimits()).catch(() => null),
+        legacyCall((a) => a.getZeroOffsets()).catch(() => null),
+        legacyCall((a) => a.getCartesianLimits()).catch(() => null),
+        legacyCall((a) => a.getCollisionConfig()).catch(() => null),
       ])
       setJointLimits(jl)
       setZeroOffsets(zo)
@@ -278,7 +287,7 @@ export function useSettingsState() {
       if (!connected) return false
       setSavingLimits(true)
       try {
-        const res = await armClient.withArm((a) => a.setJointLimits(limits))
+        const res = await legacyCall((a) => a.setJointLimits(limits))
         setJointLimits(res)
         showAlert('success', '关节软限位已成功下发并生效')
         return true
@@ -297,7 +306,7 @@ export function useSettingsState() {
       if (!connected) return false
       setSavingLimits(true)
       try {
-        const res = await armClient.withArm((a) => a.setZeroOffsets(offsets))
+        const res = await legacyCall((a) => a.setZeroOffsets(offsets))
         setZeroOffsets(res)
         showAlert('success', '关节零点偏置已保存写盘')
         return true
@@ -316,7 +325,7 @@ export function useSettingsState() {
       if (!connected) return false
       setSavingLimits(true)
       try {
-        const res = await armClient.withArm((a) => a.setCartesianLimits(limits))
+        const res = await legacyCall((a) => a.setCartesianLimits(limits))
         setCartesianLimits(res)
         showAlert('success', '笛卡尔空间限幅参数已更新')
         return true
@@ -335,7 +344,7 @@ export function useSettingsState() {
       if (!connected) return false
       setSavingLimits(true)
       try {
-        const res = await armClient.withArm((a) => a.setCollisionConfig(config))
+        const res = await legacyCall((a) => a.setCollisionConfig(config))
         setCollisionConfig(res)
         showAlert('success', '碰撞检测安全配置已写盘更新')
         return true
@@ -358,7 +367,7 @@ export function useSettingsState() {
     if (!connected) return
     setLoadingGains(true)
     try {
-      const g = await armClient.withArm((a) => a.getGains())
+      const g = await legacyCall((a) => a.getGains())
       setGains({
         kp: g.kp.map(Number),
         kd: g.kd.map(Number),
@@ -375,7 +384,7 @@ export function useSettingsState() {
       if (!connected) return false
       setSavingGains(true)
       try {
-        const res = await armClient.withArm((a) => a.setGains(kp, kd))
+        const res = await legacyCall((a) => a.setGains(kp, kd))
         setGains({
           kp: res.kp.map(Number),
           kd: res.kd.map(Number),
@@ -396,7 +405,7 @@ export function useSettingsState() {
     if (!connected) return
     setSavingGains(true)
     try {
-      const g = await armClient.withArm((a) => a.setGains())
+      const g = await legacyCall((a) => a.setGains())
       setGains({
         kp: g.kp.map(Number),
         kd: g.kd.map(Number),
@@ -412,7 +421,7 @@ export function useSettingsState() {
   const clearFaults = useCallback(async () => {
     if (!connected) return
     try {
-      const res = await armClient.withArm((a) => a.clearFaults())
+      const res = await legacyCall((a) => a.clearFaults())
       showAlert('success', `驱动故障已清除: ${JSON.stringify(res)}`)
     } catch (e: any) {
       showAlert('error', `清除故障失败: ${formatArmError(e)}`)
@@ -422,7 +431,7 @@ export function useSettingsState() {
   const clearStop = useCallback(async () => {
     if (!connected) return
     try {
-      await armClient.withArm((a) => a.clearStop())
+      await legacyCall((a) => a.clearStop())
       showAlert('success', '急停锁存状态已解除')
     } catch (e: any) {
       showAlert('error', `解除急停失败: ${formatArmError(e)}`)
@@ -438,7 +447,7 @@ export function useSettingsState() {
     if (!connected) return
     setLoadingStats(true)
     try {
-      const s = await armClient.withArm((a) => a.getSystemStats())
+      const s = await legacyCall((a) => a.getSystemStats())
       setSystemStats({
         cpu_percent: Number(s.cpu_percent) || 0,
         mem_percent: Number(s.mem_percent) || 0,
@@ -457,7 +466,7 @@ export function useSettingsState() {
     if (!connected) return
     setRestartingService(true)
     try {
-      await armClient.withArm((a) => a.restartService())
+      await legacyCall((a) => a.restartService())
       showAlert('info', '重启指令已发送至控制器，服务正在重启并重连...')
     } catch (e: any) {
       showAlert('error', `发送重启指令失败: ${formatArmError(e)}`)
@@ -476,7 +485,7 @@ export function useSettingsState() {
     if (!connected) return
     setLoadingKinematics(true)
     try {
-      const res = await armClient.getConfigYaml()
+      const res = await legacyCall((a) => a.getConfigYaml())
       if (res && res.yaml_content) {
         setYamlContent(res.yaml_content)
       }
@@ -492,7 +501,7 @@ export function useSettingsState() {
       if (!connected) return false
       setSavingKinematics(true)
       try {
-        const res = await armClient.setConfigYaml(content)
+        const res = await legacyCall((a) => a.setConfigYaml(content))
         if (res && res.ok === false && res.error) {
           showAlert('error', `保存 YAML 配置失败: ${res.error}`)
           return false
@@ -510,82 +519,8 @@ export function useSettingsState() {
     [connected, showAlert],
   )
 
-  // 6. 末端设备与执行器 (End-Effector & Hand)
-  // 型号列表只以服务端 list_device_types 为准，不再内置写死的占位型号。
-  const [deviceTypes, setDeviceTypes] = useState<DeviceTypeInfo[]>([])
-  const [activeDevice, setActiveDevice] = useState<ActiveDeviceInfo | null>(null)
-  const [loadingDevice, setLoadingDevice] = useState(false)
-  const [connectingDevice, setConnectingDevice] = useState(false)
-
-  const fetchDeviceStatus = useCallback(async () => {
-    if (!connected) return
-    setLoadingDevice(true)
-    try {
-      const [types, active] = await Promise.all([
-        armClient.listDeviceTypes().catch(() => []),
-        armClient.getActiveDevice().catch(() => null),
-      ])
-      // 服务端为准：即使返回空列表也覆盖本地状态，避免残留上次连接的型号。
-      setDeviceTypes(types)
-      if (active) setActiveDevice(active)
-    } catch {
-      // 忽略
-    } finally {
-      setLoadingDevice(false)
-    }
-  }, [connected])
-
-  const connectDevice = useCallback(
-    async (category: string, subtype: string, canIface: string = 'can0', config?: Record<string, unknown>) => {
-      if (!connected) {
-        showAlert('error', '未连接控制器，无法挂载设备')
-        return false
-      }
-      setConnectingDevice(true)
-      try {
-        const res = await armClient.connectDevice(category, subtype, { canIface, config })
-        if (res && res.ok === false) {
-          showAlert('error', `挂载末端设备失败: ${res.error || '未知错误'}`)
-          return false
-        }
-        await fetchDeviceStatus()
-        showAlert('success', `末端设备 ${subtype} 已成功挂载并在线！`)
-        return true
-      } catch (e: any) {
-        showAlert('error', `挂载设备异常: ${formatArmError(e)}`)
-        return false
-      } finally {
-        setConnectingDevice(false)
-      }
-    },
-    [connected, showAlert, fetchDeviceStatus],
-  )
-
-  const disconnectDevice = useCallback(
-    async (deviceId: string = 'end_0') => {
-      if (!connected) {
-        showAlert('error', '未连接控制器')
-        return false
-      }
-      setConnectingDevice(true)
-      try {
-        const res = await armClient.disconnectDevice(deviceId)
-        if (res && res.ok === false) {
-          showAlert('error', '卸载末端设备失败')
-          return false
-        }
-        await fetchDeviceStatus()
-        showAlert('info', '末端设备已安全卸载')
-        return true
-      } catch (e: any) {
-        showAlert('error', `卸载设备异常: ${formatArmError(e)}`)
-        return false
-      } finally {
-        setConnectingDevice(false)
-      }
-    },
-    [connected, showAlert, fetchDeviceStatus],
-  )
+  // 6. 末端设备与执行器：新本地程序没有设备管理命令，整块摘除（面板已移除）。
+  // 待本地程序提供设备注册表后再接回。
 
   // 初始化加载与定时刷新系统状态
   useEffect(() => {
@@ -596,7 +531,6 @@ export function useSettingsState() {
       fetchLimits()
       fetchGains()
       fetchSystemStats()
-      fetchDeviceStatus()
 
       const timer = setInterval(() => {
         fetchSystemStats()
@@ -605,12 +539,11 @@ export function useSettingsState() {
     } else {
       setSystemStats(null)
     }
-  }, [connected, fetchPayload, fetchInstallation, fetchGravityScale, fetchLimits, fetchGains, fetchSystemStats, fetchDeviceStatus])
+  }, [connected, fetchPayload, fetchInstallation, fetchGravityScale, fetchLimits, fetchGains, fetchSystemStats])
 
   return {
     connected,
     canEdit,
-    endpoint,
     showAlert,
     // 负载
     payload,
@@ -662,14 +595,6 @@ export function useSettingsState() {
     setEditorMode,
     fetchConfigYaml,
     saveConfigYaml,
-    // 末端设备与灵巧手
-    deviceTypes,
-    activeDevice,
-    loadingDevice,
-    connectingDevice,
-    fetchDeviceStatus,
-    connectDevice,
-    disconnectDevice,
     // 系统监控与服务
     systemStats,
     loadingStats,

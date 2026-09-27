@@ -3,11 +3,9 @@ import { useSoloState } from './useSoloState'
 import { PreviewPanel } from './PreviewPanel'
 import { PoseCard } from './PoseCard'
 import { MetricsPanel } from './MetricsPanel'
-import { ControlBar, LockedBanner } from './ControlBar'
+import { ControlBar } from './ControlBar'
 import { JointSpacePanel } from './JointSpacePanel'
 import { CartesianPanel } from './CartesianPanel'
-import { TrajectoryPanel } from './TrajectoryPanel'
-import { EndEffectorControlPanel } from './EndEffectorControlPanel'
 import { StopButton } from '../../components/StopButton'
 import { ROW_OVERFLOW, SCROLL_COLUMN, SIDE_COL_WIDE } from '../../lib/responsive'
 
@@ -39,7 +37,6 @@ export function SoloConsole() {
       </div>
 
       {/* MIDDLE: 操作 */}
-      {/* 中间列基宽收窄，右侧轨迹列在小屏上能拿到更多宽度（见下方右列覆盖）。 */}
       <div style={{ ...SCROLL_COLUMN, flex: '1 1 26rem', minWidth: '23rem', gap: '0.75rem' }}>
         <ControlBar
           enableBg={vm.enableBg}
@@ -60,28 +57,7 @@ export function SoloConsole() {
 
         {simMode ? <SimModeBanner /> : null}
 
-        {vm.locked ? (
-          <LockedBanner
-            playName={vm.playName}
-            playPoint={vm.playPoint}
-            rateLabel={vm.rateLabel}
-            playBtnLabel={vm.playBtnLabel}
-            togglePlay={vm.togglePlay}
-            stopPlay={vm.stopPlay}
-          />
-        ) : null}
-
-        <div
-          style={{
-            flex: 1,
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '0.75rem',
-            minHeight: '0rem',
-            opacity: vm.lockDim,
-            pointerEvents: vm.lockEvents as 'auto' | 'none',
-          }}
-        >
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '0.75rem', minHeight: '0rem' }}>
           <JointSpacePanel
             joints={vm.joints}
             releaseOnly={vm.releaseOnly}
@@ -111,42 +87,9 @@ export function SoloConsole() {
         </div>
       </div>
 
-      {/* RIGHT: 任务 */}
-      {/* 轨迹列表在小屏上偏窄：右列下限从 18.75rem 提到 20.5rem、vw 份额同步上调，
-          占用的空间由中间列（flex 伸展方）让出。 */}
+      {/* RIGHT: 任务（急停常驻） */}
       <div style={{ ...SCROLL_COLUMN, flex: '0 1 clamp(20.5rem, 25vw, 28rem)', minWidth: '20.5rem', gap: '0.75rem' }}>
         <StopButton inert={simMode} />
-        <TrajectoryPanel
-          simMode={simMode}
-          traj={vm.traj}
-          trajName={vm.trajName}
-          setTrajName={vm.setTrajName}
-          recording={vm.recording}
-          toggleRecording={vm.toggleRecording}
-          refreshTraj={vm.refreshTraj}
-          recElapsed={vm.recElapsed}
-          recOpacity={vm.recOpacity}
-          recEvents={vm.recEvents as 'auto' | 'none'}
-          playing={vm.playing}
-          playBtnLabel={vm.playBtnLabel}
-          playBtnBg={vm.playBtnBg}
-          playBtnFg={vm.playBtnFg}
-          playBtnBd={vm.playBtnBd}
-          togglePlay={vm.togglePlay}
-          stopPlay={vm.stopPlay}
-          toggleLoop={vm.toggleLoop}
-          loop={vm.loop}
-          loopBd={vm.loopBd}
-          loopBg={vm.loopBg}
-          loopFg={vm.loopFg}
-          rates={vm.rates}
-          lockNote={vm.lockNote}
-          lockFg={vm.lockFg}
-          pendingDelete={vm.pendingDelete}
-          onCancelDelete={vm.cancelDelete}
-          onConfirmDelete={vm.confirmDelete}
-        />
-        <EndEffectorControlPanel simMode={simMode} />
       </div>
     </div>
   )

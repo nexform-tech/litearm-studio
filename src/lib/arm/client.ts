@@ -1,13 +1,52 @@
-import { Arm } from 'litearm-js/browser'
-import type {
-  ActiveDeviceInfo,
-  DeviceTypeInfo,
-  Pose,
-  RobotState,
-} from 'litearm-js/browser'
 import { formatArmError } from './errors'
+import type { DaemonErrorInfo } from './errors'
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'error'
+
+/** daemon `conn` 帧的连接信息（计划 3.1）。 */
+export type ConnInfo = {
+  status: string
+  port: string | null
+  firmware: string
+  n: number
+  cart: boolean
+  error: string | null
+}
+
+/** daemon `state` 帧归一化后的机械臂状态（计划 3.3）。 */
+export type RobotState = {
+  q: number[]
+  dq: number[]
+  tau: number[]
+  errs: number[]
+  temps: { mosTemp: number; coilTemp: number }[]
+  fault: { joint: number; errCode: number }[]
+  mode: number
+  modeName: string
+  flags: number
+  flagNames: string[]
+  jointFault: number
+  faultAxes: number[]
+  enabled: boolean
+  cartBusy: boolean
+  faulted: boolean
+  faultDetail: string
+  seq: number
+  state: string
+}
+
+/** SDK 原生 6 元组 `[x, y, z, rx, ry, rz]`（计划 3.4）。 */
+export type Pose6 = [number, number, number, number, number, number]
+
+/** `get_joint_params` 单轴参数（键名与 SDK 一致，snake_case）。 */
+export type JointParams = {
+  idx: number
+  kp: number
+  kd: number
+  tau_max: number
+  q_min: number
+  q_max: number
+}
 
 type Listener = () => void
 
@@ -20,57 +59,78 @@ function arraysEqual(a: number[] | undefined, b: number[] | undefined) {
   return true
 }
 
+function num(v: unknown): number {
+  return typeof v === 'number' && !Number.isNaN(v) ? v : 0
+}
+
+function numArray(v: unknown): number[] {
+  return Array.isArray(v) ? v.map(num) : []
+}
+
 /**
- * 格式化并防御 RobotState 中的缺失或缺省字段。
- * protobuf.js 在序列化 0、空数组等默认值时会省略 key，转为 JSON 后变成 undefined。
- * 此函数确保消费方拿到的所有数组与数值字段均有效存在，杜绝渲染崩溃。
+ * 归一化 daemon 的 `state` 帧：保证消费方拿到的数组与数值字段均有效存在，
+ * 缺失字段退化为空数组/零，杜绝渲染崩溃。daemon 正常情况下字段齐全。
  */
 export function normalizeRobotState(raw: RobotState | null | undefined): RobotState | null {
   if (!raw) return null
   return {
-    ...raw,
-    q: Array.isArray(raw.q) ? raw.q.map((v) => (typeof v === 'number' && !isNaN(v) ? v : 0)) : [],
-    dq: Array.isArray(raw.dq) ? raw.dq.map((v) => (typeof v === 'number' && !isNaN(v) ? v : 0)) : [],
-    tau: Array.isArray(raw.tau) ? raw.tau.map((v) => (typeof v === 'number' && !isNaN(v) ? v : 0)) : [],
-    errs: Array.isArray(raw.errs) ? raw.errs.map((v) => (typeof v === 'number' && !isNaN(v) ? v : 0)) : [],
-    fault: Array.isArray(raw.fault)
-      ? raw.fault.map((f) => ({ joint: f?.joint ?? 0, errCode: f?.errCode ?? 0 }))
-      : [],
+    q: numArray(raw.q),
+    dq: numArray(raw.dq),
+    tau: numArray(raw.tau),
+    errs: numArray(raw.errs),
     temps: Array.isArray(raw.temps)
-      ? raw.temps.map((t) => ({
-          mosTemp: typeof t?.mosTemp === 'number' && !isNaN(t.mosTemp) ? t.mosTemp : 0,
-          coilTemp: typeof t?.coilTemp === 'number' && !isNaN(t.coilTemp) ? t.coilTemp : 0,
-        }))
+      ? raw.temps.map((t) => ({ mosTemp: num(t?.mosTemp), coilTemp: num(t?.coilTemp) }))
       : [],
-    state: typeof raw.state === 'string' ? raw.state : 'idle',
+    fault: Array.isArray(raw.fault)
+      ? raw.fault.map((f) => ({ joint: num(f?.joint), errCode: num(f?.errCode) }))
+      : [],
+    mode: num(raw.mode),
+    modeName: typeof raw.modeName === 'string' ? raw.modeName : '',
+    flags: num(raw.flags),
+    flagNames: Array.isArray(raw.flagNames) ? raw.flagNames.map(String) : [],
+    jointFault: num(raw.jointFault),
+    faultAxes: numArray(raw.faultAxes),
+    enabled: raw.enabled === true,
+    cartBusy: raw.cartBusy === true,
+    faulted: raw.faulted === true,
+    faultDetail: typeof raw.faultDetail === 'string' ? raw.faultDetail : '',
+    seq: num(raw.seq),
+    state: typeof raw.state === 'string' ? raw.state : 'disabled',
   }
 }
 
+/** 从当前页面推导本地 daemon 的 WebSocket 地址（https 页面用 wss）。 */
+function wsUrl(): string {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${proto}//${location.host}/ws`
+}
+
+/** 命令被 daemon 拒绝时抛出的 Error，`err` 携带结构化错误信息。 */
+export type ArmCommandError = Error & { err: DaemonErrorInfo }
+
 /**
- * Owns the single Arm WebSocket connection for the whole app and polls its
- * cached state broadcast. Two independent listener sets (status vs. state)
- * so UI that only cares about connection status (TopBar) doesn't re-render
- * on every ~50Hz state tick.
+ * 拥有全应用唯一的 daemon WebSocket 连接：
+ * 下行接收 hello/conn/state/res，上行发送 connect/disconnect/cmd。
+ * status 与 state 两个独立的订阅通道，只关心连接状态的 UI（TopBar）不会
+ * 因为每个状态帧重渲染。
  */
 export class ArmClient {
-  private arm: Arm | null = null
-  private endpoint = ''
-  private token: string | undefined
+  private socket: WebSocket | null = null
   private manualDisconnect = true
   private reconnectAttempt = 0
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
-  private pollHandle: number | null = null
+  private nextId = 1
+  private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: unknown) => void }>()
   private _lastStateNotify = 0
-  private _lastRawState: any = null
+  private _lastRawState: unknown = null
   private _cachedNormalizedState: RobotState | null = null
 
-  /** 遥测状态（关节角/温度/力矩等）的最大通知频率。
-   *  真机广播 ~50Hz，若每帧都通知，React 会以 60Hz 全页重渲染——
-   *  dev 构建下每次 commit 都会产生 performance.measure 且永不清理，内存无限上涨。
-   *  降频到 10Hz 后 3D 预览仍由 PreviewPanel 直接订阅原始状态保持 60Hz。 */
+  /** 遥测状态（关节角/温度/力矩等）的最大通知频率：daemon 约 10Hz 推送，
+   *  安全相关字段（状态串/故障）变化立即通知，其余最多每 100ms 一次。 */
   private static readonly STATE_NOTIFY_INTERVAL_MS = 100
 
   private _status: ConnectionStatus = 'disconnected'
+  private _conn: ConnInfo | null = null
   private _state: RobotState | null = null
   private _lastError: string | null = null
   private _motionPending = false
@@ -83,17 +143,17 @@ export class ArmClient {
   get status() {
     return this._status
   }
+  get conn() {
+    return this._conn
+  }
   get state() {
     return this._state
   }
   get lastError() {
     return this._lastError
   }
-  get endpointValue() {
-    return this.endpoint
-  }
 
-  /** True while a motion RPC (movej/movel/replay) is in flight. */
+  /** True while a motion command (home/movej/movel) is in flight. */
   get motionBusy() {
     return this._motionPending
   }
@@ -112,8 +172,7 @@ export class ArmClient {
     }
   }
 
-  /** 每帧触发的原始状态订阅（~60Hz），只给命令式消费方用（如 3D 预览），
-   *  不经过 10Hz 降频，也不进 React 渲染循环。 */
+  /** 每个状态帧触发的订阅，只给命令式消费方用（如 3D 预览），不进 React 渲染循环。 */
   subscribeStateFast = (cb: Listener) => {
     this.stateFastListeners.add(cb)
     return () => {
@@ -128,21 +187,17 @@ export class ArmClient {
     }
   }
 
-  connect(endpoint: string, token?: string) {
+  /** 连接本地 daemon（无参：URL 由当前页面推导）。 */
+  connect() {
     // 已连接/连接中时忽略重复点击；重连退避期间（reconnecting）允许取消
     // 当前定时器并立即重试，用户点击「连接」不必等最长 30s 的退避结束。
     if (
       !this.manualDisconnect &&
-      this.endpoint === endpoint &&
-      this._status !== 'disconnected' &&
-      this._status !== 'error' &&
-      this._status !== 'reconnecting'
+      (this._status === 'connecting' || this._status === 'connected')
     ) {
       return
     }
     this.manualDisconnect = false
-    this.endpoint = endpoint
-    this.token = token
     this.reconnectAttempt = 0
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer)
@@ -151,164 +206,149 @@ export class ArmClient {
     this._openSocket()
   }
 
+  /** 断开：通知 daemon 断开机械臂，并关闭本地 WebSocket。 */
   disconnect() {
     this.manualDisconnect = true
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
     }
-    this._stopPolling()
-    this.arm?.close()
-    this.arm = null
-    this._state = null
-    this._lastRawState = null
-    this._cachedNormalizedState = null
+    const ws = this.socket
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      this._sendFrame({ t: 'disconnect' })
+    }
+    this._closeSocket()
+    this._rejectAllPending('连接已断开')
+    this._clearState()
     this._setMotionBusy(false)
-    this._notifyState()
+    this._conn = null
     this._setStatus('disconnected')
   }
 
-  /** 停止当前运动（急停）。只停当前动作，不做任何状态锁存：
-   *  服务端每条新运动指令会自动清除停止标志，前端无需维护"恢复"状态。 */
+  /** 停止当前运动（急停）：降能量方向，永远可达。 */
   requestStop() {
-    this.arm?.requestStop()
+    void this._sendCmd('estop').catch(() => {
+      // 未连接时静默忽略：急停按钮在未连接时本就禁用。
+    })
   }
 
-  /** 回零（所有关节回零位，绕开关节限位与路径碰撞检查）——运动中禁止再次发起。 */
-  async home(opts?: { speed?: number; settle_s?: number; max_cycles?: number }): Promise<boolean> {
-    return this._guardMotion(() => {
-      if (!this.arm) throw new Error('机械臂未连接')
-      return this.arm.home(opts)
-    })
+  // ─────────────────────────── 命令方法 ───────────────────────────
+
+  async enable(): Promise<unknown> {
+    return this._sendCmd('enable')
+  }
+
+  async disable(): Promise<unknown> {
+    return this._sendCmd('disable')
+  }
+
+  async estop(): Promise<unknown> {
+    return this._sendCmd('estop')
+  }
+
+  async clearFaults(): Promise<unknown> {
+    return this._sendCmd('clear_faults')
+  }
+
+  async reset(): Promise<unknown> {
+    return this._sendCmd('reset')
+  }
+
+  /** 固件低速度回零——运动中禁止再次发起。 */
+  home(): Promise<unknown> {
+    return this._guardMotion(() => this._sendCmd('home'))
   }
 
   /** 关节运动——运动中禁止再次发起，避免并发指令竞态。 */
-  async movej(q: number[], opts?: { speed?: number; settle_s?: number; allow_start_collision_recovery?: boolean }): Promise<boolean> {
-    return this._guardMotion(() => {
-      if (!this.arm) throw new Error('机械臂未连接')
-      return this.arm.movej(q, opts)
-    })
+  movej(q: number[], speed?: number): Promise<unknown> {
+    return this._guardMotion(() => this._sendCmd('movej', speed == null ? { q } : { q, speed }))
   }
 
-  /** 笛卡尔直线运动——运动中禁止再次发起。 */
-  async movel(pose: Pose, opts?: { speed?: number; settle_s?: number }): Promise<boolean> {
-    return this._guardMotion(() => {
-      if (!this.arm) throw new Error('机械臂未连接')
-      return this.arm.movel(pose, opts)
-    })
+  /** 笛卡尔直线运动（6 元组位姿），运动中禁止再次发起。 */
+  movel(pose: Pose6, speed?: number): Promise<unknown> {
+    return this._guardMotion(() => this._sendCmd('movel', speed == null ? { pose } : { pose, speed }))
   }
 
-  /** 轨迹回放——运动中禁止再次发起。
-   *  trajectory 传相对服务端 cwd 的 JSON 路径（如 `trajectories/trajectory_001.json`）。 */
-  async playTrajectory(
-    trajectory: Record<string, unknown> | string,
-    opts?: { speed?: number; goto_start?: boolean; goto_speed?: number },
-  ): Promise<boolean> {
-    return this._guardMotion(() => {
-      if (!this.arm) throw new Error('机械臂未连接')
-      return this.arm.playTrajectory(trajectory, opts)
-    })
+  async setSpeed(percent: number): Promise<unknown> {
+    return this._sendCmd('set_speed', { percent: Math.round(percent) })
   }
 
-  /** 关节路径回放——运动中禁止再次发起。 */
-  async replayJointPath(
-    qPath: number[][],
-    opts?: { speed?: number; settle_s?: number; goto_start?: boolean; goto_speed?: number },
-  ): Promise<boolean> {
-    return this._guardMotion(() => {
-      if (!this.arm) throw new Error('机械臂未连接')
-      return this.arm.replayJointPath(qPath, opts)
-    })
+  getTcpPose(): Promise<Pose6> {
+    return this._sendCmd('get_tcp') as Promise<Pose6>
   }
 
-  /** Direct access to the connected device proxy (hand/gripper/...), or null while disconnected. */
-  device(deviceId: string) {
-    return this.arm?.device(deviceId) ?? null
+  ik(pose: Pose6): Promise<Pose6> {
+    return this._sendCmd('ik', { pose }) as Promise<Pose6>
   }
 
-  /** 列出服务端内置的可用末端设备类型。 */
-  listDeviceTypes(): Promise<DeviceTypeInfo[]> {
-    return this.withArm((arm) => arm.listDeviceTypes())
+  async zeroGStart(): Promise<unknown> {
+    return this._sendCmd('zero_g_start')
   }
 
-  /** 连接末端设备，服务端会按需拉起对应 device daemon 并持久化。 */
-  connectDevice(
-    category: string,
-    subtype: string,
-    opts?: { deviceId?: string; canIface?: string; config?: Record<string, unknown> },
-  ): Promise<{ ok: boolean; device_id?: string; error?: string }> {
-    return this.withArm(async (arm) => {
-      const res = await arm.connectDevice(category, subtype, opts)
-      if (!res.ok && res.error) {
-        return { ...res, error: formatArmError(res.error) }
-      }
-      return res
-    })
+  async zeroGStop(): Promise<unknown> {
+    return this._sendCmd('zero_g_stop')
   }
 
-  /** 断开当前末端设备。 */
-  disconnectDevice(deviceId?: string): Promise<{ ok: boolean }> {
-    return this.withArm((arm) => arm.disconnectDevice(deviceId))
+  getJointParams(): Promise<JointParams[]> {
+    return this._sendCmd('get_joint_params') as Promise<JointParams[]>
   }
 
-  /** 查询当前末端设备状态。 */
-  getActiveDevice(deviceId?: string): Promise<ActiveDeviceInfo> {
-    return this.withArm((arm) => arm.getActiveDevice(deviceId))
-  }
+  // ─────────────────────────── 内部实现 ───────────────────────────
 
-  /** 查询当前末端设备的控制面板 manifest，未连接时返回 null。 */
-  getDeviceManifest(deviceId?: string): Promise<any | null> {
-    return this.withArm((arm) => arm.getDeviceManifest(deviceId))
-  }
+  private _openSocket() {
+    this._closeSocket()
+    this._clearState()
+    // 新连接会作废所有在途 RPC，运动锁必须在这里释放，否则会永久卡在 busy。
+    this._setMotionBusy(false)
+    this._setStatus(this.reconnectAttempt > 0 ? 'reconnecting' : 'connecting')
 
-  /** 获取控制器 YAML 配置文件内容 */
-  getConfigYaml(): Promise<{ yaml_content: string; file_path?: string; parsed?: Record<string, unknown> }> {
-    return this.withArm((arm) => arm.getConfigYaml())
-  }
-
-  /** 更新控制器 YAML 配置文件内容并生效 */
-  setConfigYaml(content: string): Promise<{ ok: boolean; error?: string }> {
-    return this.withArm((arm) => arm.setConfigYaml(content))
-  }
-
-  /** Run an arbitrary SDK call against the live connection; rejects while disconnected. */
-  withArm<T>(fn: (arm: Arm) => Promise<T>): Promise<T> {
-    if (!this.arm) return Promise.reject(new Error('机械臂未连接'))
+    let ws: WebSocket
     try {
-      return Promise.resolve(fn(this.arm))
+      ws = new WebSocket(wsUrl())
     } catch (err) {
-      return Promise.reject(err)
+      this._lastError = formatArmError(err)
+      this._setStatus('error')
+      this._scheduleReconnect()
+      return
+    }
+    this.socket = ws
+
+    ws.onopen = () => {
+      if (this.socket !== ws) return
+      // 请求 daemon 连接机械臂；失败原因由后续 `conn` 帧的 error 字段报告。
+      this._sendFrame({ t: 'connect' })
+    }
+    ws.onmessage = (ev: MessageEvent) => {
+      if (this.socket !== ws) return
+      this._handleMessage(ev.data)
+    }
+    ws.onclose = () => {
+      if (this.socket !== ws) return
+      this.socket = null
+      this._rejectAllPending('本地程序连接已断开')
+      this._clearState()
+      this._setMotionBusy(false)
+      if (this.manualDisconnect) {
+        this._setStatus('disconnected')
+        return
+      }
+      this._setStatus('reconnecting')
+      this._scheduleReconnect()
     }
   }
 
-  private _openSocket() {
-    this._stopPolling()
-    this.arm?.close()
-    this._state = null
-    this._lastRawState = null
-    this._cachedNormalizedState = null
-    this._notifyState()
-    // 新连接会作废所有在途 RPC（旧 socket 的 pending 不会被 reject），
-    // 因此运动锁必须在这里释放，否则会永久卡在 busy。
-    this._setMotionBusy(false)
-    this._setStatus(this.reconnectAttempt > 0 ? 'reconnecting' : 'connecting')
-    const arm = new Arm(this.endpoint, this.token)
-    this.arm = arm
-    arm
-      .connect()
-      .then(() => {
-        if (this.arm !== arm) return // superseded by a later connect()/disconnect()
-        this.reconnectAttempt = 0
-        this._lastError = null
-        this._setStatus('connected')
-        this._startPolling()
-      })
-      .catch((err: unknown) => {
-        if (this.arm !== arm) return
-        this._lastError = formatArmError(err)
-        this._setStatus('error')
-        this._scheduleReconnect()
-      })
+  private _closeSocket() {
+    const ws = this.socket
+    this.socket = null
+    if (!ws) return
+    ws.onopen = null
+    ws.onmessage = null
+    ws.onclose = null
+    try {
+      ws.close()
+    } catch {
+      // 关闭失败无碍：引用已摘除。
+    }
   }
 
   private _scheduleReconnect() {
@@ -321,58 +361,138 @@ export class ArmClient {
     }, delay)
   }
 
-  private _startPolling() {
-    const tick = () => {
-      const arm = this.arm
-      if (!arm) return
-      if (!arm.connected) {
-        this._stopPolling()
-        this._state = null
-        this._lastRawState = null
-        this._cachedNormalizedState = null
-        this._notifyState()
-        if (!this.manualDisconnect) {
-          this._setStatus('reconnecting')
-          this._scheduleReconnect()
-        }
-        return
-      }
-      const rawNext = arm.getState()
-      if (rawNext !== this._lastRawState) {
-        this._lastRawState = rawNext
-        this._cachedNormalizedState = normalizeRobotState(rawNext)
-      }
-      const next = this._cachedNormalizedState
-      if (next !== this._state) {
-        const prev = this._state
-        this._state = next
-        // 高速消费方（3D 预览）每帧跟随，不受降频影响。
-        for (const l of this.stateFastListeners) l()
-        // 安全相关字段（状态机/驱动故障/看门狗/反馈超时）变化要立即通知，
-        // 普通遥测最多每 100ms 通知一次，避免 60Hz 全页重渲染。
-        const now = performance.now()
-        const significant =
-          !prev ||
-          !next ||
-          prev.state !== next.state ||
-          !arraysEqual(prev.errs, next.errs) ||
-          prev.watchdog?.tripped !== next.watchdog?.tripped ||
-          !arraysEqual(prev.feedback?.staleJoints, next.feedback?.staleJoints)
-        if (significant || now - this._lastStateNotify >= ArmClient.STATE_NOTIFY_INTERVAL_MS) {
-          this._lastStateNotify = now
-          this._notifyState()
-        }
-      }
-      this.pollHandle = requestAnimationFrame(tick)
+  private _handleMessage(data: unknown) {
+    if (typeof data !== 'string') return
+    let msg: Record<string, unknown>
+    try {
+      msg = JSON.parse(data) as Record<string, unknown>
+    } catch {
+      return
     }
-    this.pollHandle = requestAnimationFrame(tick)
+    switch (msg.t) {
+      case 'hello':
+        break
+      case 'conn':
+        this._applyConn(msg)
+        break
+      case 'state':
+        this._applyState(msg.state as RobotState | null | undefined)
+        break
+      case 'res':
+        this._resolvePending(msg)
+        break
+      default:
+        break
+    }
   }
 
-  private _stopPolling() {
-    if (this.pollHandle != null) {
-      cancelAnimationFrame(this.pollHandle)
-      this.pollHandle = null
+  private _applyConn(msg: Record<string, unknown>) {
+    const conn: ConnInfo = {
+      status: typeof msg.status === 'string' ? msg.status : 'disconnected',
+      port: typeof msg.port === 'string' ? msg.port : null,
+      firmware: typeof msg.firmware === 'string' ? msg.firmware : '',
+      n: num(msg.n),
+      cart: msg.cart === true,
+      error: typeof msg.error === 'string' ? msg.error : null,
     }
+    this._conn = conn
+    if (conn.status === 'connected') {
+      this.reconnectAttempt = 0
+      this._lastError = null
+    } else if (conn.error) {
+      this._lastError = conn.error
+    }
+    const mapped: ConnectionStatus =
+      conn.status === 'connected'
+        ? 'connected'
+        : conn.status === 'connecting'
+          ? 'connecting'
+          : conn.status === 'error'
+            ? 'error'
+            : 'disconnected'
+    this._setStatus(mapped)
+  }
+
+  private _applyState(raw: RobotState | null | undefined) {
+    if (raw !== this._lastRawState) {
+      this._lastRawState = raw
+      this._cachedNormalizedState = normalizeRobotState(raw)
+    }
+    const next = this._cachedNormalizedState
+    if (next === this._state) return
+    const prev = this._state
+    this._state = next
+    // 命令式消费方（3D 预览）每帧跟随。
+    for (const l of this.stateFastListeners) l()
+    // 状态串/故障变化立即通知，普通遥测最多每 100ms 通知一次。
+    const now = performance.now()
+    const significant =
+      !prev ||
+      !next ||
+      prev.state !== next.state ||
+      prev.faulted !== next.faulted ||
+      !arraysEqual(prev.errs, next.errs)
+    if (significant || now - this._lastStateNotify >= ArmClient.STATE_NOTIFY_INTERVAL_MS) {
+      this._lastStateNotify = now
+      this._notifyState()
+    }
+  }
+
+  private _resolvePending(msg: Record<string, unknown>) {
+    const id = msg.id
+    if (typeof id !== 'number') return
+    const entry = this.pending.get(id)
+    if (!entry) return
+    this.pending.delete(id)
+    if (msg.ok === true) {
+      entry.resolve(msg.v)
+      return
+    }
+    const info = (msg.err && typeof msg.err === 'object' ? msg.err : {}) as DaemonErrorInfo
+    const detail = typeof info.msg === 'string' && info.msg ? info.msg : '命令执行失败'
+    const error = new Error(detail) as ArmCommandError
+    error.err = info
+    entry.reject(error)
+  }
+
+  private _sendCmd(m: string, p?: Record<string, unknown>): Promise<unknown> {
+    const ws = this.socket
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      return Promise.reject(new Error('本地程序未连接'))
+    }
+    const id = this.nextId++
+    return new Promise((resolve, reject) => {
+      this.pending.set(id, { resolve, reject })
+      const sent = this._sendFrame({ t: 'cmd', id, m, p: p ?? {} })
+      if (!sent) {
+        this.pending.delete(id)
+        reject(new Error('本地程序未连接'))
+      }
+    })
+  }
+
+  private _sendFrame(frame: Record<string, unknown>): boolean {
+    const ws = this.socket
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false
+    try {
+      ws.send(JSON.stringify(frame))
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  private _rejectAllPending(reason: string) {
+    const pending = [...this.pending.values()]
+    this.pending.clear()
+    for (const entry of pending) entry.reject(new Error(reason))
+  }
+
+  private _clearState() {
+    this._state = null
+    this._lastRawState = null
+    this._cachedNormalizedState = null
+    this._notifyState()
   }
 
   private _setStatus(s: ConnectionStatus) {
@@ -386,13 +506,8 @@ export class ArmClient {
   }
 
   /**
-   * 运动互斥：上一运动 RPC 未返回时拒绝新的运动指令。
-   * 竞态来源是 UI 在 movej/movel/回放进行中仍可再次下发指令，
-   * 服务端会收到并发的运动请求；这里在客户端直接拦截。
-   * 注意锁的持有时间 = RPC 生命周期：服务端 movej/movel 默认带 settle_s
-   * （到位后额外持位验证），机械臂物理上已停稳但 RPC 未返回时锁仍占用。
-   * 因此 UI 驱动的短运动（滑条/回零点/点动）应显式传 settle_s: 0，
-   * 让锁在"物理到位"那一刻释放，而不是等默认的 1s 持位期结束。
+   * 运动互斥：上一运动命令未返回时拒绝新的运动指令（daemon 侧也有同样的判定，
+   * 这里提前拦截，避免 UI 在上一条在途时再下发）。
    */
   private async _guardMotion<T>(fn: () => Promise<T>): Promise<T> {
     if (this._motionPending) {
@@ -413,6 +528,5 @@ export class ArmClient {
   }
 }
 
-/** Single app-wide connection — mirrors the SDK's own one-arm-per-page-session model. */
+/** 全应用唯一连接。 */
 export const armClient = new ArmClient()
-export type { RobotState }

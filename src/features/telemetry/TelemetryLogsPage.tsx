@@ -2,7 +2,6 @@ import { ChevronDown, ChevronRight, Download, Pencil, RefreshCw } from 'lucide-r
 import { Fragment, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useTelemetryState } from './useTelemetryState'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -16,7 +15,6 @@ import {
 } from '@/components/ui/dialog'
 import { NumberField } from '@/components/ui/number-field'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { ControllerLogPanel } from '@/features/logs/ControllerLogPanel'
 import type { TelemetrySample } from './telemetryDb'
 
 function formatTs(value: number, locale: string) {
@@ -62,7 +60,6 @@ export function TelemetryLogsPage() {
   const { t, i18n } = useTranslation(['common', 'nav', 'telemetry'])
   const vm = useTelemetryState()
   const [expandedId, setExpandedId] = useState<number | null>(null)
-  const [tab, setTab] = useState<'samples' | 'logs'>('samples')
   const [retentionDialogOpen, setRetentionDialogOpen] = useState(false)
   const [retentionDraft, setRetentionDraft] = useState(vm.retentionMb)
 
@@ -78,16 +75,7 @@ export function TelemetryLogsPage() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 p-3.5">
-      <Tabs
-        value={tab}
-        onValueChange={(v) => setTab(v as 'samples' | 'logs')}
-        className="flex min-h-0 flex-1 flex-col gap-3"
-      >
-        <Card className="flex flex-none flex-row flex-nowrap items-center gap-x-3 overflow-x-auto rounded-[0.875rem] px-4 py-3">
-          <TabsList className="h-9 shrink-0">
-            <TabsTrigger value="samples">{t('telemetry:tabsSamples')}</TabsTrigger>
-            <TabsTrigger value="logs">{t('logs:tabsController')}</TabsTrigger>
-          </TabsList>
+      <Card className="flex flex-none flex-row flex-nowrap items-center gap-x-3 overflow-x-auto rounded-[0.875rem] px-4 py-3">
           <div className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
             <span className="text-[0.75rem] font-medium text-muted-foreground">{t('telemetry:status')}</span>
             {vm.recording ? (
@@ -145,7 +133,7 @@ export function TelemetryLogsPage() {
           </Button>
         </Card>
 
-        <TabsContent value="samples" className="flex min-h-0 flex-1 flex-col gap-3">
+        <div className="flex min-h-0 flex-1 flex-col gap-3">
           {vm.error ? (
             <div className="px-4 py-6 text-center text-sm text-destructive">{vm.error}</div>
           ) : (
@@ -336,12 +324,7 @@ export function TelemetryLogsPage() {
               </Card>
             </div>
           )}
-        </TabsContent>
-
-        <TabsContent value="logs" className="flex min-h-0 flex-1 flex-col">
-          <ControllerLogPanel />
-        </TabsContent>
-      </Tabs>
+        </div>
 
       <Dialog open={retentionDialogOpen} onOpenChange={setRetentionDialogOpen}>
         <DialogContent>

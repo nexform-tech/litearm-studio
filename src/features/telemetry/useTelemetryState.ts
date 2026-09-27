@@ -12,7 +12,7 @@ const AUTO_REFRESH_MS = 3000
 const EXPORT_PAGE_SIZE = 5000
 
 export function useTelemetryState() {
-  const { status: armStatus, endpoint: armEndpoint } = useArmConnection()
+  const { status: armStatus, conn } = useArmConnection()
   const [sessions, setSessions] = useState<TelemetrySession[]>([])
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [session, setSession] = useState<TelemetrySession | null>(null)
@@ -218,7 +218,7 @@ export function useTelemetryState() {
   return {
     connected,
     recording: recorderStatus.recording,
-    endpoint: recorderStatus.endpoint || armEndpoint,
+    port: recorderStatus.port || conn?.port || '',
     sampleHz: recorderStatus.sampleHz,
     retentionMb: recorderStatus.maxBytes / 1048576,
     retentionMinMb: RETENTION_MIN_MB,
