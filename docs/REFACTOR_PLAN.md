@@ -97,7 +97,16 @@ litearm-python  ──USB CDC (1d50:606f @921600)──>  STM32  ──CAN──
 | `get_tcp` | `arm.get_tcp().value` | 当前末端位姿 |
 | `ik` | `arm.ik(pose)` | 逆解 |
 | `zero_g_start` / `zero_g_stop` | `arm.zero_g_start` / `arm.zero_g_stop` | 拖动示教 |
-| `clear_faults` | — | 见上 |
+| `get_joint_params` | `arm.params.all_joint_params()` | 逐轴读回 kp/kd/tau_max/软限位（控制页滑条量程要用） |
+| `set_joint_param` | `arm.params.set_joint_param(idx, kp, kd, tau_max)` | 逐轴写（RAM） |
+| `set_joint_limits` | `arm.params.set_joint_limits(idx, q_min, q_max)` | 逐轴写（RAM） |
+| `save_params` | `arm.save_params()` | 持久化到 flash（固件要求失能态） |
+| `reset_factory_params` | `arm.params.reset_factory()` | 恢复出厂（固件要求失能态） |
+| `set_payload` | `arm.set_payload(mass, com)` | 负载质量与质心（前馈 item 4/5） |
+| `set_gravity_scale` / `set_inertia_scale` | 同名 | 重力/惯量前馈系数（vec item 7/8） |
+| `set_gravity_vector` | `arm.set_gravity_vector(g)` | 重力方向（scalar item 6） |
+| `get_ff_vec` / `get_ff_scalar` | 同名 | 读回，与上一组构成写→读回闭环 |
+| `kin_bench` | `arm.diag.kin_bench()` | 固件自检 + 链路诊断计数 |
 
 ### 3.3 状态字段
 
