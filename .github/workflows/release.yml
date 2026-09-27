@@ -100,6 +100,7 @@ jobs:
       - name: Name the artifact (unix)
         if: runner.os != 'Windows'
         working-directory: litearm-studio
+        shell: bash # `${VERSION#v}` 是 bash 展开, 显式声明免得默认 shell 变了就悄悄出错
         run: |
           mkdir -p upload
           cp packaging/dist/litearm-studio-daemon \
@@ -114,21 +115,11 @@ jobs:
           $v = "$env:VERSION".TrimStart('v')
           Copy-Item packaging/dist/litearm-studio-daemon.exe "upload/litearm-studio-$v-${{ matrix.suffix }}"
 
-      # 产物的 sha256 也一起发出去, 便于安装侧校验 (用 Python: 两个 runner 都有,
-      # 不依赖 Windows 的 Git Bash 里有没有 sha256sum)。
+      # 产物的 sha256 也一起发出去, 便于安装侧校验。纯 Python 脚本而不是内联 shell:
+      # Windows 的默认 shell 是 pwsh, `python - <<'PY'` 在那边是语法错误 (实测 CI 被它判失败)。
       - name: Checksums
         working-directory: litearm-studio
-        run: |
-          python - <<'PY'
-          import hashlib, pathlib
-          out = []
-          for p in sorted(pathlib.Path("upload").iterdir()):
-              if p.name == "SHA256SUMS.txt" or not p.is_file():
-                  continue
-              out.append(f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}")
-          pathlib.Path("upload/SHA256SUMS.txt").write_text("\n".join(out) + "\n", encoding="utf-8")
-          print("\n".join(out))
-          PY
+        run: python packaging/checksums.py upload
 
       - name: Attach artifacts to the release
         working-directory: litearm-studio
