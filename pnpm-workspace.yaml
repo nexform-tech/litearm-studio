@@ -1,0 +1,4 @@
+# pnpm 12 起，依赖的构建脚本需显式审批。
+# protobufjs 的 postinstall 仅打印信息，本仓库不需要它执行（build/test 均已验证通过）。
+allowBuilds:
+  protobufjs: false

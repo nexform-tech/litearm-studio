@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LiteArm Studio</title>
+    <!-- 首帧主题：在样式表之前决定 light/dark，避免深色主题下刷新闪白。
+         规则与 src/lib/theme.ts 保持一致（用户选择 → 系统偏好）。 -->
+    <script>
+      ;(function () {
+        try {
+          var stored = localStorage.getItem('litearm_theme')
+          var dark = stored
+            ? stored === 'dark'
+            : window.matchMedia('(prefers-color-scheme: dark)').matches
+          document.documentElement.classList.toggle('dark', dark)
+        } catch (e) {
+          /* 读不到 localStorage 时保持默认（浅色） */
+        }
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
