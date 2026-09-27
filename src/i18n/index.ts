@@ -10,8 +10,6 @@ import soloZh from './locales/zh/solo.json'
 import soloEn from './locales/en/solo.json'
 import settingsZh from './locales/zh/settings.json'
 import settingsEn from './locales/en/settings.json'
-import logsZh from './locales/zh/logs.json'
-import logsEn from './locales/en/logs.json'
 import telemetryZh from './locales/zh/telemetry.json'
 import telemetryEn from './locales/en/telemetry.json'
 
@@ -22,7 +20,6 @@ export const resources = {
     nav: navZh,
     solo: soloZh,
     settings: settingsZh,
-    logs: logsZh,
     telemetry: telemetryZh,
   },
   en: {
@@ -30,7 +27,6 @@ export const resources = {
     nav: navEn,
     solo: soloEn,
     settings: settingsEn,
-    logs: logsEn,
     telemetry: telemetryEn,
   },
 } as const
@@ -42,7 +38,7 @@ i18n
     resources,
     fallbackLng: 'zh',
     defaultNS,
-    ns: ['common', 'nav', 'solo', 'settings', 'logs', 'telemetry'],
+    ns: ['common', 'nav', 'solo', 'settings', 'telemetry'],
     interpolation: {
       escapeValue: false,
     },

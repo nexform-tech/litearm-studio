@@ -21,7 +21,7 @@ type Listener = () => void
 class TelemetryRecorder {
   private sessionId: number | null = null
   private sessionReady: Promise<number | null> | null = null
-  private endpoint = ''
+  private port = ''
   private robotSerial = ''
   private startedAt: number | null = null
   private lastSampleAt: number | null = null
@@ -81,7 +81,7 @@ class TelemetryRecorder {
   getStatus() {
     return {
       recording: this.sessionId !== null && armClient.status === 'connected',
-      endpoint: this.endpoint || armClient.endpointValue,
+      port: this.port || (armClient.conn?.port ?? ''),
       robotSerial: this.robotSerial,
       startedAt: this.startedAt,
       lastSampleAt: this.lastSampleAt,
@@ -122,13 +122,15 @@ class TelemetryRecorder {
       clearTimeout(this.finalizeTimer)
       this.finalizeTimer = null
     }
-    this.endpoint = armClient.endpointValue
-    this.robotSerial = armClient.state?.robotSerial ?? ''
+    this.port = armClient.conn?.port ?? ''
+    // 新协议（计划 3.3）没有 robotSerial 对应物：设备身份改用 license UID，
+    // 当前尚未接入，先留空。
+    this.robotSerial = ''
     this.startedAt = Date.now() / 1000
     this.lastSampleAt = null
     this.samplesRecorded = 0
     this.sessionReady = telemetryDb
-      .addSession(this.startedAt, this.endpoint, this.robotSerial)
+      .addSession(this.startedAt, this.port, this.robotSerial)
       .then((id) => {
         this.sessionId = id
         this.notify()
@@ -143,9 +145,6 @@ class TelemetryRecorder {
   private onState = () => {
     const s = armClient.state
     if (!s) return
-    if (s.robotSerial && s.robotSerial !== this.robotSerial) {
-      this.robotSerial = s.robotSerial
-    }
     this.lastSampleAt = Date.now() / 1000
     this.samplesRecorded += 1
     this.pending.push({

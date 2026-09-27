@@ -1,7 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
-import { AlertTriangle, RefreshCw, RotateCcw } from 'lucide-react'
+import { AlertTriangle, RefreshCw } from 'lucide-react'
 import { Button } from './ui/button'
-import { ARM_ENDPOINT_LS_KEY, DEFAULT_ARM_ENDPOINT } from '@/lib/arm/endpoint'
 
 interface Props {
   children: ReactNode
@@ -30,15 +29,6 @@ export class ErrorBoundary extends Component<Props, State> {
     window.location.reload()
   }
 
-  handleResetEndpointAndReload = () => {
-    try {
-      localStorage.setItem(ARM_ENDPOINT_LS_KEY, DEFAULT_ARM_ENDPOINT)
-    } catch {
-      // 忽略 localStorage 写入错误
-    }
-    window.location.reload()
-  }
-
   render() {
     if (this.state.hasError) {
       return (
@@ -59,10 +49,6 @@ export class ErrorBoundary extends Component<Props, State> {
               </pre>
             )}
             <div className="flex gap-3">
-              <Button variant="outline" size="sm" onClick={this.handleResetEndpointAndReload}>
-                <RotateCcw className="mr-1.5 size-4" />
-                重置连接地址并刷新
-              </Button>
               <Button size="sm" onClick={this.handleReload}>
                 <RefreshCw className="mr-1.5 size-4" />
                 重新加载页面

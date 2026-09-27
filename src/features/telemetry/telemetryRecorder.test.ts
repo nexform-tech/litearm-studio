@@ -9,6 +9,7 @@ const mock = vi.hoisted(() => {
     statusListeners,
     armStatus: 'disconnected',
     armState: null as null | Record<string, unknown>,
+    armConn: { status: 'disconnected', port: null as string | null, firmware: '', n: 0, cart: false, error: null },
   }
 })
 
@@ -20,7 +21,9 @@ vi.mock('@/lib/arm/client', () => ({
     get state() {
       return mock.armState
     },
-    endpointValue: '127.0.0.1:7449',
+    get conn() {
+      return mock.armConn
+    },
     subscribeState: (cb: () => void) => {
       mock.stateListeners.add(cb)
       return () => mock.stateListeners.delete(cb)
@@ -37,6 +40,7 @@ import { telemetryRecorder } from './telemetryRecorder'
 
 function setConnected() {
   mock.armStatus = 'connected'
+  mock.armConn = { status: 'connected', port: '/dev/ttyACM0', firmware: 'Litearm1.8.0-7J', n: 7, cart: true, error: null }
   mock.armState = {
     q: [0.1, 0.2],
     dq: [0, 0],
@@ -44,8 +48,7 @@ function setConnected() {
     temps: [],
     errs: [],
     fault: [],
-    state: 'holding',
-    robotSerial: 'GENERIC-V4',
+    state: 'ready',
   }
   for (const cb of [...mock.statusListeners]) cb()
 }
@@ -79,7 +82,7 @@ describe('telemetryRecorder', () => {
     const sessions = await telemetryDb.listSessions()
     expect(sessions).toHaveLength(1)
     expect(sessions[0].endedAt).toBeNull()
-    expect(sessions[0].robotSerial).toBe('GENERIC-V4')
+    expect(sessions[0].port).toBe('/dev/ttyACM0')
     expect(await telemetryDb.totalSamples()).toBe(12)
   })
 

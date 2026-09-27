@@ -201,6 +201,20 @@ def test_zero_gravity_start_stop_marks_the_state(fake_session: Session) -> None:
 
 # ------------------------------------------------------------------ 状态推送
 
+def test_state_push_rate_feeds_the_3d_preview() -> None:
+    """哨兵: 推送默认间隔必须快到能撑起 3D 预览。
+
+    ⚠ 这条**不是**形式主义。旧客户端给 3D 预览单独留了一条直读 SDK 缓存的 60Hz 快通道;
+    换成 daemon 推送之后, 把默认值定成 10Hz 就是**肉眼可见的卡顿**, 而"状态与 3D 实时
+    刷新"是这一版的明确目标。改动这个常量会红, 逼人先想清楚 3D 那条订阅靠什么喂。
+    """
+    from litearm_studio_daemon.session import STATE_PUSH_INTERVAL_S
+
+    assert STATE_PUSH_INTERVAL_S <= 1 / 30, (
+        f"默认推送间隔 {STATE_PUSH_INTERVAL_S}s 太慢, 3D 预览会卡"
+        f" (旧客户端给 3D 的是一条 60Hz 快通道)")
+
+
 def test_state_is_pushed_to_listeners(fake_session: Session) -> None:
     seen: list[dict] = []
     fake_session.add_listener(lambda ev: seen.append(ev))

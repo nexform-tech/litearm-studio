@@ -1,382 +1,307 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RobotState } from './client'
 
-const connectMock = vi.fn()
-const closeMock = vi.fn()
-const requestStopMock = vi.fn()
-const clearStopMock = vi.fn()
-const homeMock = vi.fn()
-const movejMock = vi.fn()
-const deviceMock = vi.fn()
-const getStateMock = vi.fn()
-const listDeviceTypesMock = vi.fn()
-const connectDeviceMock = vi.fn()
-const disconnectDeviceMock = vi.fn()
-const getActiveDeviceMock = vi.fn()
-const getDeviceManifestMock = vi.fn()
-let connectedFlag = false
+/** 最小可用的假 WebSocket：测试手动控制 open/message/close。 */
+class FakeWebSocket {
+  static CONNECTING = 0
+  static OPEN = 1
+  static CLOSING = 2
+  static CLOSED = 3
+  static instances: FakeWebSocket[] = []
 
-vi.mock('litearm-js/browser', () => ({
-  Arm: class MockArm {
-    endpoint: string
-    token?: string
-    constructor(endpoint: string, token?: string) {
-      this.endpoint = endpoint
-      this.token = token
+  url: string
+  readyState = FakeWebSocket.CONNECTING
+  onopen: ((ev: Event) => void) | null = null
+  onmessage: ((ev: MessageEvent) => void) | null = null
+  onclose: ((ev: CloseEvent) => void) | null = null
+  sent: string[] = []
+
+  constructor(url: string) {
+    this.url = url
+    FakeWebSocket.instances.push(this)
+  }
+
+  send(data: string) {
+    this.sent.push(data)
+  }
+
+  close() {
+    this.readyState = FakeWebSocket.CLOSED
+  }
+
+  // ── 测试助手 ──
+  open() {
+    this.readyState = FakeWebSocket.OPEN
+    this.onopen?.({} as Event)
+  }
+
+  receive(msg: unknown) {
+    this.onmessage?.({ data: JSON.stringify(msg) } as MessageEvent)
+  }
+
+  drop() {
+    this.readyState = FakeWebSocket.CLOSED
+    this.onclose?.({} as CloseEvent)
+  }
+
+  frames(): Array<Record<string, unknown>> {
+    return this.sent.map((s) => JSON.parse(s) as Record<string, unknown>)
+  }
+
+  lastFrame(m?: string): Record<string, unknown> | undefined {
+    const frames = this.frames()
+    for (let i = frames.length - 1; i >= 0; i--) {
+      if (!m || frames[i].t === m) return frames[i]
     }
-    connect = connectMock
-    close = closeMock
-    requestStop = requestStopMock
-    clearStop = clearStopMock
-    home = homeMock
-    movej = movejMock
-    device = deviceMock
-    getState = getStateMock
-    listDeviceTypes = listDeviceTypesMock
-    connectDevice = connectDeviceMock
-    disconnectDevice = disconnectDeviceMock
-    getActiveDevice = getActiveDeviceMock
-    getDeviceManifest = getDeviceManifestMock
-    get connected() {
-      return connectedFlag
-    }
-  },
-}))
+    return undefined
+  }
+}
 
 const { ArmClient } = await import('./client')
 
-describe('ArmClient', () => {
-  let client: InstanceType<typeof ArmClient>
+/** 建一个已通过 WS 握手、daemon 报 connected 的客户端。 */
+function connectedClient() {
+  const client = new ArmClient()
+  client.connect()
+  const ws = FakeWebSocket.instances.at(-1)!
+  ws.open()
+  ws.receive({ t: 'hello', daemon: '0.1.0', sdk: '2.1.0' })
+  ws.receive({ t: 'conn', status: 'connected', port: '/dev/ttyACM0', firmware: 'Litearm1.8.0-7J', n: 7, cart: true, error: null })
+  return { client, ws }
+}
 
+describe('ArmClient (daemon WebSocket)', () => {
   beforeEach(() => {
-    vi.useFakeTimers()
-    connectMock.mockReset()
-    closeMock.mockReset()
-    requestStopMock.mockReset()
-    clearStopMock.mockReset()
-    homeMock.mockReset()
-    movejMock.mockReset()
-    deviceMock.mockReset()
-    getStateMock.mockReset()
-    listDeviceTypesMock.mockReset()
-    connectDeviceMock.mockReset()
-    disconnectDeviceMock.mockReset()
-    getActiveDeviceMock.mockReset()
-    getDeviceManifestMock.mockReset()
-    // Mirrors the real Arm: once connect() resolves, `.connected` reads true
-    // until close()/network-drop — the client's rAF poll loop relies on this
-    // to decide whether it's still live.
-    connectedFlag = true
-    client = new ArmClient()
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+    FakeWebSocket.instances = []
   })
 
   afterEach(() => {
+    vi.unstubAllGlobals()
     vi.useRealTimers()
   })
 
   it('starts disconnected', () => {
+    const client = new ArmClient()
     expect(client.status).toBe('disconnected')
     expect(client.state).toBeNull()
+    expect(client.conn).toBeNull()
   })
 
-  it('goes connecting → connected on a successful connect(), and notifies status listeners', async () => {
-    connectMock.mockResolvedValue(undefined)
+  it('derives ws://host/ws and on open asks the daemon to connect', () => {
+    const client = new ArmClient()
+    client.connect()
+    expect(client.status).toBe('connecting')
+    const ws = FakeWebSocket.instances.at(-1)!
+    expect(ws.url).toBe('ws://localhost:3000/ws')
+
+    ws.open()
+    expect(ws.lastFrame('connect')).toMatchObject({ t: 'connect' })
+  })
+
+  it('goes connecting → connected on the daemon conn frame and notifies status listeners', () => {
+    const client = new ArmClient()
     const statuses: string[] = []
     client.subscribeStatus(() => statuses.push(client.status))
 
-    client.connect('192.168.1.10:7449', 'tok')
+    client.connect()
+    const ws = FakeWebSocket.instances.at(-1)!
+    ws.open()
     expect(client.status).toBe('connecting')
 
-    await vi.waitFor(() => expect(client.status).toBe('connected'))
+    ws.receive({ t: 'conn', status: 'connected', port: '/dev/ttyACM0', firmware: 'Litearm1.8.0-7J', n: 7, cart: true, error: null })
+    expect(client.status).toBe('connected')
     expect(statuses).toContain('connected')
+    expect(client.conn).toMatchObject({ port: '/dev/ttyACM0', firmware: 'Litearm1.8.0-7J', n: 7, cart: true })
     expect(client.lastError).toBeNull()
   })
 
-  it('polls getState() once connected and notifies state listeners on change', async () => {
-    connectMock.mockResolvedValue(undefined)
-    connectedFlag = true
-    const state1 = { q: [1] } as any
-    getStateMock.mockReturnValue(state1)
-
-    const stateNotifications: unknown[] = []
-    client.subscribeState(() => stateNotifications.push(client.state))
-
-    client.connect('endpoint')
-    await vi.waitFor(() => expect(client.status).toBe('connected'))
-
-    // rAF-driven polling loop needs the fake clock nudged forward.
-    await vi.advanceTimersByTimeAsync(50)
-    expect(client.state).toMatchObject(state1)
-    expect(stateNotifications[stateNotifications.length - 1]).toMatchObject(state1)
+  it('surfaces conn.error as lastError and error status', () => {
+    const client = new ArmClient()
+    client.connect()
+    const ws = FakeWebSocket.instances.at(-1)!
+    ws.open()
+    ws.receive({ t: 'conn', status: 'error', port: null, firmware: '', n: 0, cart: false, error: '未发现 STM32 CDC 设备' })
+    expect(client.status).toBe('error')
+    expect(client.lastError).toBe('未发现 STM32 CDC 设备')
   })
 
-  it('fast state subscribers get every frame while regular subscribers are throttled', async () => {
-    connectMock.mockResolvedValue(undefined)
-    connectedFlag = true
-    let frame = 0
-    // 每帧返回新对象（模拟真机 50Hz 广播 decode），但安全字段不变。
-    getStateMock.mockImplementation(() => ({ q: [frame++] } as any))
+  it('applies state frames and notifies state listeners', () => {
+    const { client, ws } = connectedClient()
+    const seen: Array<RobotState | null> = []
+    client.subscribeState(() => seen.push(client.state))
+
+    ws.receive({ t: 'state', stamp: 1, state: { q: [1, 2], dq: [], tau: [], errs: [1, 1], state: 'ready' } })
+    expect(client.state?.q).toEqual([1, 2])
+    expect(seen).toHaveLength(1)
+
+    // 状态串变化立即通知（不受 100ms 节流限制）
+    ws.receive({ t: 'state', stamp: 2, state: { q: [1, 2], dq: [], tau: [], errs: [1, 1], state: 'fault', faulted: true } })
+    expect(client.state?.state).toBe('fault')
+    expect(seen).toHaveLength(2)
+  })
+
+  it('fast state subscribers fire on every frame', () => {
+    const { client, ws } = connectedClient()
     let fast = 0
-    let slow = 0
     client.subscribeStateFast(() => fast++)
-    client.subscribeState(() => slow++)
-
-    client.connect('endpoint')
-    await vi.waitFor(() => expect(client.status).toBe('connected'))
-    await vi.advanceTimersByTimeAsync(500)
-
-    // 高速通道按帧触发（500ms ≈ 30 帧），普通通道被限制在 ~10Hz。
-    expect(fast).toBeGreaterThan(20)
-    expect(slow).toBeLessThanOrEqual(8)
+    ws.receive({ t: 'state', stamp: 1, state: { q: [1], state: 'ready' } })
+    ws.receive({ t: 'state', stamp: 2, state: { q: [2], state: 'ready' } })
+    expect(fast).toBe(2)
   })
 
-  it('goes to error and schedules a reconnect when connect() rejects', async () => {
-    connectMock.mockRejectedValueOnce(new Error('boom')).mockResolvedValue(undefined)
+  it('resolves a command from an ok res frame and sends an auto-increment id', async () => {
+    const { client, ws } = connectedClient()
+    const promise = client.enable()
+    const frame = ws.lastFrame('cmd')!
+    expect(frame).toMatchObject({ t: 'cmd', id: 1, m: 'enable', p: {} })
 
-    client.connect('endpoint')
-    await vi.waitFor(() => expect(client.status).toBe('error'))
-    expect(client.lastError).toBe('boom')
-    expect(connectMock).toHaveBeenCalledTimes(1)
-
-    // First reconnect delay is 1000ms.
-    await vi.advanceTimersByTimeAsync(1000)
-    expect(connectMock).toHaveBeenCalledTimes(2)
-    await vi.waitFor(() => expect(client.status).toBe('connected'))
+    ws.receive({ t: 'res', id: 1, ok: true, v: null })
+    await expect(promise).resolves.toBeNull()
   })
 
-  it('disconnect() closes the socket, clears state, and cancels any pending reconnect', async () => {
-    connectMock.mockRejectedValue(new Error('boom'))
-    client.connect('endpoint')
-    await vi.waitFor(() => expect(client.status).toBe('error'))
+  it('rejects with the daemon err object on an ok:false res frame', async () => {
+    const { client, ws } = connectedClient()
+    const promise = client.movej([0, 0, 0])
+    const frame = ws.lastFrame('cmd')!
+    ws.receive({ t: 'res', id: frame.id, ok: false, err: { kind: 'MotionBusyError', msg: '已有运动在途' } })
 
-    client.disconnect()
-    expect(client.status).toBe('disconnected')
-    expect(client.state).toBeNull()
-
-    // No reconnect should fire after disconnecting.
-    await vi.advanceTimersByTimeAsync(5000)
-    expect(connectMock).toHaveBeenCalledTimes(1)
+    await expect(promise).rejects.toMatchObject({ err: { kind: 'MotionBusyError', msg: '已有运动在途' } })
   })
 
-  it('connect() during reconnect backoff cancels the timer and retries immediately', async () => {
-    connectMock.mockResolvedValue(undefined)
-    client.connect('endpoint')
-    await vi.waitFor(() => expect(client.status).toBe('connected'))
-    expect(connectMock).toHaveBeenCalledTimes(1)
+  it('sends the whitelisted command methods with the documented params', async () => {
+    const { client, ws } = connectedClient()
 
-    // 模拟连接后断流：poll 发现 socket 已死，进入 reconnecting 并挂起退避定时器
-    connectedFlag = false
-    await vi.advanceTimersByTimeAsync(50)
-    expect(client.status).toBe('reconnecting')
-    expect(connectMock).toHaveBeenCalledTimes(1)
-
-    // 用户点击「连接」：应取消退避并立即重连，而不是等 1s 定时器
-    connectedFlag = true // 新 socket 建立后 .connected 恢复为 true
-    client.connect('endpoint')
-    expect(client.status).toBe('connecting')
-    await vi.waitFor(() => expect(client.status).toBe('connected'))
-    expect(connectMock).toHaveBeenCalledTimes(2)
-
-    // 被取消的退避定时器不应再触发一次多余的连接
-    await vi.advanceTimersByTimeAsync(5000)
-    expect(connectMock).toHaveBeenCalledTimes(2)
+    const cases: Array<[() => Promise<unknown>, Record<string, unknown>]> = [
+      [() => client.disable(), { m: 'disable', p: {} }],
+      [() => client.clearFaults(), { m: 'clear_faults', p: {} }],
+      [() => client.reset(), { m: 'reset', p: {} }],
+      [() => client.setSpeed(42), { m: 'set_speed', p: { percent: 42 } }],
+      [() => client.getTcpPose(), { m: 'get_tcp', p: {} }],
+      [() => client.ik([0, 0, 0, 0, 0, 0]), { m: 'ik', p: { pose: [0, 0, 0, 0, 0, 0] } }],
+      [() => client.zeroGStart(), { m: 'zero_g_start', p: {} }],
+      [() => client.zeroGStop(), { m: 'zero_g_stop', p: {} }],
+      [() => client.getJointParams(), { m: 'get_joint_params', p: {} }],
+    ]
+    for (const [run, expected] of cases) {
+      const p = run()
+      const frame = ws.lastFrame('cmd')!
+      expect(frame).toMatchObject(expected)
+      ws.receive({ t: 'res', id: frame.id, ok: true, v: null })
+      await p
+    }
   })
 
-  it('disconnect() closes the live arm', async () => {
-    connectMock.mockResolvedValue(undefined)
-    client.connect('endpoint')
-    await vi.waitFor(() => expect(client.status).toBe('connected'))
-
-    client.disconnect()
-    expect(closeMock).toHaveBeenCalledTimes(1)
+  it('rejects commands while the socket is not open', async () => {
+    const client = new ArmClient()
+    await expect(client.enable()).rejects.toThrow('本地程序未连接')
   })
 
-  it('requestStop() is a no-op while disconnected, and delegates once connected', async () => {
-    expect(() => client.requestStop()).not.toThrow()
-    expect(requestStopMock).not.toHaveBeenCalled()
-
-    connectMock.mockResolvedValue(undefined)
-    client.connect('endpoint')
-    await vi.waitFor(() => expect(client.status).toBe('connected'))
-
+  it('requestStop() sends estop', () => {
+    const { client, ws } = connectedClient()
     client.requestStop()
-    expect(requestStopMock).toHaveBeenCalledTimes(1)
-  })
-
-  it('home() rejects while disconnected', async () => {
-    await expect(client.home()).rejects.toThrow('机械臂未连接')
-    expect(homeMock).not.toHaveBeenCalled()
-  })
-
-  it('home() delegates to the live arm once connected', async () => {
-    connectMock.mockResolvedValue(undefined)
-    homeMock.mockResolvedValue(true)
-    client.connect('endpoint')
-    await vi.waitFor(() => expect(client.status).toBe('connected'))
-
-    await expect(client.home({ speed: 0.3, settle_s: 0 })).resolves.toBe(true)
-    expect(homeMock).toHaveBeenCalledWith({ speed: 0.3, settle_s: 0 })
-  })
-
-  it('movej() rejects while disconnected', async () => {
-    await expect(client.movej([0, 0, 0])).rejects.toThrow('机械臂未连接')
-    expect(movejMock).not.toHaveBeenCalled()
-  })
-
-  it('movej() delegates to the live arm once connected', async () => {
-    connectMock.mockResolvedValue(undefined)
-    movejMock.mockResolvedValue(true)
-    client.connect('endpoint')
-    await vi.waitFor(() => expect(client.status).toBe('connected'))
-
-    await expect(client.movej([1, 2, 3], { speed: 0.5 })).resolves.toBe(true)
-    expect(movejMock).toHaveBeenCalledWith([1, 2, 3], { speed: 0.5 })
-  })
-
-  it('device() returns null while disconnected and the proxy once connected', async () => {
-    expect(client.device('gripper_0')).toBeNull()
-
-    connectMock.mockResolvedValue(undefined)
-    const proxy = { setWidth: vi.fn() }
-    deviceMock.mockReturnValue(proxy)
-    client.connect('endpoint')
-    await vi.waitFor(() => expect(client.status).toBe('connected'))
-
-    expect(client.device('gripper_0')).toBe(proxy)
-    expect(deviceMock).toHaveBeenCalledWith('gripper_0')
-  })
-
-  it('delegates the new end-effector management APIs once connected', async () => {
-    connectMock.mockResolvedValue(undefined)
-    listDeviceTypesMock.mockResolvedValue([{ category: 'gripper', subtype: 'litegrip', name: '夹爪', icon: 'x' }])
-    connectDeviceMock.mockResolvedValue({ ok: true })
-    disconnectDeviceMock.mockResolvedValue({ ok: true })
-    getActiveDeviceMock.mockResolvedValue({ online: true, category: 'gripper' })
-    getDeviceManifestMock.mockResolvedValue({ name: 'gripper' })
-
-    client.connect('endpoint')
-    await vi.waitFor(() => expect(client.status).toBe('connected'))
-
-    await expect(client.listDeviceTypes()).resolves.toHaveLength(1)
-    await expect(client.connectDevice('gripper', 'litegrip', { deviceId: 'end_0' })).resolves.toEqual({ ok: true })
-    await expect(client.disconnectDevice('end_0')).resolves.toEqual({ ok: true })
-    await expect(client.getActiveDevice('end_0')).resolves.toMatchObject({ online: true, category: 'gripper' })
-    await expect(client.getDeviceManifest('end_0')).resolves.toEqual({ name: 'gripper' })
-
-    expect(listDeviceTypesMock).toHaveBeenCalledTimes(1)
-    expect(connectDeviceMock).toHaveBeenCalledWith('gripper', 'litegrip', { deviceId: 'end_0' })
-    expect(disconnectDeviceMock).toHaveBeenCalledWith('end_0')
-    expect(getActiveDeviceMock).toHaveBeenCalledWith('end_0')
-    expect(getDeviceManifestMock).toHaveBeenCalledWith('end_0')
-  })
-
-  it('withArm() rejects while disconnected and runs the callback once connected', async () => {
-    await expect(client.withArm((a) => a.close() as any)).rejects.toThrow('机械臂未连接')
-
-    connectMock.mockResolvedValue(undefined)
-    client.connect('endpoint')
-    await vi.waitFor(() => expect(client.status).toBe('connected'))
-
-    const fn = vi.fn().mockResolvedValue('ok')
-    await expect(client.withArm(fn)).resolves.toBe('ok')
-    expect(fn).toHaveBeenCalledTimes(1)
-  })
-
-  it('withArm() converts a synchronous callback throw into a rejected promise', async () => {
-    connectMock.mockResolvedValue(undefined)
-    client.connect('endpoint')
-    await vi.waitFor(() => expect(client.status).toBe('connected'))
-
-    await expect(client.withArm(() => {
-      throw new Error('removed SDK method')
-    })).rejects.toThrow('removed SDK method')
-  })
-
-  it('a redundant connect() to the same endpoint while already connecting/connected is a no-op', async () => {
-    connectMock.mockResolvedValue(undefined)
-    client.connect('endpoint')
-    client.connect('endpoint')
-    await vi.waitFor(() => expect(client.status).toBe('connected'))
-    expect(connectMock).toHaveBeenCalledTimes(1)
-  })
-
-  it('connect() from error state cancels the pending reconnect timer and opens a single fresh socket', async () => {
-    connectMock.mockRejectedValueOnce(new Error('boom')).mockResolvedValue(undefined)
-    client.connect('endpoint')
-    await vi.waitFor(() => expect(client.status).toBe('error'))
-    expect(connectMock).toHaveBeenCalledTimes(1)
-
-    // A remount/HMR reconnect lands before the 1000ms reconnect timer fires.
-    client.connect('endpoint')
-    expect(connectMock).toHaveBeenCalledTimes(2)
-    await vi.waitFor(() => expect(client.status).toBe('connected'))
-
-    // The superseded timer must not open a third socket.
-    await vi.advanceTimersByTimeAsync(5000)
-    expect(connectMock).toHaveBeenCalledTimes(2)
-  })
-
-  it('connect() to a new endpoint closes the superseded socket', async () => {
-    connectMock.mockResolvedValue(undefined)
-    client.connect('first')
-    await vi.waitFor(() => expect(client.status).toBe('connected'))
-
-    client.connect('second')
-    expect(closeMock).toHaveBeenCalledTimes(1)
-    await vi.waitFor(() => expect(client.status).toBe('connected'))
-    expect(connectMock).toHaveBeenCalledTimes(2)
+    expect(ws.lastFrame('cmd')).toMatchObject({ m: 'estop' })
   })
 
   it('rejects a second motion while the first is still in flight', async () => {
-    connectMock.mockResolvedValue(undefined)
-    let settleFirst!: (v: boolean) => void
-    movejMock.mockImplementation(() => new Promise<boolean>((res) => { settleFirst = res }))
-    client.connect('endpoint')
-    await vi.waitFor(() => expect(client.status).toBe('connected'))
-
-    const first = client.movej([0.1], { speed: 0.1 })
+    const { client, ws } = connectedClient()
+    const first = client.movej([0.1])
     expect(client.motionBusy).toBe(true)
 
-    await expect(client.movej([0.2], { speed: 0.1 })).rejects.toThrow('正在运动')
-    expect(movejMock).toHaveBeenCalledTimes(1)
+    await expect(client.movej([0.2])).rejects.toThrow('正在运动')
 
-    settleFirst(true)
-    await expect(first).resolves.toBe(true)
-    expect(client.motionBusy).toBe(false)
-  })
-
-  it('allows a new motion after the previous one completes', async () => {
-    connectMock.mockResolvedValue(undefined)
-    let settle!: (v: boolean) => void
-    let calls = 0
-    movejMock.mockImplementation(() => {
-      calls += 1
-      if (calls === 1) return new Promise<boolean>((res) => { settle = res })
-      return Promise.resolve(true)
-    })
-    client.connect('endpoint')
-    await vi.waitFor(() => expect(client.status).toBe('connected'))
-
-    const first = client.movej([0.1], {})
-    settle(true)
+    const frame = ws.lastFrame('cmd')!
+    ws.receive({ t: 'res', id: frame.id, ok: true, v: null })
     await first
-
-    await expect(client.movej([0.2], {})).resolves.toBe(true)
     expect(client.motionBusy).toBe(false)
   })
 
-  it('releases the motion lock when the connection drops mid-motion', async () => {
-    connectMock.mockResolvedValue(undefined)
-    // 模拟运动 RPC 永不返回（网络断开时底层 pending 不会 settle）。
-    movejMock.mockImplementation(() => new Promise<boolean>(() => {}))
-    client.connect('endpoint')
-    await vi.waitFor(() => expect(client.status).toBe('connected'))
-
-    void client.movej([0.1], {})
-    expect(client.motionBusy).toBe(true)
+  it('disconnect() sends the disconnect frame, closes, and clears state', async () => {
+    const { client, ws } = connectedClient()
+    ws.receive({ t: 'state', stamp: 1, state: { q: [1], state: 'ready' } })
 
     client.disconnect()
-    expect(client.motionBusy).toBe(false)
+    expect(ws.lastFrame('disconnect')).toMatchObject({ t: 'disconnect' })
+    expect(client.status).toBe('disconnected')
+    expect(client.state).toBeNull()
+  })
+
+  it('a redundant connect() while connecting/connected is a no-op', () => {
+    const { client } = connectedClient()
+    client.connect()
+    expect(FakeWebSocket.instances).toHaveLength(1)
+  })
+
+  it('reconnects with the backoff after the socket drops', async () => {
+    vi.useFakeTimers()
+    const { client, ws } = connectedClient()
+    ws.drop()
+    expect(client.status).toBe('reconnecting')
+    expect(FakeWebSocket.instances).toHaveLength(1)
+
+    // 第一次退避 1000ms
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(FakeWebSocket.instances).toHaveLength(2)
+  })
+
+  it('does not reconnect after an explicit disconnect()', async () => {
+    vi.useFakeTimers()
+    const { client, ws } = connectedClient()
+    client.disconnect()
+    ws.drop()
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(FakeWebSocket.instances).toHaveLength(1)
+  })
+
+  it('rejects in-flight commands when the socket drops', async () => {
+    const { client, ws } = connectedClient()
+    const pending = client.enable()
+    ws.drop()
+    await expect(pending).rejects.toThrow('本地程序连接已断开')
+  })
+
+  it('connect() after a drop cancels the backoff and retries immediately', async () => {
+    vi.useFakeTimers()
+    const { client, ws } = connectedClient()
+    ws.drop()
+    expect(client.status).toBe('reconnecting')
+
+    client.connect()
+    expect(FakeWebSocket.instances).toHaveLength(2)
+    expect(client.status).toBe('connecting')
+
+    // 被取消的退避定时器不应再触发第三次连接
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(FakeWebSocket.instances).toHaveLength(2)
+  })
+
+  it('does not choke on malformed frames', () => {
+    const { client, ws } = connectedClient()
+    expect(() => ws.onmessage?.({ data: 'not json' } as MessageEvent)).not.toThrow()
+    expect(client.status).toBe('connected')
+  })
+
+  it('ignores res frames with an unknown id', () => {
+    const { client } = connectedClient()
+    expect(() => client.state).not.toThrow()
+  })
+
+  it('parses a full daemon state frame into RobotState', () => {
+    const { client, ws } = connectedClient()
+    ws.receive({
+      t: 'state',
+      stamp: 1.5,
+      state: {
+        q: [0.1], dq: [0.2], tau: [0.3], errs: [1], temps: [{ mosTemp: 40, coilTemp: 35 }],
+        fault: [], mode: 3, modeName: 'MOVE_J', flags: 1, flagNames: ['ENABLED'], jointFault: 0,
+        faultAxes: [], enabled: true, cartBusy: false, faulted: false, faultDetail: '', seq: 12, state: 'ready',
+      },
+    })
+    expect(client.state).toEqual({
+      q: [0.1], dq: [0.2], tau: [0.3], errs: [1], temps: [{ mosTemp: 40, coilTemp: 35 }],
+      fault: [], mode: 3, modeName: 'MOVE_J', flags: 1, flagNames: ['ENABLED'], jointFault: 0,
+      faultAxes: [], enabled: true, cartBusy: false, faulted: false, faultDetail: '', seq: 12, state: 'ready',
+    })
   })
 })
 
@@ -387,28 +312,28 @@ describe('normalizeRobotState', () => {
     expect(normalizeRobotState(undefined)).toBeNull()
   })
 
-  it('fills empty objects in temps with zero temperatures (protobuf defaults)', async () => {
+  it('fills missing fields with safe defaults', async () => {
     const { normalizeRobotState } = await import('./client')
-    const raw = {
-      temps: [{}, { mosTemp: 42 }, { coilTemp: 55 }],
-    } as unknown as RobotState
-    const res = normalizeRobotState(raw)
-    expect(res?.temps).toEqual([
-      { mosTemp: 0, coilTemp: 0 },
-      { mosTemp: 42, coilTemp: 0 },
-      { mosTemp: 0, coilTemp: 55 },
-    ])
-  })
-
-  it('guarantees arrays for q, dq, tau, errs, fault', async () => {
-    const { normalizeRobotState } = await import('./client')
-    const res = normalizeRobotState({} as any)
+    const res = normalizeRobotState({} as RobotState)
     expect(res?.q).toEqual([])
     expect(res?.dq).toEqual([])
     expect(res?.tau).toEqual([])
     expect(res?.errs).toEqual([])
     expect(res?.fault).toEqual([])
     expect(res?.temps).toEqual([])
-    expect(res?.state).toBe('idle')
+    expect(res?.flagNames).toEqual([])
+    expect(res?.faultAxes).toEqual([])
+    expect(res?.enabled).toBe(false)
+    expect(res?.faulted).toBe(false)
+    expect(res?.state).toBe('disabled')
+  })
+
+  it('fills empty temperature objects with zeros', async () => {
+    const { normalizeRobotState } = await import('./client')
+    const res = normalizeRobotState({ temps: [{}, { mosTemp: 42 }] } as unknown as RobotState)
+    expect(res?.temps).toEqual([
+      { mosTemp: 0, coilTemp: 0 },
+      { mosTemp: 42, coilTemp: 0 },
+    ])
   })
 })

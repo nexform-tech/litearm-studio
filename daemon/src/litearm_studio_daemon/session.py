@@ -41,10 +41,16 @@ log = logging.getLogger("litearm_studio_daemon.session")
 #: "不要依赖帧到达速率"是同一个口径 —— 我们是主动方, 不跟固件的 100Hz 对齐。
 POLL_PERIOD_S = 0.02
 
-#: 状态推送节流 (秒) —— 100ms = 10Hz。计划 2 节只说"状态变化时推 state";
-#: 50Hz 全灌进 WS 会把浏览器和 WS 缓冲一起打满, 而 3D 面板 10Hz 已经够顺。
+#: 状态推送节流 (秒) —— 20ms = 50Hz, 与轮询同频。
+#:
+#: ⚠ 这里**不能**按"10Hz 够用"来定 —— 上一版就是 0.1, 那是个**真回归**: 旧客户端
+#: 给 3D 预览单独留了一条直读 SDK 缓存的 60Hz 快通道, 而新架构下前端读不到那个缓存,
+#: 只能吃本推送 ⇒ 10Hz 会让 3D 孪生明显发卡, 而"状态与 3D 实时刷新"是这一版的明确目标。
+#: 代价可忽略: 回环上一个状态帧约 400B (7 轴), 50Hz ≈ 20KB/s; 且前端自己把 **React
+#: 通知**节流在 10Hz (`ArmClient.STATE_NOTIFY_INTERVAL_MS`), 提速率只喂给 3D 那条
+#: 快订阅, 不会让整页重渲染。该判据由 `test_state_push_rate_feeds_the_3d_preview` 钉住。
 #: ⚠ **状态串变化 / 故障变化一律立即推** (见 `_poll_loop`), 节流只管"同样内容重复推"。
-STATE_PUSH_INTERVAL_S = 0.1
+STATE_PUSH_INTERVAL_S = 0.02
 
 #: 运动类命令 —— 这三条在途时, 新的运动命令立刻被拒 (计划 2 节原则 3)。
 #: ⚠ `estop`/`disable`/`zero_g_stop` **不在此列**: 降能量方向的动作永远可达,

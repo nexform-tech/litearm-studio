@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom'
-import { Activity, CircleDot, Languages, Moon, Settings, Sun } from 'lucide-react'
+import { Activity, CircleDot, Languages, Moon, Sun } from 'lucide-react'
 import type { ComponentType } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
@@ -81,20 +81,6 @@ export function RailNav() {
           {i18n.language.startsWith('en') ? 'EN' : '中文'}
         </div>
       </button>
-
-      <NavLink
-        to="/settings"
-        className={({ isActive }) => cn(railItemClass, isActive && 'bg-[#2a3444] hover:bg-[#2a3444]')}
-      >
-        {({ isActive }) => (
-          <>
-            <Settings size="1.25rem" color={isActive ? '#fff' : '#8b97a6'} />
-            <div className={cn('text-[0.65625rem] font-semibold text-center leading-tight', isActive ? 'text-white' : 'text-[#8b97a6]')}>
-              {t('settings')}
-            </div>
-          </>
-        )}
-      </NavLink>
     </div>
   )
 }
