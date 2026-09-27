@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import threading
 import time
 from typing import Optional
 
@@ -14,7 +15,12 @@ from litearm_studio_daemon.errors import (
     NotConnectedCommandError,
     UnknownCommandError,
 )
-from litearm_studio_daemon.session import COMMANDS, MOTION_COMMANDS, Session
+from litearm_studio_daemon.session import (
+    COMMANDS,
+    ENERGY_DOWN_COMMANDS,
+    MOTION_COMMANDS,
+    Session,
+)
 
 Q7 = [0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 POSE = [0.30, 0.0, 0.40, 3.1416, 0.0, 0.0]
@@ -116,6 +122,48 @@ def test_energy_down_commands_are_never_blocked_by_the_motion_mutex(
         fake_session.execute("estop", {})       # 不抛
     finally:
         fake_session._motion_count = 0
+
+
+def test_energy_down_commands_run_while_a_motion_is_still_in_flight(
+        fake_session: Session) -> None:
+    """急停不许**排队**等运动结束 (计划 3.2「永远可达」)。
+
+    ⚠ 只在准入处豁免运动互斥是不够的: 所有 SDK 调用原本共用同一条单线程执行器,
+    于是 `estop` 虽然过了互斥判定, 仍要等阻塞到 `move_timeout` 的 `movej` 结束。
+    上一版实测按住 2s 的 movej 时 `estop` 要等 1.8s 才返回。这条用例把「并行」钉住。
+    """
+    arm = fake_session._arm
+    real_movej = arm.movej
+    started = threading.Event()
+
+    def slow_movej(*args, **kwargs):
+        started.set()
+        time.sleep(0.6)
+        return real_movej(*args, **kwargs)
+
+    arm.movej = slow_movej  # type: ignore[method-assign]
+    mover = threading.Thread(
+        target=lambda: fake_session.execute("movej", {"q": Q7, "speed": 0.3}))
+    mover.start()
+    try:
+        assert started.wait(2.0), "movej 没跑起来 —— 用例前提不成立"
+        t0 = time.monotonic()
+        assert fake_session.execute("estop", {}) is None
+        estop_dt = time.monotonic() - t0
+        # 运动仍在飞 —— 急停是在它**中间**执行的, 不是等它结束。
+        assert fake_session.motion_in_flight() is True
+        assert estop_dt < 0.3, f"estop 排在了运动后面 ({estop_dt:.3f}s)"
+    finally:
+        mover.join()
+
+
+def test_energy_down_set_is_exactly_estop_and_disable() -> None:
+    """哨兵: 这条并行通道只收安全动作, 不许顺手把别的命令塞进来。
+
+    ⚠ `zero_g_stop` 虽然也降能量, 但它会改写会话自己的零重力记录, 与状态轮询共享
+    状态, 故**不**走并行通道 —— 加进来会让状态串出现竞态。
+    """
+    assert ENERGY_DOWN_COMMANDS == frozenset({"estop", "disable"})
 
 
 def test_motion_commands_set_is_exactly_the_three_motion_entries() -> None:

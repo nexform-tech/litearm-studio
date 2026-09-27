@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import socket
+import time
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from litearm_studio_daemon.__main__ import build_parser, main
 from litearm_studio_daemon.server import (
+    _is_energy_down_frame,
     _is_loopback,
     create_app,
     pick_free_http_port,
@@ -193,6 +195,49 @@ def test_ws_command_requires_the_m_field() -> None:
                 assert res["err"]["kind"] == "BadMessage"
     finally:
         session.close()
+
+
+def test_ws_estop_does_not_wait_for_a_command_in_flight() -> None:
+    """急停帧不许等在途命令 —— 传输层曾经是另一半瓶颈。
+
+    ⚠ 原来 `handle_ws` 处理一条上行帧时 `await self._on_upstream(...)`, 于是
+    `receive_text` 也一起被挡住: 运动命令在跑时, **急停帧根本读不出来**。现在降能量
+    帧旁路到独立任务, 与在途命令并行; 这条用例钉住「急停的 res 先回」。
+    """
+    session, app = _client()
+    try:
+        def fake_execute(m, p=None, *, on_event=None):
+            if m == "movej":
+                time.sleep(0.5)
+            return None
+
+        session.execute = fake_execute  # type: ignore[method-assign]
+        with TestClient(app) as client:
+            with client.websocket_connect("/ws") as ws:
+                ws.receive_json()               # hello
+                ws.receive_json()               # conn
+                ws.send_json({"t": "cmd", "id": 1, "m": "movej",
+                              "p": {"q": [0.1] * 7}})
+                ws.send_json({"t": "cmd", "id": 2, "m": "estop", "p": {}})
+                first = ws.receive_json()
+                assert first["t"] == "res"
+                assert first["id"] == 2, (
+                    f"急停应先在途命令返回, 实际先回的是 id={first['id']}")
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ('{"t":"cmd","id":1,"m":"estop","p":{}}', True),
+    ('{"t":"cmd","id":1,"m":"disable","p":{}}', True),
+    ('{"t":"cmd","id":1,"m":"movej","p":{}}', False),   # 运动不进旁路
+    ('{"t":"cmd","id":1,"m":"zero_g_stop","p":{}}', False),  # 会改会话状态, 不进旁路
+    ('{"t":"connect"}', False),
+    ("这不是 JSON", False),                              # 坏帧按普通帧处理
+    ('["not","a","dict"]', False),
+])
+def test_energy_down_frame_detection(raw: str, expected: bool) -> None:
+    assert _is_energy_down_frame(raw) is expected
 
 
 # ------------------------------------------------------------------ 命令行
