@@ -94,6 +94,10 @@
     "commandRejected": "控制器拒绝了该命令{{code}}",
     "motionTimeout": "运动超时：控制器未在预期时间内完成动作，请检查机械臂状态",
     "badMessage": "与本地程序的通信协议错误：{{message}}",
+    "stopFailed": "急停指令未能送达：{{message}}",
+    "jogFailed": "点动未执行：{{message}}",
+    "notEnabled": "机械臂未使能 —— 请先使能再操作",
+    "jointLimitsFallback": "未能从控制器读取关节软限位，滑条已退回内置默认量程",
     "unknownError": "操作失败：{{message}}"
   }
 }

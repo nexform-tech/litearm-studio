@@ -94,6 +94,10 @@
     "commandRejected": "The controller rejected the command{{code}}",
     "motionTimeout": "Motion timed out: the controller did not finish within the expected time, please check robot status",
     "badMessage": "Protocol error talking to the local daemon: {{message}}",
+    "stopFailed": "Emergency stop was not delivered: {{message}}",
+    "jogFailed": "Jog did not run: {{message}}",
+    "notEnabled": "Robot arm is not enabled — enable it before commanding motion",
+    "jointLimitsFallback": "Could not read the joint soft limits from the controller; the sliders fell back to built-in ranges",
     "unknownError": "Operation failed: {{message}}"
   }
 }
