@@ -1,11 +1,14 @@
 """传输层单测 —— HTTP 健康检查、WS 契约、只监听本机的强制判据、命令行。"""
 from __future__ import annotations
 
+import asyncio
+import json
 import socket
 import time
 from pathlib import Path
 
 import pytest
+from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 
 from litearm_studio_daemon.__main__ import build_parser, main
@@ -129,6 +132,47 @@ def test_ws_handshake_sends_hello_then_conn() -> None:
                 assert conn["t"] == "conn"
                 assert conn["status"] == "disconnected"
                 assert "port" in conn and "firmware" in conn and "n" in conn
+    finally:
+        session.close()
+
+
+class _YieldingWS:
+    """假 WebSocket: 写完第一帧就注入一条广播并让出事件循环。
+
+    真实传输的 `send_text` 会让出控制权, 于是 50Hz 状态广播有机会插进握手帧之间 ——
+    这条桩把那个竞态变成**确定性**的: 修复前 pump 一定能把 `state` 排在 `conn` 前。
+    """
+
+    def __init__(self, daemon) -> None:
+        self.daemon = daemon
+        self.sent: list[dict] = []
+
+    async def accept(self) -> None:
+        pass
+
+    async def send_text(self, data: str) -> None:
+        self.sent.append(json.loads(data))
+        if len(self.sent) == 1:
+            self.daemon.broadcast({"t": "state", "stamp": 0.0, "state": {"q": []}})
+            await asyncio.sleep(0)   # 让 pump 有机会跑
+            await asyncio.sleep(0)
+
+    async def receive_text(self) -> str:
+        raise WebSocketDisconnect()
+
+
+def test_ws_writes_hello_and_conn_before_any_state_frame() -> None:
+    """握手顺序是契约 (计划 3.1): 注册客户端必须排在两条握手帧**之后**。
+
+    ⚠ 上一版先把客户端塞进 `self.clients` 再写 `hello`/`conn`, 于是状态广播能经
+    `_pump` 插进两者之间 —— 客户端会在还不知道 `n`/`firmware` 时先收到一帧 `state`。
+    """
+    session, app = _client()
+    try:
+        ws = _YieldingWS(app.state.daemon)
+        asyncio.run(app.state.daemon.handle_ws(ws))
+        kinds = [m["t"] for m in ws.sent]
+        assert kinds[:2] == ["hello", "conn"], f"握手顺序被打断: {kinds}"
     finally:
         session.close()
 

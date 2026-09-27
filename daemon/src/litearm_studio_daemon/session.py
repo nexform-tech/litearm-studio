@@ -168,6 +168,11 @@ class Session:
         self._zero_g_since: Optional[float] = None
         #: 运动在飞计数 (不是 bool: 同一瞬间可能既有在途、又有刚提交的)
         self._motion_count = 0
+        #: **连接代次** —— 每次 `connect()` 递增, `disconnect()`/`close()` 也递增。
+        #: 握手是异步的 (可能几秒), 而 `disconnect()` 只能看到「这一刻有没有 arm」;
+        #: `_open` 在收尾时比对代次, 对不上就丢弃这次连接。没有它, 用户在握手期间按
+        #: 「断开」会被握手完成后的 `_open` 覆盖成 `connected` (上一版的真 bug)。
+        self._connect_gen = 0
 
         self._listeners: List[Callable[[dict], None]] = []
         #: **所有** SDK 调用都在这条单线程上跑 ⇒ 天然串行 (计划 2 节原则 3)。
@@ -253,6 +258,9 @@ class Session:
 
         失败**不抛栈**: 会话落到 `error` 并推一条带 `error` 文案的 `conn`, 返回 `False`
         (前端要看到的是"为什么没连上", 不是进程崩)。
+
+        ⚠ 握手期间收到 `disconnect()`/`close()` 时, 这次连接由 `_connect_gen` 作废:
+        收尾的 `_open` 会把已建好的 arm 关掉并静默退出, **不会**把状态改回 `connected`。
         """
         with self._lock:
             if self._arm is not None and self._status == "connected":
@@ -261,9 +269,12 @@ class Session:
                 return False
             self._status = "connecting"
             self._last_error = None
+            # 代次在这里落章: `_open` 收尾时比对, 对不上说明握手期间被断开/关闭过。
+            self._connect_gen += 1
+            gen = self._connect_gen
         self._broadcast({"t": "conn", **self.arm_info()})
 
-        def _open() -> None:
+        def _open(gen: int) -> None:
             try:
                 target = self._port
                 factory = None
@@ -282,13 +293,23 @@ class Session:
                             "未发现 STM32 CDC 设备 (VID:PID 1d50:606f); 请插好设备或用 --port 指定")
                 arm = Arm(port=target, transport_factory=factory).connect()
             except Exception as e:  # noqa: BLE001 - 连接失败是**预期结局**之一
-                self._connect_failed(e, None)
+                self._connect_failed(e, None, gen)
                 return
             with self._lock:
-                self._arm = arm
-                self._status = "connected"
-                self._last_error = None
-                self._resolved_port = target
+                if self._connect_gen != gen:
+                    stale = True
+                else:
+                    stale = False
+                    self._arm = arm
+                    self._status = "connected"
+                    self._last_error = None
+                    self._resolved_port = target
+            if stale:
+                # 握手期间用户按了「断开」(或进程在收尾) —— 这个会话已经没人要了。
+                # ⚠ 必须在这里把它关掉: 否则串口被一个「已断开」的会话占着。
+                log.info("握手完成时已被断开/关闭, 丢弃这次连接: port=%s", target)
+                self._close_arm(arm)
+                return
             # ⚠ 收尾这一段也**必须**在自己的 try 里: 它跑在**没人读取的 Future** 上,
             # 抛出去就是静默失败。实测过一次 AttributeError (`arm.port`, SDK 的 `Arm`
             # 没有这个属性): 前端看到 `connected`, 却永远收不到状态帧, 日志里一个错
@@ -301,9 +322,9 @@ class Session:
                 self._start_polling()
             except Exception as e:  # noqa: BLE001
                 log.exception("连接收尾失败 (已转为 error 态)")
-                self._connect_failed(e, arm)
+                self._connect_failed(e, arm, gen)
 
-        self._executor.submit(_open)
+        self._executor.submit(_open, gen)
         return True
 
     def disconnect(self) -> bool:
@@ -311,13 +332,20 @@ class Session:
 
         收尾顺序: 停状态轮询 → 停 SDK 会话。`close()` 自己幂等, 且它内部会先收
         零重力保活线程再关链路 (SDK `Arm.close()` 的既定顺序, 不重复一遍)。
+
+        ⚠ **握手在途时也算「停掉了东西」并返回 `True`** —— 否则「连接中按断开」会
+        被报成 no-op, 而实际发生的是取消了一次连接。
         """
         with self._lock:
+            # 先作废在途握手: 否则 `_open` 会在本方法返回**之后**把它连上, 用户按了
+            # 断开却看到 connected (上一版的真 bug, 由 `test_...` 钉住)。
+            self._connect_gen += 1
             if self._arm is None:
+                was_connecting = self._status == "connecting"
                 self._status = "disconnected"
                 self._last_error = None
                 self._resolved_port = None
-                return False
+                return was_connecting
         self._stop_polling()
         arm = self._take_arm()
         if arm is not None:
@@ -347,16 +375,24 @@ class Session:
         except Exception:  # noqa: BLE001 - 收尾失败不该炸掉进程
             log.warning("关闭会话时抛出异常 (已忽略)", exc_info=True)
 
-    def _connect_failed(self, exc: BaseException, arm: Optional[Arm]) -> None:
+    def _connect_failed(self, exc: BaseException, arm: Optional[Arm],
+                        gen: Optional[int] = None) -> None:
         """连接（或连接收尾）失败 —— 落 `error` 态并推一条带原因的 `conn`。
 
         ⚠ **必须把异常转成状态, 不许让它逃出去**: 本方法跑在命令执行器的那条 Future
         上, 而那条 Future 没人读取 —— 逃出去就是静默失败 (前端停在 connecting, 日志
         一片安静)。
+
+        ⚠ `gen` 对不上说明这次握手已被 `disconnect()`/`close()` 作废: 此时**不能**把
+        状态改写成 `error` —— 用户按的是「断开」, 不是「连接失败」。
         """
         if arm is not None:
             self._close_arm(arm)
         with self._lock:
+            if gen is not None and self._connect_gen != gen:
+                log.info("握手失败时已被断开/关闭, 不上报 error: %s: %s",
+                         type(exc).__name__, exc)
+                return
             self._arm = None
             self._status = "error"
             self._last_error = f"{type(exc).__name__}: {exc}"
@@ -371,6 +407,9 @@ class Session:
         降能量以外的推断 (那会把"关窗口"变成"随时可能失能"的惊悚行为)。
         """
         self._stop.set()
+        # 作废在途握手: 收尾时建起来的 arm 没人会关, 会一直占着串口。
+        with self._lock:
+            self._connect_gen += 1
         self._stop_polling()
         self._executor.shutdown(wait=True)
         self._safety_executor.shutdown(wait=True)
