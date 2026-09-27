@@ -43,6 +43,9 @@ playwright-report/
 blob-report/
 .playwright/
 
+# Tool-local config that must never be committed
+.antigravitycli/
+
 # Editor & OS files
 .vscode/*
 !.vscode/extensions.json
