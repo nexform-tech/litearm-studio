@@ -141,6 +141,7 @@ class Session:
                  port_finder: Optional[Callable[[], Optional[str]]] = None,
                  poll_period: float = POLL_PERIOD_S,
                  state_push_interval: float = STATE_PUSH_INTERVAL_S,
+                 disable_on_exit: bool = True,
                  sdk_version: str = litearm.__version__) -> None:
         #: 构造时给的端口 —— 空 = 连接时用 `port_finder` (= SDK `find_cdc_port`) 自动发现。
         #: ⚠ `--port` 只是**覆盖**自动发现 (计划 2 节「设备发现」), 所以这里允许 None。
@@ -149,6 +150,8 @@ class Session:
         self._port_finder = port_finder or find_cdc_port
         self._poll_period = float(poll_period)
         self._state_push_interval = float(state_push_interval)
+        #: 退出时是否降能量 —— 见 `close()` 与 `_deenergize()`。**产品策略**, 默认开。
+        self._disable_on_exit = bool(disable_on_exit)
         self.sdk_version = sdk_version
 
         self._lock = threading.RLock()
@@ -401,23 +404,49 @@ class Session:
         self._broadcast({"t": "conn", **self.arm_info()})
 
     def close(self) -> None:
-        """整个守护进程收尾 (幂等) —— 停轮询、停执行器、关会话。
+        """整个守护进程收尾 (幂等) —— 停轮询、停执行器、**降能量**、关会话。
 
-        ⚠ `estop`/`disable` 是否要在退出前调, 由**调用方**决定: 本方法不做任何
-        降能量以外的推断 (那会把"关窗口"变成"随时可能失能"的惊悚行为)。
+        ⚠ **退出前会先失能** (`disable`, 降能量方向)。这是本项目的产品策略, 而不是
+        实现细节: 进程一走链路就断, 与其把"电机是否还使能"留给固件看门狗, 不如在
+        还有链路时明确降能量 —— 上一版把这件事写成"由调用方决定", 而**没有**任何
+        调用方决定, 于是 Ctrl-C 之后机械臂可能仍带着使能。
+
+        ⚠ 与 `disconnect()` 的区别是**刻意的**: 断开只是结束这一次会话 (计划 2 节
+        原则 4 要的是"关窗口不打断在途会话"), 所以那里**不**降能量; 只有进程收尾
+        才降。要保留使能请用 `--keep-enabled` (`disable_on_exit=False`)。
         """
         self._stop.set()
         # 作废在途握手: 收尾时建起来的 arm 没人会关, 会一直占着串口。
         with self._lock:
             self._connect_gen += 1
         self._stop_polling()
+        # 先等在途命令收尾, 免得它与失能抢链路。
         self._executor.shutdown(wait=True)
-        self._safety_executor.shutdown(wait=True)
         arm = self._take_arm()
         if arm is not None:
+            self._deenergize(arm)
             self._close_arm(arm)
             with self._lock:
                 self._status = "disconnected"
+        self._safety_executor.shutdown(wait=True)
+
+    def _deenergize(self, arm: Arm) -> None:
+        """退出前的降能量 —— **任何失败都只记日志**, 收尾不能因此中断。
+
+        用 `disable` 而不是 `estop`: 后者会锁存一个急停故障, 下次连接还得先清错;
+        正常退出要的是"掉力矩", 不是"制造故障"。
+
+        ⚠ 本方法在 `close()` 里、主执行器已经排空之后调用, 所以不与在途命令抢链路;
+        链路已断时 `disable()` 会抛, 那正是"只能记日志"的场景。
+        """
+        if not self._disable_on_exit:
+            log.info("退出前保持使能 (disable_on_exit=False)")
+            return
+        try:
+            arm.disable()
+            log.info("退出前已失能 (降能量)")
+        except Exception:  # noqa: BLE001 - 链路可能已断, 收尾不许因此失败
+            log.warning("退出前失能失败 (已忽略; 链路可能已断)", exc_info=True)
 
     # ------------------------------------------------------------------ 状态轮询
     def _start_polling(self) -> None:

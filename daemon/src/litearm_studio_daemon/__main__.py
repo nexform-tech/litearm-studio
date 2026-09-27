@@ -31,6 +31,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="前端静态目录 (默认找仓库的 dist/; 不存在就只提供健康检查与 /ws)")
     p.add_argument("--no-open", action="store_true",
                    help="不自动打开浏览器窗口 (默认尝试以应用模式打开)")
+    p.add_argument("--keep-enabled", action="store_true",
+                   help="退出时不失能 (默认退出前会 disable 降能量; 仅在明确知道"
+                        "机械臂会由别的方式保持时才用)")
     p.add_argument("--verbose", "-v", action="store_true", help="打印调试日志")
     return p
 
@@ -44,7 +47,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         # 早退: 与其把异常抛到 uvicorn 那一层, 不如在这里把理由说清楚。
         print(f"只允许监听本机 (127.0.0.1), 拒绝 --host {args.host!r}", file=sys.stderr)
         return 2
-    session = Session(port=args.port, fake=args.fake)
+    session = Session(port=args.port, fake=args.fake,
+                      disable_on_exit=not args.keep_enabled)
     try:
         asyncio.run(serve(session, host=args.host, http_port=args.http_port,
                           ui_dir=args.ui_dir, open_browser=not args.no_open))
