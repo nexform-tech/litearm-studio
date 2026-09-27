@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "litearm-studio-daemon"
+# ⚠ 占位版本号 —— 与 AGENTS.md §3「manifest 的 version 保持占位符」同一意图,
+# 但**写法必须改**: 规范原文的 `0.0.0-semantic-release` **不是合法的 PEP 440
+# 版本号**, setuptools 会在 `pip install -e` 时直接拒绝
+# (`configuration error: project.version must be pep440`) —— 这也是兄弟仓
+# litearm-python 的 pyproject 里写着实际版本号 `2.1.0` 的原因。
+# PEP 440 允许的本地版本段用 `+`, 故写成 `0.0.0+semantic-release`: 语义相同
+# (0.0.0 + 标记 semantic-release), 且合法。
+# 本包**不发布到任何索引** (release.yml 是 source-only 形态, 没有 publish job),
+# 所以这个字段是惰性的 —— git tag 仍然是唯一版本来源, 不要把它当"当前版本"。
+version = "0.0.0+semantic-release"
+description = "LiteArm Studio 本地程序 —— 单臂会话 + 状态推送 + 命令执行的本地守护进程"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+# ⚠ `litearm` (仓库 nexform-tech/litearm-python) **不在 PyPI 上**, 所以**不能**写进
+# dependencies: 写进去会让 `pip install` 在这里 404。它必须从本地 checkout 安装
+# (`pip install -e ../litearm-python`), 见 README 的「依赖」一节。
+# `pyserial` 由 `litearm` 自己带入, 这里不重复声明。
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+]
+
+[project.optional-dependencies]
+# 测试依赖 (pytest 放 extra, 生产运行不需要它)。
+# `httpx` 只有一处用途: `fastapi.testclient.TestClient` 要它做 HTTP 传输。
+test = ["pytest>=7", "httpx"]
+
+[project.scripts]
+litearm-studio-daemon = "litearm_studio_daemon.__main__:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+litearm_studio_daemon = ["py.typed"]
