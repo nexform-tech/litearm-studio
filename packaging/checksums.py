@@ -1,12 +1,18 @@
-"""给一个目录里的文件写 `SHA256SUMS.txt`（Phase 5 的发布附件校验和）。
+"""给一个目录里的每个产物写一个 `.sha256` 旁文件（Phase 5 的发布附件校验和）。
 
 ```bash
 python packaging/checksums.py upload
+# upload/litearm-studio-0.6.2-linux-amd64.sha256
+# upload/litearm-studio-0.6.2-windows-amd64.exe.sha256
 ```
 
-⚠ 单独成脚本而不是在工作流里写内联 shell: 打包 job 同时跑 ubuntu 与 windows,
-而 Windows 的默认 shell 是 pwsh —— 内联的 bash heredoc (`python - <<'PY'`) 在那边
-直接是语法错误（实测 CI 被它判失败）。这里用纯 Python, 两个 runner 行为一致。
+⚠ **为什么不是一份聚合的 `SHA256SUMS.txt`**: 打包 job 是 ubuntu / windows 两个
+runner 各跑一遍, 每个 runner 只看得见自己那个产物。写同名聚合文件 + `--clobber`
+的结果是**后传的覆盖先传的** —— 实测 v0.6.2 的 `SHA256SUMS.txt` 里只剩 Windows
+那一行, Linux 的校验和直接丢了。旁文件名字唯一, 不存在互相覆盖。
+
+⚠ 单独成脚本而不是工作流内联 shell: Windows 的默认 shell 是 pwsh, 内联 heredoc
+(`python - <<'PY'`) 在那边是语法错误 (实测 CI 被它判失败)。
 """
 from __future__ import annotations
 
@@ -27,16 +33,18 @@ def main() -> int:
     if not target.is_dir():
         print(f"[checksums] 目录不存在: {target}", file=sys.stderr)
         return 1
-    lines = []
+    written = []
     for path in sorted(target.iterdir()):
-        if path.name == "SHA256SUMS.txt" or not path.is_file():
+        if not path.is_file() or path.name.endswith(".sha256"):
             continue
-        lines.append(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}")
-    if not lines:
-        print(f"[checksums] {target} 里没有可校验的文件", file=sys.stderr)
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        sidecar = path.with_name(path.name + ".sha256")
+        sidecar.write_text(f"{digest}  {path.name}\n", encoding="utf-8")
+        written.append(sidecar.name)
+        print(f"{digest}  {path.name}")
+    if not written:
+        print(f"[checksums] {target} 里没有可校验的产物", file=sys.stderr)
         return 1
-    (target / "SHA256SUMS.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print("\n".join(lines))
     return 0
 
 

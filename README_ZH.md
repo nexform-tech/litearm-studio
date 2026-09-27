@@ -82,7 +82,7 @@ pnpm dev        # http://localhost:5173 —— 把 /ws 与 /api 代理到 127.0.
 ### 4. 预打包可执行文件
 
 每个 release 都会附带 Windows / Linux 的单文件可执行程序（`litearm-studio-<版本>-<平台>`）
-以及 `SHA256SUMS.txt`。它们把本地程序、`litearm` SDK 与构建好的界面都打在里面，**目标机器
+以及每个附件旁的 `.sha256` 校验和。它们把本地程序、`litearm` SDK 与构建好的界面都打在里面，**目标机器
 不需要装 Python、不需要 pnpm、也不需要克隆仓库** —— 直接运行，控制台窗口就会打开：
 
 ```bash

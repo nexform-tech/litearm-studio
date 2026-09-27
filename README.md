@@ -82,7 +82,7 @@ Run `litearm-studio-daemon --fake --no-open` alongside it.
 ### 4. Prebuilt executables
 
 Each release also attaches standalone one-file executables for Windows and Linux
-(`litearm-studio-<version>-<platform>`) plus `SHA256SUMS.txt`. They bundle the daemon, the
+(`litearm-studio-<version>-<platform>`) plus a per-artifact `.sha256`. They bundle the daemon, the
 `litearm` SDK and the built UI, so a target machine needs **no Python, no pnpm and no repository
 checkout** — run the file and the console opens in a browser window:
 

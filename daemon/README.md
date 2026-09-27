@@ -86,7 +86,7 @@ python packaging/build.py      # 产物：packaging/dist/litearm-studio-daemon[.
   就是发出去的那个 tag，而不是 `pyproject.toml` 里的占位符。
 
 发布时由 `.github/workflows/release.yml` 的 `package` job 在 Ubuntu 22.04 与
-windows runner 上各出一个可执行程序，附 `SHA256SUMS.txt` 一起挂到 release。
+windows runner 上各出一个可执行程序，并附各自的 `.sha256` 校验和一起挂到 release。
 
 ## 测试
 
