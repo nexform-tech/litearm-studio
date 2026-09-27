@@ -79,6 +79,20 @@ pnpm dev        # http://localhost:5173 —— 把 /ws 与 /api 代理到 127.0.
 
 另开一个终端跑 `litearm-studio-daemon --fake --no-open` 即可。
 
+### 4. 预打包可执行文件
+
+每个 release 都会附带 Windows / Linux 的单文件可执行程序（`litearm-studio-<版本>-<平台>`）
+以及 `SHA256SUMS.txt`。它们把本地程序、`litearm` SDK 与构建好的界面都打在里面，**目标机器
+不需要装 Python、不需要 pnpm、也不需要克隆仓库** —— 直接运行，控制台窗口就会打开：
+
+```bash
+./litearm-studio-0.5.0-linux-amd64 --fake     # 离线，不碰硬件
+./litearm-studio-0.5.0-linux-amd64            # 真机，自动发现 USB 设备
+```
+
+发布附件由 `.github/workflows/release.yml` 的 `package` job 产出；自己构建则先 `pnpm build`
+再执行 `python packaging/build.py`。
+
 ---
 
 ## 📖 文档

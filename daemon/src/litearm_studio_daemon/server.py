@@ -21,6 +21,7 @@ import asyncio
 import json
 import logging
 import socket
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, List, Optional
@@ -97,16 +98,33 @@ def pick_free_http_port(host: str = "127.0.0.1", start: int = 8765,
 
 def resolve_ui_dir(ui_dir: Optional[str], *,
                    repo_dist: Optional[Path] = None) -> Optional[Path]:
-    """静态目录: 显式 `--ui-dir` 优先, 否则退回仓库 `dist/`。**不存在就返回 None**。
+    """静态目录: 显式 `--ui-dir` 优先, 其次**冻结包里的界面**, 否则退回仓库 `dist/`。
+    **不存在就返回 None**。
 
     计划要求「默认找仓库的 `dist/`, 不存在就跳过, 不要报错」—— 于是这里**不抛异常**,
     也**不创建**目录 (前端还没构建时, 守护进程照样要能起来, `/api/health` 照样能用)。
+
+    ⚠ 冻结 (PyInstaller onefile) 后 `__file__` 指向解包目录, 仓库相对路径
+    (`parents[3]/dist`) 必然不存在 —— 打包时界面放在 `_MEIPASS/dist`
+    (见 `packaging/build.py` 的 `--add-data`), 所以这里要先认它。
     """
     if ui_dir:
         p = Path(ui_dir).expanduser()
         return p if p.is_dir() else None
+    bundled = _bundled_ui_dir()
+    if bundled is not None:
+        return bundled
     base = repo_dist if repo_dist is not None else Path(__file__).resolve().parents[3] / "dist"
     return base if base.is_dir() else None
+
+
+def _bundled_ui_dir() -> Optional[Path]:
+    """冻结包里内嵌的界面目录 (`_MEIPASS/dist`); 非冻结或不存在时 `None`。"""
+    base = getattr(sys, "_MEIPASS", None)
+    if not base:
+        return None
+    p = Path(base) / "dist"
+    return p if p.is_dir() else None
 
 
 class Daemon:

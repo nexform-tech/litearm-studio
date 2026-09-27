@@ -30,3 +30,109 @@ jobs:
   release:
     # Pin to a moving major tag (`@v1`), or to a commit SHA for maximum safety.
     uses: nexform-tech/repo-template/.github/workflows/release.yml@v1
+
+  # 打包 (计划 Phase 5): Windows / Linux 各一个单文件可执行程序, 挂到刚发的 release。
+  # 只有真的发了新版才跑 (`needs.release.outputs.new_tag`), 否则纯属浪费 runner。
+  package:
+    needs: release
+    if: needs.release.outputs.new_tag != ''
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            suffix: linux-amd64
+          - os: windows-latest
+            suffix: windows-amd64.exe
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write # attach artifacts to the GitHub release
+    env:
+      VERSION: ${{ needs.release.outputs.new_tag }}
+    steps:
+      - name: Checkout Studio
+        uses: actions/checkout@v4
+        with:
+          path: litearm-studio
+
+      # litearm-python 不在 PyPI 上, 必须从它自己的仓库检出 (与 ci.yml 同一做法)。
+      - name: Checkout LiteArm Python SDK
+        uses: actions/checkout@v4
+        with:
+          repository: nexform-tech/litearm-python
+          path: litearm-python
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # 先把界面构建出来 —— 打包脚本会拒绝在没有 dist/ 的情况下继续。
+      - name: Build the UI
+        working-directory: litearm-studio
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: Install the SDK, the daemon and PyInstaller
+        working-directory: litearm-studio
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ../litearm-python
+          pip install -e "daemon[test]" pyinstaller
+
+      - name: Package (one-file executable)
+        working-directory: litearm-studio
+        env:
+          LITEARM_STUDIO_VERSION: ${{ needs.release.outputs.new_tag }}
+        run: python packaging/build.py
+
+      - name: Name the artifact (unix)
+        if: runner.os != 'Windows'
+        working-directory: litearm-studio
+        run: |
+          mkdir -p upload
+          cp packaging/dist/litearm-studio-daemon \
+             "upload/litearm-studio-${VERSION#v}-${{ matrix.suffix }}"
+
+      - name: Name the artifact (windows)
+        if: runner.os == 'Windows'
+        working-directory: litearm-studio
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force upload | Out-Null
+          $v = "$env:VERSION".TrimStart('v')
+          Copy-Item packaging/dist/litearm-studio-daemon.exe "upload/litearm-studio-$v-${{ matrix.suffix }}"
+
+      # 产物的 sha256 也一起发出去, 便于安装侧校验 (用 Python: 两个 runner 都有,
+      # 不依赖 Windows 的 Git Bash 里有没有 sha256sum)。
+      - name: Checksums
+        working-directory: litearm-studio
+        run: |
+          python - <<'PY'
+          import hashlib, pathlib
+          out = []
+          for p in sorted(pathlib.Path("upload").iterdir()):
+              if p.name == "SHA256SUMS.txt" or not p.is_file():
+                  continue
+              out.append(f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}")
+          pathlib.Path("upload/SHA256SUMS.txt").write_text("\n".join(out) + "\n", encoding="utf-8")
+          print("\n".join(out))
+          PY
+
+      - name: Attach artifacts to the release
+        working-directory: litearm-studio
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$VERSION" upload/* --clobber

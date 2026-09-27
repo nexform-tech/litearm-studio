@@ -69,6 +69,25 @@ litearm-studio-daemon --port /dev/ttyACM1 --http-port 9000 --no-open
 - 需要保留使能（例如只想重启本地程序、机械臂另有保持手段）时用 `--keep-enabled`。
 
 
+## 打包（Phase 5）
+
+```bash
+pnpm build                     # 先构建界面：打包脚本会拒绝在没有 dist/ 的情况下继续
+python packaging/build.py      # 产物：packaging/dist/litearm-studio-daemon[.exe]
+```
+
+`packaging/build.py` 做三件事：
+
+- **把界面打进包**：`dist/` 以 `--add-data` 放到 `_MEIPASS/dist`，`server.resolve_ui_dir()`
+  认识这个冻结路径，所以打包后不需要手工传 `--ui-dir`。
+- **把 SDK 打进包**：`litearm` 不在 PyPI 上，连同 `pyserial` 一起内嵌。
+- **版本单一来源**：`LITEARM_STUDIO_VERSION`（CI 传 git tag）> `git describe --tags` >
+  `0.0.0+dev`，写进构建时生成的 `_build_version.py`（不入库）。于是 `hello` 帧报的版本
+  就是发出去的那个 tag，而不是 `pyproject.toml` 里的占位符。
+
+发布时由 `.github/workflows/release.yml` 的 `package` job 在 Ubuntu 22.04 与
+windows runner 上各出一个可执行程序，附 `SHA256SUMS.txt` 一起挂到 release。
+
 ## 测试
 
 ```bash

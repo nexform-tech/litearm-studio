@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import socket
+import sys
 import time
 from pathlib import Path
 
@@ -83,6 +84,36 @@ def test_resolve_ui_dir_returns_an_existing_directory(tmp_path: Path) -> None:
     ui = tmp_path / "dist"
     ui.mkdir()
     assert resolve_ui_dir(str(ui)) == ui
+
+
+def test_resolve_ui_dir_prefers_the_bundled_ui_when_frozen(tmp_path: Path,
+                                                           monkeypatch) -> None:
+    """PyInstaller 冻结后界面在 `_MEIPASS/dist` —— 仓库相对路径必然不存在。
+
+    打包出来的可执行程序只有认这个路径, 才能免掉手工 `--ui-dir`。
+    """
+    bundled = tmp_path / "bundle" / "dist"
+    bundled.mkdir(parents=True)
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path / "bundle"), raising=False)
+    # 仓库路径故意给一个不存在的目录: 冻结分支必须优先。
+    assert resolve_ui_dir(None, repo_dist=tmp_path / "no-repo-dist") == bundled
+
+
+def test_resolve_ui_dir_falls_back_when_the_bundle_has_no_ui(tmp_path: Path,
+                                                            monkeypatch) -> None:
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path / "empty-bundle"), raising=False)
+    repo = tmp_path / "repo-dist"
+    repo.mkdir()
+    assert resolve_ui_dir(None, repo_dist=repo) == repo
+
+
+def test_explicit_ui_dir_beats_the_bundle(tmp_path: Path, monkeypatch) -> None:
+    bundled = tmp_path / "bundle" / "dist"
+    bundled.mkdir(parents=True)
+    explicit = tmp_path / "explicit"
+    explicit.mkdir()
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path / "bundle"), raising=False)
+    assert resolve_ui_dir(str(explicit)) == explicit
 
 
 # ------------------------------------------------------------------ HTTP
