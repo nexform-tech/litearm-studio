@@ -57,7 +57,6 @@
   },
   "jointSpace": {
     "title": "关节空间",
-    "jointsRange": "J1–J7",
     "send": "发送",
     "sendTitle": "发送运动命令",
     "releaseOnly": "松手即下发",

@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Slider } from '@/components/ui/slider'
+import { jointRangeLabel } from './soloUtils'
 
 type Joint = { key: number; name: string; val: string; pct: number; dot: string; dotRing: string; dotTitle: string }
 
@@ -67,7 +68,7 @@ export function JointSpacePanel({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-baseline gap-[0.5625rem]">
           <div className="text-[0.90625rem] font-semibold text-foreground">{t('jointSpace.title')}</div>
-          <div className="text-xs text-muted-foreground">{t('jointSpace.jointsRange')}</div>
+          <div className="text-xs text-muted-foreground">{jointRangeLabel(joints.length)}</div>
         </div>
         <div className="flex flex-wrap items-center gap-[0.5625rem]">
           {!releaseOnly && (
