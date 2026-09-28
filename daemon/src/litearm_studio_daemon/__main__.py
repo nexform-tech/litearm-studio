@@ -34,6 +34,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--keep-enabled", action="store_true",
                    help="退出时不失能 (默认退出前会 disable 降能量; 仅在明确知道"
                         "机械臂会由别的方式保持时才用)")
+    p.add_argument("--no-reconnect", action="store_true",
+                   help="链路断了不自动重连 (默认会重新解析 CDC 设备并重建会话,"
+                        "窗口 60s; 窗口内没接上会如实上报, 由你决定要不要手工连)")
     p.add_argument("--verbose", "-v", action="store_true", help="打印调试日志")
     return p
 
@@ -48,6 +51,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"只允许监听本机 (127.0.0.1), 拒绝 --host {args.host!r}", file=sys.stderr)
         return 2
     session = Session(port=args.port, fake=args.fake,
+                      reconnect=not args.no_reconnect,
                       disable_on_exit=not args.keep_enabled)
     try:
         asyncio.run(serve(session, host=args.host, http_port=args.http_port,
