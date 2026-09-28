@@ -4,17 +4,16 @@ import type { MetricChip, SeriesSample } from '@/lib/arm'
 
 // 曲线条数必须等于芯片条数（= daemon 报告的轴数），否则 `{1J}` 台架上仍会画出 7 条
 // 曲线、其中 6 条永远为空（issue #37）。
+/** 关节开关：只有颜色与开关状态，读数跟着各自的指标走。 */
 function chip(i: number): MetricChip {
   return {
     key: `J${i + 1}`,
     k: `J${i + 1}`,
-    t: '—',
     color: `#00000${i}`,
+    on: true,
     bg: 'transparent',
     box: 'var(--line-strong)',
     text: 'var(--ink)',
-    valFg: 'var(--ink-muted)',
-    unitFg: 'var(--ink-faint)',
     toggle: () => {},
   }
 }

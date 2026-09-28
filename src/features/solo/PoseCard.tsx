@@ -6,7 +6,7 @@ export function PoseCard({ poseTabs, pose }: { poseTabs: SegItem[]; pose: { k: s
   const { t } = useTranslation(['common', 'solo'])
 
   return (
-    <Card className="flex-none rounded-[0.875rem] px-3.5 py-3">
+    <Card className="min-h-[11rem] flex-1 rounded-[0.875rem] px-3.5 py-3">
       <div className="mb-2.5 flex items-center justify-between">
         <div className="text-[0.90625rem] font-semibold text-foreground">{t('common:currentPose')}</div>
         <SegmentedControl
@@ -16,7 +16,9 @@ export function PoseCard({ poseTabs, pose }: { poseTabs: SegItem[]; pose: { k: s
           activeItemStyle={{ background: 'var(--seg-active)', color: 'var(--ink)', fontWeight: 600, boxShadow: '0 0.0625rem 0.125rem rgba(16,24,40,.08)' }}
         />
       </div>
-      <div className="grid grid-cols-2 gap-x-5 gap-y-1.5">
+      {/* `auto-rows-fr` + `flex-1`：曲线搬走后这张卡吃掉左列剩余高度，每一行等分，
+          读数行距随之拉开，而不是在卡底留一块空白。 */}
+      <div className="grid flex-1 auto-rows-fr grid-cols-2 gap-x-5 gap-y-1.5">
         {pose.map((p) => (
           <div key={p.k} className="flex items-baseline justify-between border-b border-dashed pb-1">
             <div className="flex items-center gap-1.5">

@@ -15,25 +15,10 @@ export function SoloConsole() {
 
   return (
     <div style={{ flex: 1, display: 'flex', gap: '0.875rem', padding: '0.875rem', minHeight: '0rem', ...ROW_OVERFLOW }}>
-      {/* LEFT: 状态 */}
+      {/* LEFT: 状态 —— 曲线搬到右列后，剩余高度由「当前位姿」吃掉 */}
       <div style={{ ...SCROLL_COLUMN, ...SIDE_COL_WIDE, gap: '0.75rem' }}>
         <PreviewPanel viewTabs={vm.viewTabs} viewBadge={vm.viewBadge} preview={vm.preview} />
         <PoseCard poseTabs={vm.poseTabs} pose={vm.pose} />
-        <MetricsPanel
-          metrics={vm.metrics}
-          metricUnit={vm.metricUnit}
-          metricAxis={vm.metricAxis}
-          pauseLabel={vm.pauseLabel}
-          togglePause={vm.togglePause}
-          series={vm.series}
-          shown={vm.shown}
-          liveData={vm.liveData}
-          simMode={vm.simMode}
-          chips={vm.chips}
-          selectAll={vm.selectAll}
-          selectNone={vm.selectNone}
-          noData={vm.errNoData}
-        />
       </div>
 
       {/* MIDDLE: 操作 */}
@@ -88,9 +73,21 @@ export function SoloConsole() {
         </div>
       </div>
 
-      {/* RIGHT: 任务（急停常驻） */}
+      {/* RIGHT: 任务（急停常驻）+ 实时曲线 */}
       <div style={{ ...SCROLL_COLUMN, flex: '0 1 clamp(20.5rem, 25vw, 28rem)', minWidth: '20.5rem', gap: '0.75rem' }}>
         <StopButton inert={simMode} />
+        <MetricsPanel
+          metrics={vm.metricSeries}
+          pauseLabel={vm.pauseLabel}
+          togglePause={vm.togglePause}
+          series={vm.series}
+          shown={vm.shown}
+          liveData={vm.liveData}
+          simMode={vm.simMode}
+          chips={vm.chips}
+          selectAll={vm.selectAll}
+          selectNone={vm.selectNone}
+        />
       </div>
     </div>
   )
