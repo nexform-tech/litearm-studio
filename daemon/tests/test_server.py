@@ -116,6 +116,67 @@ def test_explicit_ui_dir_beats_the_bundle(tmp_path: Path, monkeypatch) -> None:
     assert resolve_ui_dir(str(explicit)) == explicit
 
 
+# ------------------------------------------------------------------ SPA 兜底
+
+def _spa_client(tmp_path: Path):
+    """带静态目录的会话 —— 前端路由 (`/control` …) 在磁盘上没有对应文件。"""
+    ui = tmp_path / "dist"
+    (ui / "assets").mkdir(parents=True)
+    (ui / "index.html").write_text("<!doctype html><title>liteart-ui</title>",
+                                   encoding="utf-8")
+    (ui / "assets" / "app.js").write_text("// app\n", encoding="utf-8")
+    session = Session(port_finder=lambda: None)
+    app = create_app(session, version=VERSION, ui_dir=str(ui))
+    return session, app
+
+
+@pytest.mark.parametrize("route", ["/control", "/log", "/settings"])
+def test_frontend_routes_fall_back_to_index_html(tmp_path: Path, route: str) -> None:
+    """刷新 / 手输 URL 不能白屏 (issue #30)。
+
+    ⚠ `StaticFiles(html=True)` 只补**目录**请求, 所以 `/` 本来是好的, 而这三条路由
+    直接 404 —— 站内点击是客户端跳转, 只有硬加载才暴露, 所以一直没被发现。
+    """
+    session, app = _spa_client(tmp_path)
+    try:
+        with TestClient(app) as client:
+            r = client.get(route)
+            assert r.status_code == 200
+            assert r.headers["content-type"].startswith("text/html")
+            assert "liteart-ui" in r.text
+    finally:
+        session.close()
+
+
+def test_root_and_real_assets_are_untouched(tmp_path: Path) -> None:
+    """兜底不许吃掉静态资源本身。"""
+    session, app = _spa_client(tmp_path)
+    try:
+        with TestClient(app) as client:
+            assert "liteart-ui" in client.get("/").text
+            js = client.get("/assets/app.js")
+            assert js.status_code == 200
+            assert "javascript" in js.headers["content-type"]
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("path", ["/api/typo", "/ws", "/assets/missing.js"])
+def test_non_route_paths_keep_their_404(tmp_path: Path, path: str) -> None:
+    """`/api/*`、`/ws`、带扩展名的资源路径都不兜底。
+
+    接口打错字返回 200 的 HTML 会让调用方以为成功; 陈旧缓存去要一个已被清掉的
+    `assets/index-<旧 hash>.js` 时, 404 才说得清是资源没了, 而不是 MIME 错。
+    """
+    session, app = _spa_client(tmp_path)
+    try:
+        with TestClient(app) as client:
+            assert client.get(path).status_code == 404
+            assert client.get("/api/health").status_code == 200   # 真接口不受影响
+    finally:
+        session.close()
+
+
 # ------------------------------------------------------------------ HTTP
 
 def test_health_endpoint_reports_state_without_a_connection() -> None:
