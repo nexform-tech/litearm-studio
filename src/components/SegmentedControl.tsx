@@ -6,6 +6,10 @@ export type SegItem = {
   label: ReactNode
   active: boolean
   onClick: () => void
+  /** 置灰且不可选。用于「该能力在当前硬件上不存在」的标签，而不是临时忙碌态。 */
+  disabled?: boolean
+  /** 不可选原因的悬停提示。 */
+  disabledTitle?: string
 }
 
 /**
@@ -41,8 +45,11 @@ export function SegmentedControl({
         <ToggleGroupPrimitive.Item
           key={it.key}
           value={it.key}
+          disabled={it.disabled}
+          title={it.disabled ? it.disabledTitle : undefined}
           style={{
-            cursor: 'pointer',
+            cursor: it.disabled ? 'not-allowed' : 'pointer',
+            opacity: it.disabled ? 0.45 : 1,
             ...itemStyle,
             ...(it.active ? activeItemStyle : undefined),
           }}

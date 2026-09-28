@@ -99,9 +99,18 @@ export function useSoloState() {
     }
   }, [s.speed])
 
-  const { status: armStatus } = useArmConnection()
+  const { status: armStatus, conn } = useArmConnection()
   const armState = useArmState()
   const connected = armStatus === 'connected'
+
+  // 固件是否编译了笛卡尔规划（`conn.cart`，daemon 连接时探测固件得出）。只在
+  // **已连接且固件明确报告 cart=false** 时判定为不支持：仿真模式不下发指令，
+  // 未连接时也发不出指令，这两种情况都不该冒出"固件没有笛卡尔规划"的说法。
+  const cartUnsupported = s.real && connected && conn?.cart === false
+
+  // 没有笛卡尔规划时 `getTcpPose` 必然失败，"笛卡尔"位姿页签只会显示本地兜底的
+  // 假数（`s.cart` 的初始值），所以直接钉回关节页签。
+  const poseTab: PoseTab = cartUnsupported && s.poseTab === 'cart' ? 'joint' : s.poseTab
 
   // 滑条 0–100 的弧度映射：优先用 daemon get_joint_params 的实际软限位，
   // 未连接/拿不到时回退到前端硬编码默认（GENERIC-V4）。
@@ -262,7 +271,7 @@ export function useSoloState() {
   // Cartesian pose is fetched on demand (RPC, not part of the state broadcast)
   // — poll while the 笛卡尔 tab is visible.
   useEffect(() => {
-    if (!s.real || !connected || s.poseTab !== 'cart') return
+    if (!s.real || !connected || poseTab !== 'cart') return
     let cancelled = false
     const tick = () => {
       armClient
@@ -278,7 +287,7 @@ export function useSoloState() {
       cancelled = true
       clearInterval(id)
     }
-  }, [connected, s.poseTab, s.real])
+  }, [connected, poseTab, s.real])
 
   const armErrs = s.real && armState ? (armState.errs ?? []) : []
   const realEnabled = s.real && connected && armState != null && armState.enabled && ARM_OPERATIONAL_STATES.has(armState.state)
@@ -315,13 +324,24 @@ export function useSoloState() {
   const poseTabs = ([
     { id: 'joint', name: t('solo:submodes.joint', { defaultValue: '关节' }) },
     { id: 'cart', name: t('solo:submodes.cartesian', { defaultValue: '笛卡尔' }) },
-  ] as const).map((tItem) => ({ key: tItem.id, label: tItem.name, ...pillProps(s.poseTab, tItem.id), onClick: () => update({ poseTab: tItem.id }) }))
+  ] as const).map((tItem) => {
+    // 笛卡尔页签在固件没有笛卡尔规划时置灰：它读的是 TCP 位姿 RPC，必然失败。
+    const unavailable = tItem.id === 'cart' && cartUnsupported
+    return {
+      key: tItem.id,
+      label: tItem.name,
+      ...pillProps(poseTab, tItem.id),
+      disabled: unavailable,
+      disabledTitle: unavailable ? t('solo:cartesian.unsupportedHint') : undefined,
+      onClick: () => update({ poseTab: tItem.id }),
+    }
+  })
 
   // 仿真模式始终展示虚拟姿态；实机模式已连接时展示同步的实际关节角；
   // 未连接时也展示滑条对应的角度，避免读数与滑条不一致。
   const jointVals = s.jointPct.map((pct, i) => toRad(pct, i).toFixed(3))
   const pose =
-    s.poseTab === 'joint'
+    poseTab === 'joint'
       ? jointVals.map((v, i) => ({ k: 'J' + (i + 1), v, u: 'rad' }))
       : cartPose
         ? [
@@ -412,6 +432,8 @@ export function useSoloState() {
 
     poseTabs,
     pose,
+    /** 固件未编译笛卡尔规划：笛卡尔面板与笛卡尔页签据此置灰。 */
+    cartUnsupported,
 
     ...metricsState,
 
@@ -524,6 +546,12 @@ export function useSoloState() {
 
     movelTarget: async (targetPos: [number, number, number], targetRpy: [number, number, number]) => {
       if (!connected || !s.real) return
+      if (cartUnsupported) {
+        // 固件没有笛卡尔规划：movel 一定被拒。与其让操作员看到一句固件内部的报错，
+        // 不如直说是这台控制器不具备该能力。
+        toast.warning(t('common:errors.cartUnsupported'), { id: 'solo-cart-unsupported' })
+        return
+      }
       if (!enableOn) {
         // 原来这里静默 return —— 点「发送」什么都不会发生，操作员只能反复点。
         toast.warning(t('common:errors.notEnabled'), { id: 'solo-not-enabled' })
@@ -563,6 +591,12 @@ export function useSoloState() {
     onJogPress: (label: string) => {
       // 仿真模式纯前端：笛卡尔点动需要 IK/位姿 RPC，不与真机交互，直接忽略。
       if (!s.real || !connected) return
+      // 固件没有笛卡尔规划：点动的每一段都会以 movel 下发并被拒。面板已置灰，这里
+      // 兜住任何其它调用方，免得变成一串重复的固件报错。
+      if (cartUnsupported) {
+        toast.warning(t('common:errors.cartUnsupported'), { id: 'solo-cart-unsupported' })
+        return
+      }
       const jog = parseJog(label)
       if (!jog) return
       const isRot = jog.axis === 'RX' || jog.axis === 'RY' || jog.axis === 'RZ'
