@@ -93,6 +93,16 @@ pnpm dev        # http://localhost:5173 —— 把 /ws 与 /api 代理到 127.0.
 发布附件由 `.github/workflows/release.yml` 的 `package` job 产出；自己构建则先 `pnpm build`
 再执行 `python packaging/build.py`。
 
+Windows 可执行文件使用 `assets/litearm.ico` 作为图标。该文件已入库，正常构建不需要重新生成；
+只有在品牌标识变化时才需要重建，并且始终以 `assets/icon-source.svg` 为准：
+
+```bash
+pnpm icon     # 重新渲染 assets/icon-png/*.png 并重写 assets/litearm.ico
+```
+
+不要把 `--icon` 指向仓库之外的文件：发布流程检出的是干净的工作区，未入库的图标会让
+PyInstaller 悄悄退回它自带的默认图标。
+
 ---
 
 ## 📖 文档
