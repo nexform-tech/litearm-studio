@@ -94,6 +94,17 @@ checkout** — run the file and the console opens in a browser window:
 Release assets are produced by the `package` job in `.github/workflows/release.yml`; to build one
 yourself run `pnpm build` and then `python packaging/build.py`.
 
+The Windows executable carries the LiteArm icon from `assets/litearm.ico`. It is committed, so a
+normal build never regenerates it; rebuild it only when the brand mark changes, and keep
+`assets/icon-source.svg` as the source of truth:
+
+```bash
+pnpm icon     # re-renders assets/icon-png/*.png and rewrites assets/litearm.ico
+```
+
+Do not point `--icon` at a file outside the repository: the release workflow checks out a clean tree,
+so an untracked icon silently falls back to PyInstaller's default executable icon.
+
 ---
 
 ## 📖 Documentation

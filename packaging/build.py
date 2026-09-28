@@ -40,6 +40,10 @@ OUT_DIST = ROOT / "packaging" / "dist"
 WORK = ROOT / "packaging" / "build"
 VERSION_FILE = DAEMON_SRC / "litearm_studio_daemon" / "_build_version.py"
 EXE_NAME = "litearm-studio-daemon"
+# Windows 可执行文件的图标。不传 `--icon` 时 PyInstaller 会用它自带的默认图标 ——
+# 发出去的程序在资源管理器/任务栏里就是那个通用图标，而不是我们的标识。
+# Linux 的 ELF 不嵌图标，这个参数在 Linux 上只是被 PyInstaller 接受后忽略。
+ICON = ROOT / "assets" / "litearm.ico"
 
 
 def resolve_version() -> str:
@@ -63,6 +67,12 @@ def main() -> int:
             f"(打包必须带上界面, 否则可执行程序只能提供 /api/health)")
     if not (ROOT / "daemon" / "src" / "litearm_studio_daemon").is_dir():
         raise SystemExit(f"找不到 daemon 源码: {DAEMON_SRC}")
+    # ⚠ 图标缺失要**在这里**失败，不能交给 PyInstaller：它接受不存在的 `--icon`
+    # 路径然后照常打包成功（回到默认图标），于是"图标没换"这种问题只有用户能看到。
+    if not ICON.is_file():
+        raise SystemExit(
+            f"找不到图标: {ICON} —— 它是入库文件；若被误删，用 "
+            f"`node scripts/render-icon-png.mjs && node scripts/make-icon.mjs` 重新生成")
 
     version = resolve_version().lstrip("v")
     VERSION_FILE.write_text(
@@ -78,6 +88,8 @@ def main() -> int:
         sys.executable, "-m", "PyInstaller",
         "--noconfirm", "--clean", "--onefile",
         "--name", EXE_NAME,
+        # 可执行文件图标（Windows）；Linux 上被接受但忽略
+        "--icon", str(ICON),
         "--paths", str(DAEMON_SRC),
         # 界面: _MEIPASS/dist （与 resolve_ui_dir 的冻结分支一致）
         "--add-data", f"{UI_DIST}{os.pathsep}dist",

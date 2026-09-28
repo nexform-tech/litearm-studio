@@ -28,6 +28,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
+    "icon": "node scripts/render-icon-png.mjs && node scripts/make-icon.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest"
