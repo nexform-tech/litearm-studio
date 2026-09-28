@@ -24,6 +24,34 @@ export function readStoredSpeed(): number {
 export const HOME_JOINTS = [0, 0.5, 0, -1, 0, 0.6, 0]
 export const ZERO_JOINTS = [0, 0, 0, 0, 0, 0, 0]
 
+/** 关节滑条的初始百分比（按轴取用，臂比它短时取前 n 个）。 */
+export const SEED_JOINT_PCT = [50, 42, 55, 83, 48, 61, 49]
+
+/**
+ * 把一组按轴索引的值裁剪/补齐到 `count` 个。
+ *
+ * 轴数由 daemon 的 `conn` 帧决定（见 `lib/arm/axes.ts`），而这里的常量表是按 7 轴
+ * 写的内置默认值 —— 两者长度不必相等：缺的用 `fill` 补上，多的丢掉，好让滑条数量与
+ * 下发的目标长度永远等于这台臂真实拥有的轴数（issue #37）。
+ */
+export function fitJoints(values: number[], count: number, fill = 0): number[] {
+  return Array.from({ length: Math.max(0, count) }, (_, i) => values[i] ?? fill)
+}
+
+/** 同 {@link fitJoints}，但缺的位置用 {@link SEED_JOINT_PCT} 的初始百分比补齐。 */
+export function fitJointPct(values: number[], count: number): number[] {
+  const seed = fitJoints(SEED_JOINT_PCT, count, 50)
+  return fitJoints(values, count, 0).map((v, i) => (i < values.length ? v : seed[i]))
+}
+
+/**
+ * 关节空间副标题里的轴区间：7 轴写 `J1–J7`，**只有一根轴时不写成 `J1–J1`**。
+ * 该串与语言无关（中英文都是 J1–J7），所以不走 i18n。
+ */
+export function jointRangeLabel(count: number): string {
+  return count > 1 ? `J1–J${count}` : 'J1'
+}
+
 export const TRANS_STEPS = ['1 mm', '5 mm', '10 mm', '25 mm', '50 mm']
 export const ROT_STEPS = ['1 °', '5 °', '10 °', '15 °', '30 °']
 

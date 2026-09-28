@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import type { PadCell } from '../../components/DirectionPad'
 import type { SegItem } from '../../components/SegmentedControl'
 import { armClient, formatArmError, useArmConnection, useArmState, useArmMetrics, type Pose6, type SeriesSample } from '@/lib/arm'
+import { DEFAULT_JOINT_COUNT, resolveJointCount } from '@/lib/arm/axes'
 import { jogPose, rpyToMat3, mat3ToRpy, type Mat3 } from '@/lib/arm/geometry'
 import {
   ARM_OPERATIONAL_STATES,
@@ -14,10 +15,13 @@ import {
   MODE_INTENT_TIMEOUT_MS,
   NEXT_SEGMENT_POINTS,
   ROT_STEPS,
+  SEED_JOINT_PCT,
   SOLO_SPEED_STORAGE_KEY,
   TRANS_STEPS,
   ZERO_JOINTS,
   describeArmFault,
+  fitJointPct,
+  fitJoints,
   normalizeLimits,
   parseJog,
   readStoredSpeed,
@@ -65,7 +69,7 @@ const INITIAL_STATE: SoloState = {
   frame: 'base',
   poseTab: 'joint',
   expanded: false,
-  jointPct: [50, 42, 55, 83, 48, 61, 49],
+  jointPct: [...SEED_JOINT_PCT],
   releaseOnly: true,
   cart: { X: 0.3241, Y: -0.0182, Z: 0.487, RX: 0, RY: 1.5701, RZ: -0.0004 },
   transStep: '10 mm',
@@ -102,6 +106,15 @@ export function useSoloState() {
   const { status: armStatus, conn } = useArmConnection()
   const armState = useArmState()
   const connected = armStatus === 'connected'
+
+  // 这台臂有几个轴 —— 唯一来源是 daemon `conn` 帧里的 `n`（issue #37）。以前滑条、
+  // 读数与 movej 目标都按写死的 7 轴来，`{1J}` 台架上会多发 6 个假关节角。
+  // 仿真模式固定内置虚拟臂的轴数：那时姿态本来就是前端造的。
+  const jointCount = s.real ? resolveJointCount(conn, armState) : DEFAULT_JOINT_COUNT
+
+  // `s.jointPct` 可能还是按内置 7 轴种的初始值（或上一次连的另一种臂），按当前轴数
+  // 裁剪/补齐后再交给界面与指令，保证"看到几根滑条"就等于"发出去几个关节角"。
+  const jointPct = useMemo(() => fitJointPct(s.jointPct, jointCount), [s.jointPct, jointCount])
 
   // 固件是否编译了笛卡尔规划（`conn.cart`，daemon 连接时探测固件得出）。只在
   // **已连接且固件明确报告 cart=false** 时判定为不支持：仿真模式不下发指令，
@@ -260,13 +273,13 @@ export function useSoloState() {
     if (!armState || !s.real) return
     const rawQ = armState.q
     if (!Array.isArray(rawQ) || rawQ.length === 0) return
-    const next = rawQ.slice(0, 7).map((rad, i) => toPct(rad, i))
+    const next = rawQ.slice(0, jointCount).map((rad, i) => toPct(rad, i))
     setS((p) => {
       // 值未变化时保持原状态引用，避免广播/渲染抖动触发无限更新。
       if (p.jointPct.length === next.length && p.jointPct.every((v, i) => v === next[i])) return p
       return { ...p, jointPct: next }
     })
-  }, [armState, s.real, toPct])
+  }, [armState, s.real, toPct, jointCount])
 
   // Cartesian pose is fetched on demand (RPC, not part of the state broadcast)
   // — poll while the 笛卡尔 tab is visible.
@@ -339,7 +352,7 @@ export function useSoloState() {
 
   // 仿真模式始终展示虚拟姿态；实机模式已连接时展示同步的实际关节角；
   // 未连接时也展示滑条对应的角度，避免读数与滑条不一致。
-  const jointVals = s.jointPct.map((pct, i) => toRad(pct, i).toFixed(3))
+  const jointVals = jointPct.map((pct, i) => toRad(pct, i).toFixed(3))
   const pose =
     poseTab === 'joint'
       ? jointVals.map((v, i) => ({ k: 'J' + (i + 1), v, u: 'rad' }))
@@ -361,7 +374,7 @@ export function useSoloState() {
             { k: 'RZ', v: (s.cart.RZ ?? 0).toFixed(4), u: 'rad' },
           ]
 
-  const joints = s.jointPct.map((pct, i) => {
+  const joints = jointPct.map((pct, i) => {
     // 实机：按驱动状态码逐关节显示（0=未使能、1=正常/运动中、≥8=故障）；
     // 未拿到广播（未连接）一律视为未使能。仿真纯前端：仅由本地开关控制。
     const st = s.real
@@ -420,7 +433,7 @@ export function useSoloState() {
   // 由 PreviewPanel 在本地做平滑插值动画，未连接时也能预览。
   const preview: PreviewFeed = s.real
     ? { mode: 'real', q: armState?.q ?? null }
-    : { mode: 'sim', q: s.jointPct.map((pct, i) => toRad(pct, i)) }
+    : { mode: 'sim', q: jointPct.map((pct, i) => toRad(pct, i)) }
 
   const currentModeName = realMode === '位置' ? t('solo:modes.position') : t('solo:modes.drag')
 
@@ -484,19 +497,21 @@ export function useSoloState() {
       armClient.clearFaults().catch((err) => reportError('清除故障', err))
     },
     homeJoints: () => {
-      // 就绪姿态 Home [0, 0.5, 0, -1, 0, 0.6, 0]
-      setS((p) => ({ ...p, jointPct: HOME_JOINTS.map((rad, i) => toPct(rad, i)) }))
+      // 就绪姿态 Home [0, 0.5, 0, -1, 0, 0.6, 0]（按当前轴数裁剪/补齐）
+      const target = fitJoints(HOME_JOINTS, jointCount)
+      setS((p) => ({ ...p, jointPct: target.map((rad, i) => toPct(rad, i)) }))
       if (connected && s.real && enableOn) {
         armClient
           .setSpeed(s.speed)
-          .then(() => armClient.movej(HOME_JOINTS, s.speed / 100))
+          .then(() => armClient.movej(target, s.speed / 100))
           .then(() => setLastError(null))
           .catch((err) => reportError('就绪姿态', err))
       }
     },
     zeroJoints: () => {
       // 直立零位 Zero [0, 0, 0, 0, 0, 0, 0]（固件低速度回零）
-      setS((p) => ({ ...p, jointPct: ZERO_JOINTS.map((rad, i) => toPct(rad, i)) }))
+      const target = fitJoints(ZERO_JOINTS, jointCount)
+      setS((p) => ({ ...p, jointPct: target.map((rad, i) => toPct(rad, i)) }))
       if (connected && s.real && enableOn) {
         armClient
           .setSpeed(s.speed)
@@ -519,10 +534,12 @@ export function useSoloState() {
     radOfPct: (pct: number, i: number) => toRad(pct, i).toFixed(3),
     dispatchJoint: (key: number, pct: number) => {
       const clamped = Math.min(100, Math.max(0, pct))
+      // 只认界面当前这根滑条：目标长度 = 这台臂的轴数，不再多发内置 7 轴的残余。
+      const next = jointPct.map((v, i) => (i === key ? clamped : v))
       // 仿真模式下只更新虚拟姿态（纯前端），不向真机下发任何指令。
-      setS((p) => ({ ...p, jointPct: p.jointPct.map((v, i) => (i === key ? clamped : v)) }))
+      setS((p) => ({ ...p, jointPct: next }))
       if (connected && s.real) {
-        const target = s.jointPct.map((v, i) => toRad(i === key ? clamped : v, i))
+        const target = next.map((v, i) => toRad(v, i))
         armClient
           .movej(target, s.speed / 100)
           // 运动成功即清掉旧错误：被"正在运动"拦下后，下一次成功运动要让提示消失。
@@ -531,9 +548,12 @@ export function useSoloState() {
       }
     },
 
-    // 一次下发完整关节姿态（7 个百分比合成单个 movej），用于“发送”暂存改动。
+    // 一次下发完整关节姿态（合成单个 movej），用于“发送”暂存改动。
     dispatchJoints: (targetPct: number[]) => {
-      const clamped = targetPct.map((v) => Math.min(100, Math.max(0, Number(v) || 0)))
+      const clamped = fitJoints(
+        targetPct.map((v) => Math.min(100, Math.max(0, Number(v) || 0))),
+        jointCount,
+      )
       setS((p) => ({ ...p, jointPct: clamped }))
       if (connected && s.real) {
         const target = clamped.map((v, i) => toRad(v, i))

@@ -1,5 +1,33 @@
 import { describe, expect, it } from 'vitest'
-import { describeArmFault } from './soloUtils'
+import { SEED_JOINT_PCT, describeArmFault, fitJointPct, fitJoints, jointRangeLabel } from './soloUtils'
+
+describe('fitting per-axis values to the reported joint count', () => {
+  it('trims a longer list and pads a shorter one', () => {
+    expect(fitJoints([1, 2, 3], 2)).toEqual([1, 2])
+    expect(fitJoints([1, 2, 3], 1)).toEqual([1])
+    expect(fitJoints([1], 3)).toEqual([1, 0, 0])
+    expect(fitJoints([], 2, 7)).toEqual([7, 7])
+  })
+
+  it('keeps a single-axis arm at one value', () => {
+    expect(fitJoints([0, 0.5, 0, -1, 0, 0.6, 0], 1)).toEqual([0])
+    expect(fitJointPct(SEED_JOINT_PCT, 1)).toEqual([SEED_JOINT_PCT[0]])
+  })
+
+  it('pads percentages with the built-in seeds instead of zero', () => {
+    expect(fitJointPct([50], 3)).toEqual([50, SEED_JOINT_PCT[1], SEED_JOINT_PCT[2]])
+    // 轴数超过内置表长时也不会变短（补 50%）
+    expect(fitJointPct(SEED_JOINT_PCT, 9)).toHaveLength(9)
+  })
+})
+
+describe('jointRangeLabel', () => {
+  it('names the range without writing "J1–J1" for a single-axis arm', () => {
+    expect(jointRangeLabel(1)).toBe('J1')
+    expect(jointRangeLabel(2)).toBe('J1–J2')
+    expect(jointRangeLabel(7)).toBe('J1–J7')
+  })
+})
 
 describe('describeArmFault with daemon state shapes', () => {
   it('handles null, empty objects, and state with omitted repeated fields gracefully', () => {

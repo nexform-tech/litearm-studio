@@ -57,7 +57,6 @@
   },
   "jointSpace": {
     "title": "Joint Space",
-    "jointsRange": "J1–J7",
     "send": "Send",
     "sendTitle": "Send motion command",
     "releaseOnly": "Send on Release",

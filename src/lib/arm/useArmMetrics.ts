@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { JOINT_COLORS } from '../colors'
+import { jointColor } from '../colors'
+import { DEFAULT_JOINT_COUNT, jointIndexes, useJointCount } from './axes'
 import { useArmConnection } from './useArmConnection'
 import { useArmState } from './useArmState'
 
@@ -25,6 +26,8 @@ export type MetricChip = {
   key: string
   k: string
   t: string
+  /** 该关节在图表曲线上的颜色（与芯片色块同源）。 */
+  color: string
   bg: string
   box: string
   text: string
@@ -43,14 +46,18 @@ export const METRIC_DEFS = [
 const SERIES_INTERVAL_MS = 100
 const SERIES_MAX_LEN = 100
 
-function generateSimSample(t: number): SeriesSample {
+// 仿真波形每条通道的基准值；通道数由 jointCount 决定，基准值不够长时按 0 起算。
+const SIM_TEMP_SEED = [40, 41, 39, 42, 38, 37, 39]
+const SIM_ERR_SEED = [0.002, 0.004, 0.001, 0.006, 0.002, 0.003, 0.001]
+
+function generateSimSample(t: number, jointCount: number): SeriesSample {
   const phase = t / 1000
   return {
     t,
-    temp: [40, 41, 39, 42, 38, 37, 39].map((base, i) => base + Math.sin(phase + i) * 1.5),
-    dq: [0, 0, 0, 0, 0, 0, 0].map((_, i) => Math.sin(phase * 1.5 + i) * 0.8),
-    tau: [0, 0, 0, 0, 0, 0, 0].map((_, i) => Math.cos(phase * 1.2 + i) * 1.2),
-    err: [0.002, 0.004, 0.001, 0.006, 0.002, 0.003, 0.001].map((base, i) => base + Math.sin(phase * 2 + i) * 0.0005),
+    temp: jointIndexes(jointCount).map((i) => (SIM_TEMP_SEED[i] ?? 40) + Math.sin(phase + i) * 1.5),
+    dq: jointIndexes(jointCount).map((i) => Math.sin(phase * 1.5 + i) * 0.8),
+    tau: jointIndexes(jointCount).map((i) => Math.cos(phase * 1.2 + i) * 1.2),
+    err: jointIndexes(jointCount).map((i) => (SIM_ERR_SEED[i] ?? 0.002) + Math.sin(phase * 2 + i) * 0.0005),
   }
 }
 
@@ -65,9 +72,11 @@ export function useArmMetrics(options: UseArmMetricsOptions = {}) {
   const { status: connStatus } = useArmConnection()
   const armState = useArmState()
   const connected = connStatus === 'connected'
+  // 画几个轴由 daemon 报告的 `n` 决定，不再是写死的 7（issue #37）。
+  const jointCount = useJointCount(real)
 
   const [metric, setMetric] = useState<MetricType>('temp')
-  const [shown, setShown] = useState<number[]>([0, 1, 2, 3, 4, 5, 6])
+  const [shown, setShown] = useState<number[]>(() => jointIndexes(DEFAULT_JOINT_COUNT))
   const [paused, setPaused] = useState(false)
 
   const armStateRef = useRef(armState)
@@ -105,14 +114,14 @@ export function useArmMetrics(options: UseArmMetricsOptions = {}) {
       if (real && arm) {
         next = {
           t: Date.now(),
-          temp: (arm.temps ?? []).slice(0, 7).map((x) => (typeof x?.mosTemp === 'number' && !isNaN(x.mosTemp) ? x.mosTemp : 0)),
-          dq: (arm.dq ?? []).slice(0, 7).map((v) => (typeof v === 'number' && !isNaN(v) ? v : 0)),
-          tau: (arm.tau ?? []).slice(0, 7).map((v) => (typeof v === 'number' && !isNaN(v) ? v : 0)),
+          temp: (arm.temps ?? []).slice(0, jointCount).map((x) => (typeof x?.mosTemp === 'number' && !isNaN(x.mosTemp) ? x.mosTemp : 0)),
+          dq: (arm.dq ?? []).slice(0, jointCount).map((v) => (typeof v === 'number' && !isNaN(v) ? v : 0)),
+          tau: (arm.tau ?? []).slice(0, jointCount).map((v) => (typeof v === 'number' && !isNaN(v) ? v : 0)),
           // 广播里没有跟踪误差字段：实机不伪造数据，图表留空并提示"暂无数据"。
           err: [],
         }
       } else {
-        next = generateSimSample(Date.now())
+        next = generateSimSample(Date.now(), jointCount)
       }
 
       const buf = [...seriesRef.current, next]
@@ -121,7 +130,7 @@ export function useArmMetrics(options: UseArmMetricsOptions = {}) {
       setSeries(buf)
     }, SERIES_INTERVAL_MS)
     return () => clearInterval(id)
-  }, [paused, real, connected])
+  }, [paused, real, connected, jointCount])
 
   const curDef = useMemo(() => METRIC_DEFS.find((m) => m.id === metric) ?? METRIC_DEFS[0], [metric])
 
@@ -141,15 +150,15 @@ export function useArmMetrics(options: UseArmMetricsOptions = {}) {
       if (!connected || !armState) return null
       if (metric === 'temp')
         return (armState.temps ?? [])
-          .slice(0, 7)
+          .slice(0, jointCount)
           .map((tVal) => (typeof tVal?.mosTemp === 'number' && !isNaN(tVal.mosTemp) ? tVal.mosTemp : 0).toFixed(0))
       if (metric === 'dq')
         return (armState.dq ?? [])
-          .slice(0, 7)
+          .slice(0, jointCount)
           .map((v) => (typeof v === 'number' && !isNaN(v) ? v : 0).toFixed(2))
       if (metric === 'tau')
         return (armState.tau ?? [])
-          .slice(0, 7)
+          .slice(0, jointCount)
           .map((v) => (typeof v === 'number' && !isNaN(v) ? v : 0).toFixed(1))
       return null // 跟踪误差在实机广播中不存在，不做展示
     } else {
@@ -160,11 +169,12 @@ export function useArmMetrics(options: UseArmMetricsOptions = {}) {
       if (metric === 'tau') return (last.tau ?? []).map((v) => (typeof v === 'number' && !isNaN(v) ? v : 0).toFixed(1))
       return (last.err ?? []).map((v) => (typeof v === 'number' && !isNaN(v) ? v : 0).toFixed(3))
     }
-  }, [real, connected, armState, metric, series])
+  }, [real, connected, armState, metric, series, jointCount])
 
   const chips: MetricChip[] = useMemo(
     () =>
-      JOINT_COLORS.map((c, i) => {
+      jointIndexes(jointCount).map((i) => {
+        const c = jointColor(i)
         const on = shown.includes(i)
         return {
           key: 'J' + (i + 1),
@@ -181,10 +191,10 @@ export function useArmMetrics(options: UseArmMetricsOptions = {}) {
             setShown((prev) => (prev.includes(i) ? prev.filter((x) => x !== i) : [...prev, i].sort())),
         }
       }),
-    [shown, liveVals],
+    [shown, liveVals, jointCount],
   )
 
-  const selectAll = useCallback(() => setShown([0, 1, 2, 3, 4, 5, 6]), [])
+  const selectAll = useCallback(() => setShown(jointIndexes(jointCount)), [jointCount])
   const selectNone = useCallback(() => setShown([]), [])
   const togglePause = useCallback(() => setPaused((p) => !p), [])
 

@@ -15,8 +15,8 @@ import { Line } from 'react-chartjs-2'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { JOINT_COLORS } from '@/lib/colors'
-import type { SeriesSample, MetricTab, MetricChip } from '@/lib/arm'
+import { buildMetricDatasets } from '@/components/metricDatasets'
+import type { SeriesSample, MetricTab, MetricChip, MetricType } from '@/lib/arm'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip)
 ChartJS.defaults.font.family = "'JetBrains Mono', ui-monospace, monospace"
@@ -54,27 +54,19 @@ export function MetricsPanel({
   noData = false,
 }: MetricsPanelProps) {
   const { t, i18n } = useTranslation(['common'])
-  const activeKey = metrics.find((m) => m.active)?.key
+  const activeMetric = metrics.find((m) => m.active)?.key as MetricType | undefined
 
   // 按当前指标取通道，构建 Chart.js 数据（近 10s 滚动窗口，每条曲线一个关节）。
-  const chartData: ChartData<'line'> = useMemo(() => {
-    const pick = (s: SeriesSample): number[] =>
-      activeKey === 'temp' ? s.temp : activeKey === 'dq' ? s.dq : activeKey === 'tau' ? s.tau : s.err
-    return {
+  // 曲线条数跟着 chips（= daemon 报告的轴数）走，不再固定 7 条。
+  const chartData: ChartData<'line'> = useMemo(
+    () => ({
       labels: series.map((s) =>
         new Date(s.t).toLocaleTimeString(i18n.language.startsWith('zh') ? 'zh-CN' : 'en-US', { hour12: false }),
       ),
-      datasets: JOINT_COLORS.map((c, i) => ({
-        label: `J${i + 1}`,
-        data: series.map((s) => pick(s)[i] ?? null),
-        borderColor: c,
-        tension: 0.3,
-        pointRadius: 0,
-        borderWidth: 1.5,
-        hidden: !shown.includes(i),
-      })),
-    }
-  }, [series, shown, activeKey, i18n.language])
+      datasets: buildMetricDatasets({ series, chips, shown, activeKey: activeMetric }),
+    }),
+    [series, shown, activeMetric, i18n.language, chips],
+  )
 
   const chartOptions: ChartOptions<'line'> = {
     responsive: true,
@@ -103,7 +95,7 @@ export function MetricsPanel({
         ticks: { color: '#9aa6b6', font: { size: 10 }, maxTicksLimit: 6, maxRotation: 0 },
       },
       y: {
-        suggestedMin: activeKey === 'temp' ? 0 : undefined,
+        suggestedMin: activeMetric === 'temp' ? 0 : undefined,
         grid: { color: 'rgba(128,138,150,0.16)' },
         border: { display: false },
         ticks: { color: '#9aa6b6', font: { size: 10 } },
@@ -115,7 +107,7 @@ export function MetricsPanel({
     <Card className="min-h-[15rem] flex-1 gap-2.5 rounded-[0.875rem] px-3.5 py-3">
       <div className="flex items-end justify-between border-b">
         <Tabs
-          value={activeKey}
+          value={activeMetric}
           onValueChange={(key) => metrics.find((m) => m.key === key)?.onClick()}
         >
           <TabsList variant="line" className="h-auto p-0">
