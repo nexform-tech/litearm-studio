@@ -90,11 +90,24 @@ body,
 /* Fluid root font-size: every rem-based size in the app (spacing, type,
    card/control dimensions) scales together with the viewport, instead of
    the app clipping/scrolling panels that no longer fit a shorter or
-   narrower screen. Calibrated so 1rem == 16px at a 1920x1080 reference
+   narrower screen. Calibrated so 1rem == 16.44px at a 1920x1080 reference
    viewport (the size the design's original px values were tuned for),
-   and clamped so text never becomes unreadably small or comically large. */
+   and clamped so text never becomes unreadably small or comically large.
+
+   ⚠ Track viewport **height** only, not a height/width mix. The console's
+   panels are sized vertically, so only the height says whether they still
+   fit; width is already handled by the `clamp()` column widths. The previous
+   `0.9vh + 0.35vw` mix hit its 17px ceiling at ~1117px of height, which
+   stopped every rem-based size from growing while the viewport kept growing.
+   Past that point the surplus height could only land on the bottom-most
+   `flex-1` panel of each column, so the cartesian jog pad stretched with the
+   window: at 3840x2160 its buttons measured 483px tall against 107px at the
+   reference, and the pads held 74% of the page height (issue #45). Tracking
+   height alone leaves 1920x1080 pixel-identical to the old formula and holds
+   the pads at 48-51% everywhere else. The 36px ceiling is a backstop for
+   displays taller than 4K, where it does not engage today. */
 html {
-  font-size: clamp(13px, 0.9vh + 0.35vw, 17px);
+  font-size: clamp(13px, 1.522vh, 36px);
 }
 
 body {
