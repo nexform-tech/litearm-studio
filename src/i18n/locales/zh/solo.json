@@ -7,6 +7,10 @@
     "joint": "关节",
     "cartesian": "笛卡尔"
   },
+  "pose": {
+    "jointTitle": "关节位姿",
+    "cartTitle": "笛卡尔位姿"
+  },
   "controlBar": {
     "clearFault": "清错",
     "readyPose": "就绪姿态",

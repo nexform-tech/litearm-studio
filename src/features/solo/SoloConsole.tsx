@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { useSoloState } from './useSoloState'
 import { PreviewPanel } from './PreviewPanel'
-import { PoseCard } from './PoseCard'
+import { PoseCards } from './PoseCards'
 import { MetricsPanel } from './MetricsPanel'
 import { ControlBar } from './ControlBar'
 import { JointSpacePanel } from './JointSpacePanel'
@@ -18,7 +18,7 @@ export function SoloConsole() {
       {/* LEFT: 状态 —— 曲线搬到右列后，剩余高度由「当前位姿」吃掉 */}
       <div style={{ ...SCROLL_COLUMN, ...SIDE_COL_WIDE, gap: '0.75rem' }}>
         <PreviewPanel viewTabs={vm.viewTabs} viewBadge={vm.viewBadge} preview={vm.preview} />
-        <PoseCard jointPose={vm.poseJoint} cartPose={vm.poseCart} />
+        <PoseCards jointPose={vm.poseJoint} cartPose={vm.poseCart} />
       </div>
 
       {/* MIDDLE: 操作 */}

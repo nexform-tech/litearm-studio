@@ -4,7 +4,7 @@ import { Card } from '@/components/ui/card'
 
 export type PoseRow = { k: string; v: string; u: string }
 
-function PoseGroup({
+function PoseCard({
   title,
   items,
   unavailable,
@@ -16,10 +16,8 @@ function PoseGroup({
   style?: CSSProperties
 }) {
   return (
-    <div className="flex min-h-0 flex-col" style={style}>
-      <div className="mb-1 text-[0.6875rem] font-semibold tracking-wide text-muted-foreground">
-        {title}
-      </div>
+    <Card className="min-h-[5.5rem] gap-2 rounded-[0.875rem] px-3.5 py-3" style={style}>
+      <div className="text-[0.90625rem] font-semibold text-foreground">{title}</div>
       {items ? (
         <div className="grid min-h-0 flex-1 auto-rows-fr grid-cols-2 gap-x-5 gap-y-1">
           {items.map((p) => (
@@ -40,17 +38,17 @@ function PoseGroup({
           {unavailable}
         </div>
       )}
-    </div>
+    </Card>
   )
 }
 
 /**
- * 当前位姿 —— 关节与笛卡尔**同时展示**，不再用页签二选一。
+ * 当前位姿 —— 关节与笛卡尔是**两张独立的卡片**，各自带标题，不再挤在一张卡里用页签切换。
  *
- * ⚠ 两组按各自的**行数**分配高度（两列网格下 7 轴 = 4 行、6 个笛卡尔量 = 3 行 ⇒ 4:3）。
- * 若改成各占一半，关节那半的行距会比笛卡尔那半明显大一截，同一张卡里两种节奏。
+ * ⚠ 两张卡按各自的**行数**分配高度（两列网格下 7 轴 = 4 行、6 个笛卡尔量 = 3 行 ⇒ 4:3）。
+ * 两者等分的话，关节那张的行距会明显小于笛卡尔那张，同一列里两种节奏。
  */
-export function PoseCard({
+export function PoseCards({
   jointPose,
   cartPose,
 }: {
@@ -65,16 +63,14 @@ export function PoseCard({
   const total = jointRows + cartRows || 1
 
   return (
-    <Card className="min-h-[11rem] flex-1 gap-2 rounded-[0.875rem] px-3.5 py-3">
-      <div className="text-[0.90625rem] font-semibold text-foreground">{t('common:currentPose')}</div>
-      <PoseGroup
-        title={t('solo:submodes.joint')}
+    <>
+      <PoseCard
+        title={t('solo:pose.jointTitle')}
         items={jointPose}
         style={{ flexGrow: jointRows / total, flexShrink: 1, flexBasis: 0 }}
       />
-      <div className="border-t" />
-      <PoseGroup
-        title={t('solo:submodes.cartesian')}
+      <PoseCard
+        title={t('solo:pose.cartTitle')}
         items={cartPose}
         unavailable={t('solo:cartesian.poseUnavailable')}
         style={
@@ -83,6 +79,6 @@ export function PoseCard({
             : { flexGrow: 0, flexShrink: 0, flexBasis: 'auto' }
         }
       />
-    </Card>
+    </>
   )
 }
