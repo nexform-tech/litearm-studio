@@ -28,7 +28,9 @@
     "scaleHint": "Feed-forward gain per joint; 1.0 is the firmware default.",
     "inertiaTitle": "Inertia scale per joint",
     "vectorTitle": "Gravity direction",
-    "vectorHint": "Gravity unit vector in the base frame (feed-forward scalar item 6)."
+    "vectorHint": "Gravity unit vector in the base frame (feed-forward scalar item 6).",
+    "empty": "No joint parameters read yet — the feed-forward channels follow the reported axis count.",
+    "channelHint": "The firmware feed-forward vector is fixed at 7 channels and this arm reports {{count}}, so only these are shown. Saving still writes all 7."
   },
   "joints": {
     "title": "Per-joint gains and soft limits",
@@ -36,6 +38,7 @@
     "joint": "Joint",
     "qMin": "q_min (rad)",
     "qMax": "q_max (rad)",
+    "empty": "No joint parameters read yet.",
     "persist": "Persist to flash",
     "factory": "Restore factory",
     "factoryConfirm": "Restore all parameters to factory defaults? This cannot be undone.",

@@ -28,7 +28,9 @@
     "scaleHint": "逐轴前馈增益；1.0 是固件默认值。",
     "inertiaTitle": "逐轴惯量系数",
     "vectorTitle": "重力方向",
-    "vectorHint": "基座坐标系下的重力单位向量（前馈标量 item 6）。"
+    "vectorHint": "基座坐标系下的重力单位向量（前馈标量 item 6）。",
+    "empty": "尚未读取到关节参数 —— 前馈通道数跟随上报的轴数。",
+    "channelHint": "固件前馈向量固定为 7 通道，这台臂上报 {{count}} 轴，所以这里只画这些通道；保存仍会写入完整的 7 值。"
   },
   "joints": {
     "title": "逐轴增益与软限位",
@@ -36,6 +38,7 @@
     "joint": "关节",
     "qMin": "q_min (rad)",
     "qMax": "q_max (rad)",
+    "empty": "尚未读取到关节参数。",
     "persist": "持久化到 flash",
     "factory": "恢复出厂",
     "factoryConfirm": "确认把所有参数恢复为出厂默认？此操作不可撤销。",

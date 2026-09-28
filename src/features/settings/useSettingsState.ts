@@ -6,7 +6,7 @@ import { armClient, formatArmError, useArmConnection, type JointParams } from '@
 /** 生效的末端载荷（固件钳幅后的**读回值**，不是下发值）。 */
 export type Payload = { mass: number; com: [number, number, number] }
 
-/** 前馈：逐轴重力/惯量系数 + 重力方向向量。 */
+/** 前馈：固件**定长 7 通道**的重力/惯量系数 + 重力方向向量。 */
 export type FeedForward = {
   gravityScale: number[]
   inertiaScale: number[]
@@ -18,10 +18,18 @@ export type KinBench = {
   [key: string]: unknown
 }
 
-const FEED_FORWARD_JOINTS = 7
+/**
+ * 前馈向量的**协议定长**：7 个通道，与这台臂有几个轴无关。
+ *
+ * ⚠ 不要把它改成 `conn.n`（issue #37 对控制台那种改法在这里是错的）：SDK 的
+ * `set_ff_vec` 只接受 7 个值（`len(values) != 7` 直接抛 `InvalidCommandError`），
+ * `set_gravity_scale` / `set_inertia_scale` 各自再校验一次，发 `conn.n` 个值会被
+ * 整条拒绝。这个常量管的是**提交**；页面上画几个通道由关节数决定（issue #42）。
+ */
+const FEED_FORWARD_CHANNELS = 7
 
 function normalizeFeedForward(values: number[] | null | undefined, fallback = 1): number[] {
-  return Array.from({ length: FEED_FORWARD_JOINTS }, (_, i) => {
+  return Array.from({ length: FEED_FORWARD_CHANNELS }, (_, i) => {
     const n = Number(values?.[i])
     return Number.isFinite(n) ? n : fallback
   })
