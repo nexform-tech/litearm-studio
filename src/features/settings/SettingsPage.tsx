@@ -8,8 +8,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Download, RefreshCw, Save, Scale, ShieldCheck, Upload, Activity, Zap } from 'lucide-react'
 import { useSettingsState, type SettingsState } from './useSettingsState'
 
-const JOINTS = 7
-
 function Section({
   title,
   desc,
@@ -102,17 +100,30 @@ function GravitySection({ vm }: { vm: SettingsState }) {
     set(list.map((x, k) => (k === i ? v : x)))
   }
 
+  // 前馈向量是**协议定长 7 通道**，不是按轴数（SDK 的 `set_ff_vec` 只收 7 个值）。
+  // 这里只画这台臂**真有的**通道，`scale` / `inertia` 本身仍是完整 7 值、保存时原样发出去。
+  const axes = vm.joints.length
+
   return (
     <div className="flex flex-col gap-4">
       <Section title={t('settings:gravity.scaleTitle')} desc={t('settings:gravity.scaleHint')}>
-        <div className="grid grid-cols-4 gap-2 md:grid-cols-7">
-          {scale.map((v, i) => (
-            <Field key={i} label={`J${i + 1}`}>
-              <NumberField value={v} min={0} max={3} step={0.01} disabled={!vm.connected}
-                onCommit={(nv) => edit(scale, setScale, i, nv)} />
-            </Field>
-          ))}
-        </div>
+        {axes === 0 ? (
+          <p className="text-xs text-muted-foreground">{t('settings:gravity.empty')}</p>
+        ) : (
+          <div className="grid grid-cols-4 gap-2 md:grid-cols-7">
+            {scale.slice(0, axes).map((v, i) => (
+              <Field key={i} label={`J${i + 1}`}>
+                <NumberField value={v} min={0} max={3} step={0.01} disabled={!vm.connected}
+                  onCommit={(nv) => edit(scale, setScale, i, nv)} />
+              </Field>
+            ))}
+          </div>
+        )}
+        {axes > 0 && axes < scale.length && (
+          <p className="text-[0.6875rem] leading-relaxed text-muted-foreground">
+            {t('settings:gravity.channelHint', { count: axes })}
+          </p>
+        )}
         <div>
           <Button size="sm" disabled={!vm.connected || vm.saving} onClick={() => void vm.saveGravityScale(scale)}>
             <Save className="size-3.5" />
@@ -122,14 +133,18 @@ function GravitySection({ vm }: { vm: SettingsState }) {
       </Section>
 
       <Section title={t('settings:gravity.inertiaTitle')} desc={t('settings:gravity.scaleHint')}>
-        <div className="grid grid-cols-4 gap-2 md:grid-cols-7">
-          {inertia.map((v, i) => (
-            <Field key={i} label={`J${i + 1}`}>
-              <NumberField value={v} min={0} max={3} step={0.01} disabled={!vm.connected}
-                onCommit={(nv) => edit(inertia, setInertia, i, nv)} />
-            </Field>
-          ))}
-        </div>
+        {axes === 0 ? (
+          <p className="text-xs text-muted-foreground">{t('settings:gravity.empty')}</p>
+        ) : (
+          <div className="grid grid-cols-4 gap-2 md:grid-cols-7">
+            {inertia.slice(0, axes).map((v, i) => (
+              <Field key={i} label={`J${i + 1}`}>
+                <NumberField value={v} min={0} max={3} step={0.01} disabled={!vm.connected}
+                  onCommit={(nv) => edit(inertia, setInertia, i, nv)} />
+              </Field>
+            ))}
+          </div>
+        )}
         <div>
           <Button size="sm" disabled={!vm.connected || vm.saving} onClick={() => void vm.saveInertiaScale(inertia)}>
             <Save className="size-3.5" />
@@ -160,7 +175,10 @@ function GravitySection({ vm }: { vm: SettingsState }) {
 
 function JointsSection({ vm }: { vm: SettingsState }) {
   const { t } = useTranslation(['settings'])
-  const rows = Array.from({ length: JOINTS }, (_, i) => vm.joints[i])
+  // 行数 = `get_joint_params` 真正返回的条数（daemon 侧是 `range(arm.n)`）。
+  // 以前写死 7：`{1J}` 台架上 J2…J7 全是 `undefined`，渲染成一排 0、保存按钮被禁用，
+  // 看起来像"参数只加载了一半"（issue #42）。
+  const rows = vm.joints
   const [draft, setDraft] = useState<Record<number, Partial<Record<'kp' | 'kd' | 'tau_max' | 'q_min' | 'q_max', number>>>>({})
 
   useEffect(() => setDraft({}), [vm.joints])
@@ -173,62 +191,66 @@ function JointsSection({ vm }: { vm: SettingsState }) {
 
   return (
     <Section title={t('settings:joints.title')} desc={t('settings:joints.desc')}>
-      <div className="overflow-x-auto">
-        <table className="w-full text-xs">
-          <thead className="text-[0.6875rem] text-muted-foreground">
-            <tr>
-              <th className="py-1 text-left">{t('settings:joints.joint')}</th>
-              <th className="py-1 text-left">Kp</th>
-              <th className="py-1 text-left">Kd</th>
-              <th className="py-1 text-left">tau_max</th>
-              <th className="py-1 text-left">{t('settings:joints.qMin')}</th>
-              <th className="py-1 text-left">{t('settings:joints.qMax')}</th>
-              <th className="py-1 text-right">{t('settings:actions.save')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((jp, i) => (
-              <tr key={i} className="border-t">
-                <td className="py-1.5 pr-2 font-mono font-semibold">J{i + 1}</td>
-                {(['kp', 'kd', 'tau_max'] as const).map((key) => (
-                  <td key={key} className="py-1.5 pr-2">
-                    <NumberField value={valueOf(i, key, jp?.[key] ?? 0)} min={0} max={500} step={0.1}
-                      disabled={!vm.connected}
-                      onCommit={(v) => setField(i, key, v)}
-                      className="w-20" />
-                  </td>
-                ))}
-                {(['q_min', 'q_max'] as const).map((key) => (
-                  <td key={key} className="py-1.5 pr-2">
-                    <NumberField value={valueOf(i, key, jp?.[key] ?? 0)} min={-Math.PI * 2} max={Math.PI * 2} step={0.001}
-                      disabled={!vm.connected}
-                      onCommit={(v) => setField(i, key, v)}
-                      className="w-24" />
-                  </td>
-                ))}
-                <td className="py-1.5 text-right">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={!vm.connected || vm.saving || !jp}
-                    onClick={() => {
-                      const d = draft[i]
-                      if (d?.kp != null || d?.kd != null || d?.tau_max != null) {
-                        void vm.saveJointParam(i, valueOf(i, 'kp', jp.kp), valueOf(i, 'kd', jp.kd), valueOf(i, 'tau_max', jp.tau_max))
-                      }
-                      if (d?.q_min != null || d?.q_max != null) {
-                        void vm.saveJointLimits(i, valueOf(i, 'q_min', jp.q_min), valueOf(i, 'q_max', jp.q_max))
-                      }
-                    }}
-                  >
-                    <Save className="size-3" />
-                  </Button>
-                </td>
+      {rows.length === 0 ? (
+        <p className="text-xs text-muted-foreground">{t('settings:joints.empty')}</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead className="text-[0.6875rem] text-muted-foreground">
+              <tr>
+                <th className="py-1 text-left">{t('settings:joints.joint')}</th>
+                <th className="py-1 text-left">Kp</th>
+                <th className="py-1 text-left">Kd</th>
+                <th className="py-1 text-left">tau_max</th>
+                <th className="py-1 text-left">{t('settings:joints.qMin')}</th>
+                <th className="py-1 text-left">{t('settings:joints.qMax')}</th>
+                <th className="py-1 text-right">{t('settings:actions.save')}</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {rows.map((jp, i) => (
+                <tr key={i} className="border-t">
+                  <td className="py-1.5 pr-2 font-mono font-semibold">J{i + 1}</td>
+                  {(['kp', 'kd', 'tau_max'] as const).map((key) => (
+                    <td key={key} className="py-1.5 pr-2">
+                      <NumberField value={valueOf(i, key, jp[key])} min={0} max={500} step={0.1}
+                        disabled={!vm.connected}
+                        onCommit={(v) => setField(i, key, v)}
+                        className="w-20" />
+                    </td>
+                  ))}
+                  {(['q_min', 'q_max'] as const).map((key) => (
+                    <td key={key} className="py-1.5 pr-2">
+                      <NumberField value={valueOf(i, key, jp[key])} min={-Math.PI * 2} max={Math.PI * 2} step={0.001}
+                        disabled={!vm.connected}
+                        onCommit={(v) => setField(i, key, v)}
+                        className="w-24" />
+                    </td>
+                  ))}
+                  <td className="py-1.5 text-right">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={!vm.connected || vm.saving}
+                      onClick={() => {
+                        const d = draft[i]
+                        if (d?.kp != null || d?.kd != null || d?.tau_max != null) {
+                          void vm.saveJointParam(i, valueOf(i, 'kp', jp.kp), valueOf(i, 'kd', jp.kd), valueOf(i, 'tau_max', jp.tau_max))
+                        }
+                        if (d?.q_min != null || d?.q_max != null) {
+                          void vm.saveJointLimits(i, valueOf(i, 'q_min', jp.q_min), valueOf(i, 'q_max', jp.q_max))
+                        }
+                      }}
+                    >
+                      <Save className="size-3" />
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-3">
         <Button size="sm" variant="outline" disabled={!vm.connected || vm.saving} onClick={() => void vm.saveParams()}>
           <Download className="size-3.5" />
