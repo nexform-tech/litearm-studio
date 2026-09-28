@@ -98,7 +98,7 @@ describe('useSoloState axis count', () => {
     const { result } = await renderSolo()
 
     expect(result.current.joints.map((j) => j.name)).toEqual(['关节 1'])
-    expect(result.current.pose.map((p) => p.k)).toEqual(['J1'])
+    expect(result.current.poseJoint.map((p) => p.k)).toEqual(['J1'])
   })
 
   it('keeps all seven on a seven-axis arm', async () => {

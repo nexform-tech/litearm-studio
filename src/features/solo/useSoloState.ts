@@ -32,7 +32,6 @@ import type { JointLimits } from './soloUtils'
 // 避免外部（含测试）在拆分后改动 import 路径。
 export { HOME_JOINTS, JOINT_LIMITS, ZERO_JOINTS, normalizeLimits, pctToRad, pctToRadNum, radToPct, readStoredSpeed } from './soloUtils'
 
-type PoseTab = 'joint' | 'cart'
 type Frame = 'base' | 'tool'
 type ArmMode = '位置' | '拖动'
 
@@ -50,7 +49,6 @@ export type SoloState = {
   modeIntent: ArmMode | null
   speed: number
   frame: Frame
-  poseTab: PoseTab
   expanded: boolean
   jointPct: number[]
   releaseOnly: boolean
@@ -67,7 +65,6 @@ const INITIAL_STATE: SoloState = {
   modeIntent: null,
   speed: 50,
   frame: 'base',
-  poseTab: 'joint',
   expanded: false,
   jointPct: [...SEED_JOINT_PCT],
   releaseOnly: true,
@@ -120,10 +117,6 @@ export function useSoloState() {
   // **已连接且固件明确报告 cart=false** 时判定为不支持：仿真模式不下发指令，
   // 未连接时也发不出指令，这两种情况都不该冒出"固件没有笛卡尔规划"的说法。
   const cartUnsupported = s.real && connected && conn?.cart === false
-
-  // 没有笛卡尔规划时 `getTcpPose` 必然失败，"笛卡尔"位姿页签只会显示本地兜底的
-  // 假数（`s.cart` 的初始值），所以直接钉回关节页签。
-  const poseTab: PoseTab = cartUnsupported && s.poseTab === 'cart' ? 'joint' : s.poseTab
 
   // 滑条 0–100 的弧度映射：优先用 daemon get_joint_params 的实际软限位，
   // 未连接/拿不到时回退到前端硬编码默认（GENERIC-V4）。
@@ -281,10 +274,11 @@ export function useSoloState() {
     })
   }, [armState, s.real, toPct, jointCount])
 
-  // Cartesian pose is fetched on demand (RPC, not part of the state broadcast)
-  // — poll while the 笛卡尔 tab is visible.
+  // Cartesian pose is fetched on demand (RPC, not part of the state broadcast).
+  // 关节与笛卡尔现在**同时可见**（不再用页签二选一），所以只要连着就轮询；
+  // 固件没有笛卡尔规划时不轮询——那条读口必然失败。
   useEffect(() => {
-    if (!s.real || !connected || poseTab !== 'cart') return
+    if (!s.real || !connected || cartUnsupported) return
     let cancelled = false
     const tick = () => {
       armClient
@@ -300,7 +294,7 @@ export function useSoloState() {
       cancelled = true
       clearInterval(id)
     }
-  }, [connected, poseTab, s.real])
+  }, [connected, cartUnsupported, s.real])
 
   const armErrs = s.real && armState ? (armState.errs ?? []) : []
   const realEnabled = s.real && connected && armState != null && armState.enabled && ARM_OPERATIONAL_STATES.has(armState.state)
@@ -334,45 +328,34 @@ export function useSoloState() {
     },
   }))
 
-  const poseTabs = ([
-    { id: 'joint', name: t('solo:submodes.joint', { defaultValue: '关节' }) },
-    { id: 'cart', name: t('solo:submodes.cartesian', { defaultValue: '笛卡尔' }) },
-  ] as const).map((tItem) => {
-    // 笛卡尔页签在固件没有笛卡尔规划时置灰：它读的是 TCP 位姿 RPC，必然失败。
-    const unavailable = tItem.id === 'cart' && cartUnsupported
-    return {
-      key: tItem.id,
-      label: tItem.name,
-      ...pillProps(poseTab, tItem.id),
-      disabled: unavailable,
-      disabledTitle: unavailable ? t('solo:cartesian.unsupportedHint') : undefined,
-      onClick: () => update({ poseTab: tItem.id }),
-    }
-  })
-
   // 仿真模式始终展示虚拟姿态；实机模式已连接时展示同步的实际关节角；
   // 未连接时也展示滑条对应的角度，避免读数与滑条不一致。
   const jointVals = jointPct.map((pct, i) => toRad(pct, i).toFixed(3))
-  const pose =
-    poseTab === 'joint'
-      ? jointVals.map((v, i) => ({ k: 'J' + (i + 1), v, u: 'rad' }))
-      : cartPose
-        ? [
-            { k: 'X', v: cartPose[0].toFixed(4), u: 'm' },
-            { k: 'Y', v: cartPose[1].toFixed(4), u: 'm' },
-            { k: 'Z', v: cartPose[2].toFixed(4), u: 'm' },
-            { k: 'RX', v: cartPose[3].toFixed(4), u: 'rad' },
-            { k: 'RY', v: cartPose[4].toFixed(4), u: 'rad' },
-            { k: 'RZ', v: cartPose[5].toFixed(4), u: 'rad' },
-          ]
-        : [
-            { k: 'X', v: (s.cart.X ?? 0).toFixed(4), u: 'm' },
-            { k: 'RX', v: (s.cart.RX ?? 0).toFixed(4), u: 'rad' },
-            { k: 'Y', v: (s.cart.Y ?? 0).toFixed(4), u: 'm' },
-            { k: 'RY', v: (s.cart.RY ?? 0).toFixed(4), u: 'rad' },
-            { k: 'Z', v: (s.cart.Z ?? 0).toFixed(4), u: 'm' },
-            { k: 'RZ', v: (s.cart.RZ ?? 0).toFixed(4), u: 'rad' },
-          ]
+  const poseJoint = jointVals.map((v, i) => ({ k: 'J' + (i + 1), v, u: 'rad' }))
+
+  // 关节与笛卡尔同时展示（不再用页签二选一）。顺序取 daemon `get_tcp` 的原生顺序：
+  // 先位置后姿态。两列网格下因此排成 (X,Y) (Z,RX) (RY,RZ) 三行。
+  // ⚠ 固件没有笛卡尔规划时返回 null：这条 RPC 必然失败，退回本地兜底的 `s.cart`
+  // 初始值会把假数当真实位姿显示（见 useSoloState.cart.test.ts）。
+  const poseCart = cartUnsupported
+    ? null
+    : cartPose
+      ? [
+          { k: 'X', v: cartPose[0].toFixed(4), u: 'm' },
+          { k: 'Y', v: cartPose[1].toFixed(4), u: 'm' },
+          { k: 'Z', v: cartPose[2].toFixed(4), u: 'm' },
+          { k: 'RX', v: cartPose[3].toFixed(4), u: 'rad' },
+          { k: 'RY', v: cartPose[4].toFixed(4), u: 'rad' },
+          { k: 'RZ', v: cartPose[5].toFixed(4), u: 'rad' },
+        ]
+      : [
+          { k: 'X', v: s.cart.X.toFixed(4), u: 'm' },
+          { k: 'Y', v: s.cart.Y.toFixed(4), u: 'm' },
+          { k: 'Z', v: s.cart.Z.toFixed(4), u: 'm' },
+          { k: 'RX', v: s.cart.RX.toFixed(4), u: 'rad' },
+          { k: 'RY', v: s.cart.RY.toFixed(4), u: 'rad' },
+          { k: 'RZ', v: s.cart.RZ.toFixed(4), u: 'rad' },
+        ]
 
   const joints = jointPct.map((pct, i) => {
     // 实机：按驱动状态码逐关节显示（0=未使能、1=正常/运动中、≥8=故障）；
@@ -443,9 +426,9 @@ export function useSoloState() {
     viewTabs,
     preview,
 
-    poseTabs,
-    pose,
-    /** 固件未编译笛卡尔规划：笛卡尔面板与笛卡尔页签据此置灰。 */
+    poseJoint,
+    poseCart,
+    /** 固件未编译笛卡尔规划：笛卡尔面板与笛卡尔读数据此收手。 */
     cartUnsupported,
 
     ...metricsState,

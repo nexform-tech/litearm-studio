@@ -18,7 +18,7 @@ export function SoloConsole() {
       {/* LEFT: 状态 —— 曲线搬到右列后，剩余高度由「当前位姿」吃掉 */}
       <div style={{ ...SCROLL_COLUMN, ...SIDE_COL_WIDE, gap: '0.75rem' }}>
         <PreviewPanel viewTabs={vm.viewTabs} viewBadge={vm.viewBadge} preview={vm.preview} />
-        <PoseCard poseTabs={vm.poseTabs} pose={vm.pose} />
+        <PoseCard jointPose={vm.poseJoint} cartPose={vm.poseCart} />
       </div>
 
       {/* MIDDLE: 操作 */}
