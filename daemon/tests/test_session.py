@@ -22,6 +22,7 @@ from litearm_studio_daemon.session import (
     ENERGY_DOWN_COMMANDS,
     MOTION_COMMANDS,
     Session,
+    build_fake_transport_factory,
 )
 
 Q7 = [0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
@@ -416,6 +417,314 @@ def test_state_dict_has_the_contracted_keys(fake_session: Session) -> None:
     for key in ("q", "dq", "tau", "errs", "temps", "fault", "state",
                 "mode", "modeName", "flags", "enabled", "cartBusy", "faulted"):
         assert key in doc, f"状态帧缺字段 {key}"
+
+
+# --------------------------------------------- 链路存活与断线自愈 (issue #48)
+#
+# 这一组的形状全部来自 issue #48 的实测: 设备重新枚举后, 会话继续报 `connected`、
+# 广播重放最后一帧好数据, 而每条命令都撞 `TransportError: 写失败: [Errno 5]`。
+# 判据分三层, 三条都要有, 缺一条就有一段是"看不见"的:
+#   ① 状态帧不再到达 (`_poll_once` + `LINK_STALE_AFTER_S`);
+#   ② 命令撞上传输层失败 (`execute` 里的 `except litearm.TransportError`);
+#   ③ 断线后自愈, 或者明确告诉操作者没救回来 (`_recover_link`)。
+
+
+def _connected_session(**kwargs) -> Session:
+    """连上的假会话 —— 存活/自愈用例的共用前置 (默认关掉自愈, 除非显式要)。"""
+    kwargs.setdefault("fake", True)
+    kwargs.setdefault("poll_period", 0.02)
+    kwargs.setdefault("state_push_interval", 0.05)
+    kwargs.setdefault("reconnect", False)
+    s = Session(**kwargs)
+    assert s.connect() is True
+    assert _wait(lambda: s.connected), f"假会话没连上: {s.arm_info()}"
+    return s
+
+
+def _freeze_state_stream(s: Session, monkeypatch, *, age: float = 60.0) -> None:
+    """让"最近一帧状态帧"停在过去 —— 等价于固件那条 100Hz 被动流断了。
+
+    ⚠ 判据是 `Msg.timestamp` (SDK 记的**到达时刻**), 所以只冻结内容是不够的: 这里连
+    时刻一起冻住。`age` 用 60s 这样"一眼就是死"的差值, 免得与 `link_stale_after` 的
+    边界纠缠 (边界本身由 `test_a_state_stream_...` 的窗口参数管)。
+    """
+    from litearm.arm import Msg
+
+    real = s._arm.get_state
+    frozen = Msg(value=real().value, hz=0.0, timestamp=time.monotonic() - age)
+    monkeypatch.setattr(s._arm, "get_state", lambda *a, **k: frozen)
+
+
+def test_a_state_stream_that_stops_marks_the_link_lost(monkeypatch) -> None:
+    """① 状态帧不再到达 ⇒ 不再报 connected, 且 `conn` 帧里 `error` 有原因、`port` 清空。
+
+    issue #48 的实测形状: `/proc/<pid>/fd/10 -> /dev/ttyACM1 (deleted)`, 而 `conn` 帧
+    继续报 `"status":"connected","port":"/dev/ttyACM1"` 近三个小时。
+    """
+    s = _connected_session(link_stale_after=0.1)
+    try:
+        conn_frames: list[dict] = []
+        s.add_listener(lambda ev: conn_frames.append(ev) if ev.get("t") == "conn" else None)
+        before = s.arm_info()
+        assert before["status"] == "connected" and before["port"] == "fake"
+
+        _freeze_state_stream(s, monkeypatch)
+        assert _wait(lambda: s.arm_info()["status"] == "error", timeout=5.0), \
+            f"链路断了却还在报 {s.arm_info()['status']}"
+        info = s.arm_info()
+        assert s.connected is False
+        assert info["port"] is None, f"端口必须清空 (报的是已经消失的口): {info}"
+        assert info["error"] and "链路已断开" in info["error"], info
+        assert "状态帧" in info["error"], f"原因要能看懂: {info['error']}"
+        assert any(f["status"] == "error" and f["error"] for f in conn_frames), \
+            f"没推过带原因的 conn 帧: {conn_frames}"
+        assert s.state() is None, "断线之后不许再留着最后一帧好数据"
+        assert s._recovering is False, "reconnect=False 时不该去自愈"
+    finally:
+        s.close()
+
+
+def test_a_command_transport_error_marks_the_link_lost(monkeypatch) -> None:
+    """② 命令撞上传输层失败 ⇒ 同一条命令照旧报错, 但会话当场落 error 态。
+
+    上一版这里只看 `_status` 这个标志位, 于是"标志位说已连接、每条命令都 [Errno 5]"
+    能一直持续下去 (issue #48 第 3 层)。
+    """
+    s = _connected_session()
+    try:
+        # 设备没了: 桩的读写路径都抛 `TransportError` (与真机 `[Errno 5]` 同一形状)。
+        s._arm._tr.dfu_gone = True
+        with pytest.raises(litearm.TransportError):
+            s.execute("enable", {})
+        info = s.arm_info()
+        assert info["status"] == "error", info
+        assert s.connected is False
+        assert info["port"] is None
+        assert "enable" in (info["error"] or ""), f"要说清是哪条命令: {info['error']}"
+        # 之后的命令是"未连接", 不再重复撞链路 —— 前端与守护进程口径一致。
+        with pytest.raises(NotConnectedCommandError):
+            s.execute("get_tcp", {})
+    finally:
+        s.close()
+
+
+def test_a_flash_erase_stall_is_not_read_as_a_dead_link(monkeypatch) -> None:
+    """固件整扇区擦写期间状态流会断 **但它没死** —— 判活必须让路。
+
+    依据在 SDK 自己的取证里: 固件自述擦写"~1s CPU 全停", 而给擦写开的看门狗豁免把它
+    放宽到 ~8s (`hw_watchdog.h:28`)。不让路的话, 设置页按一次「保存参数」就会把好好的
+    会话拆掉重连 —— 那比 #48 本身还糟。
+    """
+    s = _connected_session(reconnect=False, link_stale_after=0.1)
+    try:
+        # 帧停在**此刻** (不是"停在很久以前"): 擦写是"从现在起不再有新帧"。
+        _freeze_state_stream(s, monkeypatch, age=0.0)
+        assert s.execute("save_params", {}) is None
+        time.sleep(0.5)
+        info = s.arm_info()
+        assert info["status"] == "connected", f"擦写被读成了断线: {info}"
+        assert info["error"] is None
+    finally:
+        s.close()
+
+
+def test_the_flash_grace_expires_and_a_real_death_is_still_caught(monkeypatch) -> None:
+    """让路窗口**有界**: 窗口过了之后, 真的没了就照样判死 (别让步成永久失明)。"""
+    from litearm_studio_daemon import session as session_mod
+
+    monkeypatch.setattr(session_mod, "FLASH_STALL_GRACE_S", 0.2)
+    s = _connected_session(reconnect=False, link_stale_after=0.1)
+    try:
+        _freeze_state_stream(s, monkeypatch, age=0.0)
+        assert s.execute("save_params", {}) is None
+        assert _wait(lambda: s.arm_info()["status"] == "error", timeout=5.0), \
+            f"让路窗口过后仍不判死: {s.arm_info()}"
+        assert "状态帧" in (s.arm_info()["error"] or "")
+    finally:
+        s.close()
+
+
+def test_the_link_is_not_declared_dead_while_frames_keep_arriving() -> None:
+    """保真哨兵: 帧还在到达时不许报断线 —— 误判会把好好的会话拆掉。"""
+    from litearm_studio_daemon.session import LINK_STALE_AFTER_S
+
+    assert LINK_STALE_AFTER_S >= 1.0, (
+        "阈值不能压到一两百毫秒: 那点窗口分不清'链路断了'与'这一拍被负载拖慢', "
+        "而后者的代价是把一条好链路关掉重连")
+    s = _connected_session(link_stale_after=0.2)
+    try:
+        time.sleep(1.0)
+        assert s.arm_info()["status"] == "connected", s.arm_info()
+        assert s.state() is not None
+    finally:
+        s.close()
+
+
+def test_recovery_re_establishes_the_session_without_a_manual_reconnect(monkeypatch) -> None:
+    """③ 断线后自愈: 重新解析端口、重建会话、重新推状态 —— 不必手工断开+连接。"""
+    s = _connected_session(reconnect=True, reconnect_period=0.05, reconnect_window=5.0,
+                           link_stale_after=0.1)
+    try:
+        assert s._recover_thread is None
+        _freeze_state_stream(s, monkeypatch)
+        # 自愈换了一条**新的** `Arm` (旧的那条已经死了), 冻结只作用在旧对象上 ⇒
+        # 新链路的帧照常到达, 状态自己回到 connected。
+        assert _wait(lambda: s.connected, timeout=10.0), \
+            f"没能自愈: {s.arm_info()} / recovering={s._recovering}"
+        info = s.arm_info()
+        assert info["status"] == "connected" and info["error"] is None, info
+        assert info["port"] == "fake", info
+        assert info["n"] == 7, info
+        assert _wait(lambda: s.state() is not None), "自愈之后状态推送要回来"
+        assert s._poll_thread is not None and s._poll_thread.is_alive()
+    finally:
+        s.close()
+
+
+def test_recovery_reports_plainly_when_the_window_runs_out(monkeypatch) -> None:
+    """③ 自愈失败也必须有结论: 窗口用尽后如实上报, 不是静默重试到天荒地老。"""
+    s = _connected_session(reconnect=True, reconnect_period=0.05, reconnect_window=0.3,
+                           link_stale_after=0.1)
+    try:
+        def no_device(self, target):
+            raise litearm.TransportError(f"打开串口 {target} 失败: 设备还没回来")
+
+        monkeypatch.setattr(Session, "_dial", no_device)
+        _freeze_state_stream(s, monkeypatch)
+        assert _wait(lambda: "自动重连" in (s.arm_info()["error"] or ""), timeout=10.0), \
+            f"没上报自愈失败: {s.arm_info()}"
+        info = s.arm_info()
+        assert info["status"] == "error", info
+        assert info["port"] is None, info
+        assert "设备还没回来" in info["error"], info
+        assert s.connected is False
+        assert _wait(lambda: not s._recovering), "自愈线程结束了, 标志位要跟着落"
+    finally:
+        s.close()
+
+
+def test_recovery_releases_the_dead_link_before_redialing(monkeypatch) -> None:
+    """自愈**先关掉死链路**再重试 —— 这条顺序是"同一个节点名回来"能打开的前提。
+
+    SDK 的 `SerialTransport` 有一张**进程内**的 `port -> 持有者` 登记表 (`_claim_port`),
+    同一个端口名被另一条活着的链路占着时直接拒开。设备以**同一个名字**重新枚举完全常见
+    (机器上只有这一个 CDC 口时必然如此), 不先 `close()` 掉旧句柄, 自愈会永远卡在
+    "端口已被本进程内另一个传输占用"上。
+    """
+    s = _connected_session(reconnect=True, reconnect_period=0.05, reconnect_window=5.0,
+                           link_stale_after=0.1)
+    old = s._arm
+    # ⚠ 传输对象要先抓在手里: `Arm.close()` 会把 `arm._tr` 置成 None (SDK 的收尾语义),
+    # 关掉之后再想读"它当时关了没有"就没得读了。
+    old_tr = old._tr
+    seen: dict = {}
+
+    def dial(self, target):
+        seen["old_transport_closed_at_dial"] = old_tr.closed
+        return Arm(port=target, transport_factory=build_fake_transport_factory()).connect()
+
+    try:
+        monkeypatch.setattr(Session, "_dial", dial)
+        _freeze_state_stream(s, monkeypatch)
+        assert _wait(lambda: s.connected and "old_transport_closed_at_dial" in seen,
+                     timeout=10.0), f"没自愈: {s.arm_info()}"
+        assert seen["old_transport_closed_at_dial"] is True, \
+            "旧句柄没关就拿去重开 —— 同一个节点名回来时会被进程内登记挡住"
+        assert s._arm is not old, "自愈之后必须是**新**的链路对象"
+    finally:
+        s.close()
+
+
+def test_recovery_falls_back_to_the_rediscovered_port(monkeypatch) -> None:
+    """③ 设备重新枚举 (节点名变了) 时自愈要能跟着走 —— 这是 #48 的实测现场。
+
+    现场: `/dev/ttyACM1` 消失, 板子以 `/dev/ttyACM0` 回来。自愈必须**先放掉旧句柄**
+    再按"上次的口 → --port → 自动发现"的顺序试, 否则永远打不开同一个名字的新节点。
+    """
+    s = Session(port="/dev/ttyACM1", port_finder=lambda: "/dev/ttyACM0",
+                poll_period=0.02, state_push_interval=0.05,
+                reconnect=True, reconnect_period=0.05, reconnect_window=5.0,
+                link_stale_after=0.1)
+    #: 板子重新枚举之后, 旧节点名就再也打不开了 —— 自愈只能靠自动发现那条路。
+    re_enumerated = {"done": False}
+
+    def dial(self, target):
+        if re_enumerated["done"] and target != "/dev/ttyACM0":
+            raise litearm.TransportError(f"打开串口 {target} 失败: No such file or directory")
+        return Arm(port=target,
+                   transport_factory=build_fake_transport_factory()).connect()
+
+    monkeypatch.setattr(Session, "_dial", dial)
+    try:
+        assert s.connect() is True
+        assert _wait(lambda: s.connected), f"没连上: {s.arm_info()}"
+        assert s.arm_info()["port"] == "/dev/ttyACM1"
+        re_enumerated["done"] = True
+        _freeze_state_stream(s, monkeypatch)
+        assert _wait(lambda: s.arm_info()["port"] == "/dev/ttyACM0", timeout=10.0), \
+            f"没跟到重新枚举后的节点: {s.arm_info()}"
+        assert s.connected is True
+        assert s._recover_thread is not None
+    finally:
+        s.close()
+
+
+def test_disconnect_cancels_an_in_flight_recovery(monkeypatch) -> None:
+    """自愈在途时按断开: 它必须让位, **不许**事后把状态改回 connected。"""
+    s = _connected_session(reconnect=True, reconnect_period=0.05, reconnect_window=5.0)
+    dials: list[str] = []
+
+    def no_device(self, target):
+        dials.append(target)
+        raise litearm.TransportError("设备还没回来")
+
+    try:
+        monkeypatch.setattr(Session, "_dial", no_device)
+        _freeze_state_stream(s, monkeypatch)
+        assert _wait(lambda: s._recovering, timeout=5.0), "自愈没起来"
+        assert s.disconnect() is True, "取消一次自愈算「停掉了东西」, 不是 no-op"
+        assert s.arm_info()["status"] == "disconnected"
+        time.sleep(0.4)                       # 给自愈线程留下"事后翻案"的机会
+        info = s.arm_info()
+        assert info["status"] == "disconnected", f"断开被自愈覆盖了: {info}"
+        assert info["error"] is None, info
+        assert s.connected is False
+    finally:
+        s.close()
+
+
+def test_stopping_the_poll_thread_really_stops_it() -> None:
+    """`_stop_polling()` 必须**真的**停掉线程, 不是"等满 1s 然后留着它空转"。
+
+    ⚠ 上一版: 循环判的是 `_stop` (只有整个会话收尾才置), 而 `_stop_polling()` 只清引用
+    再 `join(1.0)` ⇒ 每次 `disconnect()` 白等 1s, 每次重连多留一条 50Hz 空转线程。
+    断线自愈要反复"停轮询 → 重连 → 再起轮询", 这条泄漏会一次一条地攒下去。
+    """
+    s = _connected_session()
+    try:
+        old = s._poll_thread
+        assert old is not None and old.is_alive()
+        t0 = time.monotonic()
+        assert s.disconnect() is True
+        assert not old.is_alive(), "轮询线程在 disconnect() 之后还活着"
+        assert time.monotonic() - t0 < 0.9, (
+            "停轮询不该靠 join 超时兜底 —— 那正是线程没停下来的症状")
+    finally:
+        s.close()
+
+
+def test_reconnect_after_disconnect_does_not_pile_up_poll_threads() -> None:
+    """连→断→连 之后只许有一条轮询线程 (上一版每轮多留一条)。"""
+    s = _connected_session()
+    try:
+        for _ in range(3):
+            assert s.disconnect() is True
+            assert s.connect() is True
+            assert _wait(lambda: s.connected)
+        alive = [th for th in threading.enumerate() if th.name == "litearm-state-poll"]
+        assert len(alive) == 1, f"攒下了 {len(alive)} 条轮询线程"
+    finally:
+        s.close()
 
 
 def test_enabled_idle_frame_is_pushed_as_ready(fake_session: Session,

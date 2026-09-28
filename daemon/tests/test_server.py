@@ -228,6 +228,44 @@ def test_ws_handshake_sends_hello_then_conn() -> None:
         session.close()
 
 
+def test_ws_reports_a_dead_link_on_the_conn_frame(monkeypatch) -> None:
+    """#48 的交付面: 链路断在 WS 上必须**看得见** —— `error` 有原因、`port` 清空。
+
+    这条钉的是操作员实际看到的那一帧 (计划 3.1 的 `conn`), 不是 `arm_info()` 的内部形状:
+    前端顶栏只认这一帧。
+    """
+    from litearm.arm import Msg
+
+    from litearm_studio_daemon.session import Session as _Session
+
+    session = _Session(fake=True, reconnect=False, link_stale_after=0.1)
+    app = create_app(session, version=VERSION, repo_dist=Path("/nonexistent-ui"))
+    try:
+        assert session.connect() is True
+        deadline = time.monotonic() + 5.0
+        while not session.connected and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert session.connected, f"假会话没连上: {session.arm_info()}"
+
+        with TestClient(app) as client:
+            with client.websocket_connect("/ws") as ws:
+                assert ws.receive_json()["t"] == "hello"
+                assert ws.receive_json()["status"] == "connected"
+                real = session._arm.get_state
+                frozen = Msg(value=real().value, hz=0.0,
+                             timestamp=time.monotonic() - 60.0)
+                monkeypatch.setattr(session._arm, "get_state", lambda *a, **k: frozen)
+                while True:
+                    frame = ws.receive_json()
+                    if frame["t"] == "conn" and frame["status"] != "connected":
+                        break
+                assert frame["status"] == "error", frame
+                assert frame["port"] is None, f"端口必须清空: {frame}"
+                assert frame["error"] and "链路已断开" in frame["error"], frame
+    finally:
+        session.close()
+
+
 class _YieldingWS:
     """假 WebSocket: 写完第一帧就注入一条广播并让出事件循环。
 
@@ -387,11 +425,17 @@ def test_cli_defaults() -> None:
     assert args.ui_dir is None
     assert args.no_open is False
     assert args.keep_enabled is False       # 默认退出前失能
+    assert args.no_reconnect is False       # 默认断线后自愈 (#48)
 
 
 def test_cli_keep_enabled_flag() -> None:
     """`--keep-enabled` 是"退出不降能量"的显式逃生口 (#14)。"""
     assert build_parser().parse_args(["--keep-enabled"]).keep_enabled is True
+
+
+def test_cli_no_reconnect_flag() -> None:
+    """`--no-reconnect` 是"断了就停在那儿、别自己去重连"的显式逃生口 (#48)。"""
+    assert build_parser().parse_args(["--no-reconnect"]).no_reconnect is True
 
 
 def test_cli_fake_flag_and_port_override() -> None:
