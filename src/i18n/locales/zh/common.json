@@ -55,6 +55,7 @@
   "langEn": "English",
   "langSystem": "跟随系统",
   "metrics": {
+    "title": "实时曲线",
     "temp": "温度",
     "dq": "速度",
     "tau": "力矩",

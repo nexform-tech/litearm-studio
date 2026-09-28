@@ -7,6 +7,10 @@
     "joint": "关节",
     "cartesian": "笛卡尔"
   },
+  "pose": {
+    "jointTitle": "关节位姿",
+    "cartTitle": "笛卡尔位姿"
+  },
   "controlBar": {
     "clearFault": "清错",
     "readyPose": "就绪姿态",
@@ -21,6 +25,7 @@
     "toolFrame": "工具坐标系",
     "simHint": "仿真模式仅支持关节空间操作",
     "unsupportedHint": "当前固件未编译笛卡尔规划（movel 不可用）",
+    "poseUnavailable": "无笛卡尔位姿：当前固件未编译笛卡尔规划",
     "jogSubMode": "方向点动",
     "targetSubMode": "目标位姿 movel",
     "origin": "原点",

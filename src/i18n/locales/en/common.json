@@ -55,6 +55,7 @@
   "langEn": "English",
   "langSystem": "Follow System",
   "metrics": {
+    "title": "Live Curves",
     "temp": "Temperature",
     "dq": "Velocity",
     "tau": "Torque",

@@ -42,7 +42,8 @@ describe('useArmMetrics axis count', () => {
     const { result } = renderHook(() => useArmMetrics({ real: true }))
 
     expect(result.current.chips.map((c) => c.k)).toEqual(['J1'])
-    expect(result.current.chips[0].t).toBe('1')
+    // 读数不再挂在芯片上，而是按指标分开：温度那一路的 J1 读数就是它的序号。
+    expect(result.current.metricSeries.find((m) => m.id === 'temp')?.live).toEqual(['1'])
     // 「全选」只能选出存在的轴。
     act(() => result.current.selectAll())
     expect(result.current.shown).toEqual([0])
@@ -52,9 +53,27 @@ describe('useArmMetrics axis count', () => {
     const { result } = renderHook(() => useArmMetrics({ real: true }))
 
     expect(result.current.chips.map((c) => c.k)).toEqual(['J1', 'J2', 'J3', 'J4', 'J5', 'J6', 'J7'])
-    expect(result.current.chips[6].t).toBe('7')
+    expect(result.current.metricSeries.find((m) => m.id === 'temp')?.live?.[6]).toBe('7')
     act(() => result.current.selectAll())
     expect(result.current.shown).toEqual([0, 1, 2, 3, 4, 5, 6])
+  })
+
+  it('exposes the four metrics in priority order', () => {
+    const { result } = renderHook(() => useArmMetrics({ real: true }))
+
+    // 顺序即优先级：右列放不下时从后往前丢（跟踪误差最先让位）。
+    expect(result.current.metricSeries.map((m) => m.id)).toEqual(['temp', 'dq', 'tau', 'err'])
+    expect(result.current.metricSeries.map((m) => m.unit)).toEqual(['°C', 'rad/s', 'Nm', 'rad'])
+  })
+
+  it('marks the metric the real broadcast does not carry as having no data', () => {
+    const { result } = renderHook(() => useArmMetrics({ real: true }))
+
+    const err = result.current.metricSeries.find((m) => m.id === 'err')
+    expect(err?.noData).toBe(true)
+    // 实机不伪造跟踪误差曲线：读数为 null，图内显示「暂无数据」。
+    expect(err?.live).toBeNull()
+    expect(result.current.metricSeries.find((m) => m.id === 'temp')?.noData).toBe(false)
   })
 
   it('gives every axis its own colour and cycles the palette past seven', () => {

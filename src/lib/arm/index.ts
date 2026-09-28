@@ -6,4 +6,4 @@ export { DEFAULT_JOINT_COUNT, MAX_JOINT_COUNT, jointIndexes, resolveJointCount, 
 export { useArmConnection } from './useArmConnection'
 export { useArmState } from './useArmState'
 export { useArmMetrics } from './useArmMetrics'
-export type { SeriesSample, MetricTab, MetricChip, MetricType, ArmMetricsReturn, UseArmMetricsOptions } from './useArmMetrics'
+export type { SeriesSample, MetricSeries, MetricChip, MetricType, ArmMetricsReturn, UseArmMetricsOptions } from './useArmMetrics'

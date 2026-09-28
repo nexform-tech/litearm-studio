@@ -4,6 +4,9 @@ import '@/i18n'
 
 const mocks = vi.hoisted(() => ({
   getJointParams: vi.fn(),
+  // 关节与笛卡尔同时可见后，只要连着就会轮询 TCP 位姿；这两个用例只关心限位读回，
+  // 但 mock 里不能缺这条 —— 缺了会在 effect 里抛 `not a function`。
+  getTcpPose: vi.fn(),
   toastWarning: vi.fn(),
   toastError: vi.fn(),
 }))
@@ -18,7 +21,7 @@ vi.mock('sonner', () => ({
 }))
 
 vi.mock('@/lib/arm', () => ({
-  armClient: { getJointParams: mocks.getJointParams },
+  armClient: { getJointParams: mocks.getJointParams, getTcpPose: mocks.getTcpPose },
   formatArmError: (e: unknown) => (e instanceof Error ? e.message : String(e)),
   useArmConnection: () => ({ status: 'connected' }),
   useArmState: () => null,
@@ -39,6 +42,7 @@ const LIMITS = Array.from({ length: 7 }, (_, i) => ({
 describe('useSoloState joint-limit readback', () => {
   beforeEach(() => {
     mocks.getJointParams.mockReset()
+    mocks.getTcpPose.mockReset().mockResolvedValue(null)
     mocks.toastWarning.mockReset()
     mocks.toastError.mockReset()
   })

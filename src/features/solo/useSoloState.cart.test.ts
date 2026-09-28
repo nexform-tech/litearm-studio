@@ -69,14 +69,10 @@ const ENABLED_ARM = {
   state: 'ready',
 }
 
-function cartTabOf(vm: { poseTabs: { key: string; disabled?: boolean }[] }) {
-  return vm.poseTabs.find((tab) => tab.key === 'cart')
-}
-
 async function renderSolo() {
   const rendered = renderHook(() => useSoloState())
-  // 冲掉挂载时的 effect 与在途 promise（关节限位读取）。未连接时不会发起读取，
-  // 所以这里不能等 `getJointParams` 被调用。
+  // 冲掉挂载时的 effect 与在途 promise（关节限位读取、TCP 位姿轮询）。未连接时不会
+  // 发起读取，所以这里不能等 `getJointParams` 被调用。
   await act(async () => {})
   return rendered
 }
@@ -96,16 +92,23 @@ describe('useSoloState cartesian capability gating', () => {
     mocks.armState = ENABLED_ARM
   })
 
-  it('disables the cartesian pose tab and keeps the readout in joint space when cart=false', async () => {
+  it('exposes both readouts at once, so neither needs a tab to be seen', async () => {
+    const { result } = await renderSolo()
+
+    expect(result.current.poseJoint.map((p) => p.k)).toEqual(['J1', 'J2', 'J3', 'J4', 'J5', 'J6', 'J7'])
+    expect(result.current.poseCart?.map((p) => p.k)).toEqual(['X', 'Y', 'Z', 'RX', 'RY', 'RZ'])
+  })
+
+  it('drops the cartesian readout when cart=false instead of showing the local fallback', async () => {
     mocks.conn = { cart: false }
 
     const { result } = await renderSolo()
 
-    expect(cartTabOf(result.current)?.disabled).toBe(true)
-    expect(result.current.poseTabs.find((tab) => tab.key === 'joint')?.disabled).toBeFalsy()
-    // 「笛卡尔」页签读的是 TCP 位姿 RPC，固件没有规划时必然失败：不该轮询，
+    expect(result.current.cartUnsupported).toBe(true)
+    // 「笛卡尔」读数读的是 TCP 位姿 RPC，固件没有规划时必然失败：不该轮询，
     // 更不该把本地兜底的 `s.cart` 初始值当作真实位姿显示。
-    expect(result.current.pose.map((p) => p.k)).toEqual(['J1', 'J2', 'J3', 'J4', 'J5', 'J6', 'J7'])
+    expect(result.current.poseCart).toBeNull()
+    expect(result.current.poseJoint.map((p) => p.k)).toEqual(['J1', 'J2', 'J3', 'J4', 'J5', 'J6', 'J7'])
     expect(mocks.getTcpPose).not.toHaveBeenCalled()
   })
 
@@ -130,7 +133,10 @@ describe('useSoloState cartesian capability gating', () => {
   it('keeps the cartesian surface live when cart=true', async () => {
     const { result } = await renderSolo()
 
-    expect(cartTabOf(result.current)?.disabled).toBeFalsy()
+    expect(result.current.cartUnsupported).toBe(false)
+    // 关节与笛卡尔同时可见 ⇒ 只要连着就轮询 TCP 位姿，不再等某个页签被点开。
+    expect(mocks.getTcpPose).toHaveBeenCalled()
+    expect(result.current.poseCart?.[0]).toEqual({ k: 'X', v: '0.3200', u: 'm' })
 
     await act(async () => {
       await result.current.movelTarget([0.3, 0, 0.4], [0, 1.57, 0])
@@ -146,8 +152,9 @@ describe('useSoloState cartesian capability gating', () => {
 
     act(() => result.current.viewTabs.find((tab) => tab.key === 'sim')?.onClick())
 
-    // 仿真模式本就不下发指令，能力缺失不是它的原因：页签不该被置灰。
-    expect(cartTabOf(result.current)?.disabled).toBe(false)
+    // 仿真模式本就不下发指令，能力缺失不是它的原因：读数不该被撤掉。
+    expect(result.current.cartUnsupported).toBe(false)
+    expect(result.current.poseCart).not.toBeNull()
   })
 
   it('does not blame the firmware while disconnected', async () => {
@@ -156,6 +163,7 @@ describe('useSoloState cartesian capability gating', () => {
     const { result } = await renderSolo()
 
     // 没有 conn 帧就没有能力结论；未连接发不出指令，与固件是否支持笛卡尔无关。
-    expect(cartTabOf(result.current)?.disabled).toBe(false)
+    expect(result.current.cartUnsupported).toBe(false)
+    expect(result.current.poseCart).not.toBeNull()
   })
 })
