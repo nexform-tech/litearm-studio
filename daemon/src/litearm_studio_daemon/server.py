@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import socket
 import sys
 from dataclasses import dataclass, field
@@ -29,6 +30,9 @@ from typing import Any, List, Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException
+from starlette.responses import Response
+from starlette.types import Scope
 
 from . import __version__
 from .errors import error_to_dict
@@ -343,6 +347,41 @@ class Daemon:
         })
 
 
+def _reserved_path(path: str) -> bool:
+    """`path` 是**相对挂载点**的路径 (即 `StaticFiles.get_path` 的产物), 见下。"""
+    parts = path.split(os.sep)
+    if parts[0] in ("api", "ws"):
+        return True
+    # 末段带扩展名 ⇒ 它是资源不是前端路由 (路由都是 `/control` 这种光杆)。
+    return "." in parts[-1]
+
+
+class _SpaStaticFiles(StaticFiles):
+    """静态目录挂载 + SPA 兜底: 磁盘上不存在的前端路由回落到 `index.html`。
+
+    前端用 `BrowserRouter` (history API), `/control` `/log` `/settings` 在磁盘上
+    没有对应文件。`StaticFiles(html=True)` 只把**目录**请求补成 `index.html`, 所以
+    只有 `/` 是好的, 其余路径直接 404 —— 在任一页面按 F5 会白屏成 FastAPI 的
+    JSON 错误 (issue #30)。这里在 404 时改回 `index.html`, 交给前端路由。
+
+    两类路径**不**兜底, 保持原本的 404:
+
+    * `/api/*` 与 `/ws` —— 接口路径打错字不能变成 200 的 HTML, 否则调用方拿到一个
+      "看起来成功"的响应, 比干脆断掉更难查。
+    * 末段带扩展名的路径 (`.js` / `.css` / `.svg` / 字体 …) —— 那是资源。不排除的话,
+      陈旧缓存里的 `index.html` 去要一个已被清掉的 `assets/index-<旧 hash>.js` 会拿到
+      200 的 HTML, 浏览器只报一句含糊的 MIME 错; 留着 404 才能一眼看出是资源没了。
+    """
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        try:
+            return await super().get_response(path, scope)
+        except HTTPException as exc:
+            if exc.status_code != 404 or _reserved_path(path):
+                raise
+            return await super().get_response("index.html", scope)
+
+
 def create_app(session: Session, *, version: str = __version__,
                ui_dir: Optional[str] = None,
                repo_dist: Optional[Path] = None) -> FastAPI:
@@ -371,7 +410,7 @@ def create_app(session: Session, *, version: str = __version__,
 
     if resolved is not None:
         # ⚠ 挂在**最后**: 路由 (含 `/ws`) 优先于静态目录的兜底匹配。
-        app.mount("/", StaticFiles(directory=str(resolved), html=True), name="ui")
+        app.mount("/", _SpaStaticFiles(directory=str(resolved), html=True), name="ui")
         log.info("静态目录: %s", resolved)
     else:
         log.info("没有静态目录 (前端未构建?) —— 只提供 /api/health 与 /ws")
