@@ -20,6 +20,7 @@
     "baseFrame": "Base Frame",
     "toolFrame": "Tool Frame",
     "simHint": "Sim mode only supports joint space operations",
+    "unsupportedHint": "This firmware was built without cartesian planning (movel unavailable)",
     "jogSubMode": "Directional Jog",
     "targetSubMode": "Target Pose movel",
     "origin": "Origin",

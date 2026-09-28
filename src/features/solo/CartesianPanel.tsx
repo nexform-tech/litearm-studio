@@ -10,6 +10,7 @@ import { MoveRight, RefreshCw, Compass } from 'lucide-react'
 
 export function CartesianPanel({
   simMode = false,
+  cartUnsupported = false,
   frames,
   frameOrigin,
   transCells,
@@ -26,6 +27,8 @@ export function CartesianPanel({
   onSyncCurrentPose,
 }: {
   simMode?: boolean
+  /** 固件未编译笛卡尔规划（`conn.cart === false`）：整块面板不可用。 */
+  cartUnsupported?: boolean
   frames: SegItem[]
   frameOrigin: string
   transCells: PadCell[]
@@ -51,6 +54,10 @@ export function CartesianPanel({
   const [targetYaw, setTargetYaw] = useState<number>(0)
   const [syncing, setSyncing] = useState(false)
   const [moving, setMoving] = useState(false)
+
+  // 面板主体不可用的两种原因：仿真模式（不下发指令）与固件缺少笛卡尔规划。
+  // 头部控件仍然可点，便于在不可用时查看坐标系/步长设置。
+  const inactive = simMode || cartUnsupported
 
   const handleSyncPose = async () => {
     if (!onSyncCurrentPose) return
@@ -87,6 +94,10 @@ export function CartesianPanel({
         {simMode ? (
           <div className="rounded-full bg-warn-soft px-2 py-0.5 text-[0.6875rem] font-medium text-warn">
             {t('solo:cartesian.simHint')}
+          </div>
+        ) : cartUnsupported ? (
+          <div className="rounded-full bg-warn-soft px-2 py-0.5 text-[0.6875rem] font-medium text-warn">
+            {t('solo:cartesian.unsupportedHint')}
           </div>
         ) : null}
 
@@ -160,7 +171,7 @@ export function CartesianPanel({
       </div>
 
       {subMode === 'jog' ? (
-        <div className="flex min-h-0 flex-1 gap-3" style={simMode ? { opacity: 0.45, pointerEvents: 'none' } : undefined}>
+        <div className="flex min-h-0 flex-1 gap-3" style={inactive ? { opacity: 0.45, pointerEvents: 'none' } : undefined}>
           <div className="flex min-h-0 flex-1 flex-col gap-2.5 rounded-xl border bg-muted/40 p-3.5">
             <div className="text-xs font-bold tracking-wide text-ink-muted">{t('solo:cartesian.transTitle')}</div>
             <DirectionPad cells={transCells} onPress={onJogPress} onRelease={onJogRelease} />
@@ -171,7 +182,7 @@ export function CartesianPanel({
           </div>
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col gap-3 rounded-xl border bg-muted/20 p-3.5" style={simMode ? { opacity: 0.45, pointerEvents: 'none' } : undefined}>
+        <div className="flex min-h-0 flex-1 flex-col gap-3 rounded-xl border bg-muted/20 p-3.5" style={inactive ? { opacity: 0.45, pointerEvents: 'none' } : undefined}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
               <Compass className="size-4 text-primary" />
@@ -182,7 +193,7 @@ export function CartesianPanel({
               variant="outline"
               size="sm"
               onClick={handleSyncPose}
-              disabled={syncing}
+              disabled={syncing || inactive}
               className="h-7 gap-1 text-xs"
             >
               <RefreshCw className={`size-3 ${syncing ? 'animate-spin' : ''}`} />
@@ -257,7 +268,7 @@ export function CartesianPanel({
             <Button
               type="button"
               onClick={handleMovel}
-              disabled={moving}
+              disabled={moving || inactive}
               className="gap-1.5"
             >
               <MoveRight className="size-4" />

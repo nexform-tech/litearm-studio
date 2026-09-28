@@ -20,6 +20,7 @@
     "baseFrame": "基坐标系",
     "toolFrame": "工具坐标系",
     "simHint": "仿真模式仅支持关节空间操作",
+    "unsupportedHint": "当前固件未编译笛卡尔规划（movel 不可用）",
     "jogSubMode": "方向点动",
     "targetSubMode": "目标位姿 movel",
     "origin": "原点",
