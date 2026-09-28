@@ -10,11 +10,15 @@ from __future__ import annotations
 from dataclasses import fields, is_dataclass
 from typing import Any, List, Optional
 
-#: 固件 `mode` 里本包要单独认的两个值 (其余一律走 `mode_name`)。
-#: ⚠ 这两个数与 `MODE_NAMES` 同源, 但**刻意不 import 私有模块** (`litearm._protocol`)
+#: 固件 `mode` 里本包要单独认的值 (其余一律走 `mode_name`)。
+#: ⚠ 只有零重力一个 —— **`mode` 不携带使能信息**, 不能拿它判 disabled。真机
+#: (`Litearm1.8.0-7J`) 的 `mode` 只在运动命令被接受时才写 (`MOVE_J`/`MOVE_JS`/
+#: `MOVE_MIT`/`ZERO_G`): 上电后、退出零重力后, 固件都停在 `INIT`(0), 于是「使能且
+#: 静止」读出来就是 `mode=0`。早期版本把 `INIT` 当未使能 (无真机证据的假设),
+#: 结果是使能成功、守护进程却不认 (issue 32); 现在只认 `enabled` 那一位。
+#: ⚠ 这个数与 `MODE_NAMES` 同源, 但**刻意不 import 私有模块** (`litearm._protocol`)
 #: —— 那种跨包私有依赖会比一个常量更容易碎。`tests/test_statemap.py` 用 `MODE_NAMES`
-#: 反查这两个数, 漂了就红。
-MODE_INIT = 0
+#: 反查这个数, 漂了就红。
 MODE_ZERO_G = 7
 
 
@@ -33,14 +37,18 @@ def state_of(*, faulted: bool, enabled: bool, mode: int,
 
     ```
     faulted                            -> 'fault'
-    未使能 或 mode==INIT(0)             -> 'disabled'
+    未使能                              -> 'disabled'
     mode==ZERO_G(7) 或 zero_g 会话激活  -> 'zero_gravity'
     会话有运动在飞 或 cartBusy          -> 'moving'
     否则                                -> 'ready'
     ```
 
+    ⚠ 「未使能」**只看 `enabled`**, 不看固件 `mode` —— 真机 (`Litearm1.8.0-7J`) 上
+    `mode` 只在运动命令被接受时才更新, 使能且静止的臂停在 `INIT`(0)。早先按
+    「`mode==INIT` ⇒ 未使能」判会在真机上把已使能的臂报成 `disabled` (issue 32)。
+
     ⚠ `'moving'` 的判据**故意**取「会话本地有运动在飞 或 `cartBusy`」, 而不是去猜
-    固件 `mode` 的语义 (计划原文: 「使能且静止对应哪个固件 mode 值尚未在真机核实」)。
+    固件 `mode` 的语义。
     `cartBusy` 单独 OR 进来有两个用处: ① 侧信道 (别的进程/别的客户端发起的笛卡尔
     规划) 也算; ② **本会话在途**那一段 (前面条件已成立) 不依赖任何固件位。
 
@@ -50,7 +58,7 @@ def state_of(*, faulted: bool, enabled: bool, mode: int,
     """
     if faulted:
         return "fault"
-    if (not enabled) or mode == MODE_INIT:
+    if not enabled:
         return "disabled"
     if mode == MODE_ZERO_G or zero_g_active:
         return "zero_gravity"

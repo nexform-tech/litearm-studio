@@ -418,6 +418,36 @@ def test_state_dict_has_the_contracted_keys(fake_session: Session) -> None:
         assert key in doc, f"状态帧缺字段 {key}"
 
 
+def test_enabled_idle_frame_is_pushed_as_ready(fake_session: Session,
+                                               monkeypatch) -> None:
+    """真机 (`Litearm1.8.0-7J`) 使能且静止的那一帧推出去必须是 `ready` (issue 32)。
+
+    假固件停在 `MOVE_J` (`mode=1`), 复现不了; 这里把真机那一帧注入 `get_state()`,
+    再走**整条推送链** (轮询线程 → 监听器 → `/ws`)。前端只认 `ready`/`moving`/
+    `zero_gravity` 为可运行, 读到 `disabled` 就把已使能的臂显示成未使能、开关点不动。
+    """
+    from litearm.arm import Msg
+    from litearm.state import JointState, RobotState
+
+    frame = RobotState(mode=0, mode_name="INIT", flags=(1 << 9) | 0b10,
+                       flag_names=["WD_TRIPPED"], seq=1,
+                       joints=[JointState(tau=0.4, err=1) for _ in range(7)])
+    monkeypatch.setattr(
+        Arm, "get_state",
+        lambda self, *a, **k: Msg(value=frame, hz=100.0, timestamp=time.monotonic()),
+    )
+
+    seen: list[dict] = []
+    fake_session.add_listener(lambda ev: seen.append(ev))
+    assert _wait(lambda: any(
+        e.get("t") == "state"
+        and e["state"]["state"] == "ready"
+        and e["state"]["enabled"] is True
+        and e["state"]["mode"] == 0
+        for e in seen
+    )), f"使能且静止的 INIT 帧没读成 ready: {seen[-1] if seen else None}"
+
+
 # ------------------------------------------------- 连接收尾的失败必须被看见
 
 def test_connect_reports_the_resolved_port(fake_session: Session) -> None:

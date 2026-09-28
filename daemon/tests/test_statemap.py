@@ -22,14 +22,13 @@ def _state(*, mode: int = 1, mode_name: str = "MOVE_J", flags: int = 0,
 # --------------------------------------------------------------------- 常量对齐
 
 def test_mode_constants_match_sdk() -> None:
-    """`MODE_INIT` / `MODE_ZERO_G` 必须与 SDK 的 `MODE_NAMES` 同源。
+    """`MODE_ZERO_G` 必须与 SDK 的 `MODE_NAMES` 同源。
 
     本模块刻意不 import 私有模块 `litearm._protocol`, 代价就是这个反查:
     固件那侧改了 mode 编号, 这条会红, 而不是静默判错。
     """
     from litearm import _protocol as P
 
-    assert P.MODE_NAMES[statemap.MODE_INIT] == "INIT"
     assert P.MODE_NAMES[statemap.MODE_ZERO_G] == "ZERO_G"
 
 
@@ -48,11 +47,15 @@ def test_disabled_when_not_enabled(mode: int) -> None:
                              cart_busy=False) == "disabled"
 
 
-def test_disabled_when_mode_is_init_even_if_enabled() -> None:
-    """`mode==INIT` 也算未就绪 —— 「使能且静止」的真值未在真机核实, 故 INIT 不认。"""
-    assert statemap.state_of(faulted=False, enabled=True, mode=statemap.MODE_INIT,
+def test_ready_when_enabled_and_mode_is_init() -> None:
+    """使能且静止的臂在真机上就是 `mode=INIT`(0) —— 必须读成 `ready` (issue 32)。
+
+    `mode` 只在运动命令被接受时才写, 上电后/退出零重力后都停在 `INIT`, 所以它
+    **不携带使能信息**; 判 disabled 只能看 `enabled`。
+    """
+    assert statemap.state_of(faulted=False, enabled=True, mode=0,
                              zero_g_active=False, motion_in_flight=False,
-                             cart_busy=False) == "disabled"
+                             cart_busy=False) == "ready"
 
 
 def test_zero_gravity_from_firmware_mode() -> None:
@@ -162,6 +165,36 @@ def test_state_to_dict_enabled_argument_overrides_frame_bit() -> None:
     doc = statemap.state_to_dict(st, enabled=True)
     assert doc["enabled"] is True
     assert doc["state"] == "ready"
+
+
+def test_state_to_dict_enabled_idle_frame_is_ready() -> None:
+    """真机 (`Litearm1.8.0-7J`) 使能且静止时的那一帧 —— 见 issue 32。
+
+    `enabled` 走帧里 flags bit9 (512), `WD_TRIPPED` 是 bit1 (2); `mode=0`/`INIT`。
+    修好之前这里读出来是 `disabled`, 于是前端 `realEnabled` 永远为假、开关点不动。
+    """
+    st = _state(mode=0, mode_name="INIT", flags=(1 << 9) | 0b10,
+                joints=[_joint(tau=0.4, err=1) for _ in range(7)])
+    doc = statemap.state_to_dict(st)
+    assert doc["state"] == "ready"
+    assert doc["enabled"] is True
+    assert doc["mode"] == 0
+    assert doc["modeName"] == "INIT"
+    assert doc["faulted"] is False
+
+
+def test_init_mode_does_not_hide_disabled() -> None:
+    """反过来也要钉住: `mode` 与使能无关, `enabled=False` 在 INIT 下仍是 `disabled`。"""
+    assert statemap.state_of(faulted=False, enabled=False, mode=0,
+                             zero_g_active=False, motion_in_flight=False,
+                             cart_busy=False) == "disabled"
+
+
+def test_init_mode_still_falls_through_to_moving() -> None:
+    """`mode=INIT` 只是"没在动", 不压制会话侧的在途记录。"""
+    assert statemap.state_of(faulted=False, enabled=True, mode=0,
+                             zero_g_active=False, motion_in_flight=True,
+                             cart_busy=False) == "moving"
 
 
 # ------------------------------------------------------------------- jsonable

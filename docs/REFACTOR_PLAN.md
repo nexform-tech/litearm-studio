@@ -128,17 +128,20 @@ litearm-python  ──USB CDC (1d50:606f @921600)──>  STM32  ──CAN──
 - `feedback.staleJoints` → 删除。只有 `FB_STALE` 聚合位，没有逐轴明细。
 - `robotSerial` / `configChecksumSha256` → 无对应物；设备身份改用 `license()` 的 UID。
 
-**`state` 串的派生规则**（不依赖未核实的固件 mode 语义）：
+**`state` 串的派生规则**（不依赖固件 mode 语义）：
 
 ```
 faulted                              → 'fault'
-未使能 或 mode==INIT(0)               → 'disabled'
+未使能                                → 'disabled'
 mode==ZERO_G(7) 或 zero_g 会话激活    → 'zero_gravity'
 本地程序有运动在飞 或 cartBusy        → 'moving'
 否则                                  → 'ready'
 ```
 
-> ⚠️ 「使能且静止」对应哪个固件 mode 值**尚未在真机核实**。用本地程序自己的「运动在飞」记录来判定 `moving`，比猜固件 mode 可靠；真机到手后再校准。
+> ⚠️ 「使能与否」只看 `enabled`（真机上 = 固件 flags bit9，会话自身记录优先），**不看固件的 `mode`**。
+> 真机（`Litearm1.8.0-7J`）上 `mode` 只在运动命令被接受时才写，上电后与退出零重力后都停在
+> `INIT`(0) ⇒ 使能且静止的臂 `mode=0`；早期把 `INIT` 当未使能，会把已使能的臂报成 `disabled`
+> （issue 32）。`moving` 用本地程序自己的「运动在飞」记录判定，比猜固件 mode 可靠。
 
 ### 3.4 位姿格式
 
