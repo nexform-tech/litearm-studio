@@ -22,6 +22,13 @@ const KIND_KEYS: Record<string, string> = {
   CommandRejectedError: 'commandRejected',
   MotionTimeoutError: 'motionTimeout',
   BadMessage: 'badMessage',
+  // 夹爪 (§4.3)。daemon 的类名与这里的键一一对应。
+  GripperNotConnectedError: 'gripperNotConnected',
+  GripperLinkError: 'gripperLinkError',
+  GripperFaultActiveError: 'gripperFaultActive',
+  GripperCalibrationError: 'gripperCalibration',
+  GripperEstoppedError: 'gripperEstopped',
+  GripperBusyError: 'gripperBusy',
 }
 
 /** i18n 缺失时的内置中文兜底（不依赖 i18n 初始化）。 */
@@ -36,6 +43,12 @@ const FALLBACK_ZH: Record<string, string> = {
   commandRejected: '控制器拒绝了该命令{{code}}',
   motionTimeout: '运动超时：控制器未在预期时间内完成动作，请检查机械臂状态',
   badMessage: '与本地程序的通信协议错误：{{message}}',
+  gripperNotConnected: '夹爪未连接：请先在夹爪页连接',
+  gripperLinkError: '夹爪的 CAN 接口不可用：{{message}}',
+  gripperFaultActive: '夹爪驱动报故障：{{message}}，请排除原因后清除故障',
+  gripperCalibration: '夹爪标定不允许这个动作：{{message}}',
+  gripperEstopped: '夹爪急停已锁存：请排除原因后按「复位急停」',
+  gripperBusy: '夹爪正在执行另一项长操作（标定），请等它结束',
   unknownError: '操作失败：{{message}}',
 }
 

@@ -1,0 +1,144 @@
+{
+  "title": "Gripper",
+  "page": {
+    "title": "LiteGrip Gripper",
+    "subtitle": "Two-finger adaptive parallel gripper · stroke 0–{{max}} mm",
+    "opFailed": "{{op}} failed: {{message}}"
+  },
+  "connection": {
+    "channel": "CAN interface",
+    "canId": "CAN ID",
+    "mount": "Mounting",
+    "mountNormal": "Normal",
+    "mountReverse": "Reverse",
+    "mountUnknown": "Not declared",
+    "mountMismatch": "The record declares {{declared}} but the device is running {{actual}} — check the linkage",
+    "travel": "Travel",
+    "noSession": "This daemon has no gripper session (not Linux, or started with --no-gripper)",
+    "connectHint": "Connect the gripper (it shares the arm's CAN bus)"
+  },
+  "source": {
+    "label": "Calibration",
+    "measured": "Measured",
+    "template": "Nominal template (never measured)",
+    "factory": "Factory fallback",
+    "missing": "Not calibrated",
+    "none": "Not resolved yet",
+    "templateWarning": "This is the SDK's nominal template: it declares the mounting direction and nominal 120 mm geometry and has never been measured on this unit — millimetres are a direction check only.",
+    "factoryWarning": "This is the SDK's bundled factory data: if it is not this gripper, every millimetre and force reading is wrong.",
+    "missingWarning": "No usable calibration: motion is refused. Run the zero calibration, or declare the mounting direction on the settings page.",
+    "file": "File",
+    "closed": "Closed angle",
+    "open": "Open angle",
+    "derived": "Derived travel"
+  },
+  "gate": {
+    "READY": "Ready",
+    "TEMPLATE": "Nominal template",
+    "FACTORY": "Factory (unconfirmed)",
+    "BLOCKED": "Blocked",
+    "READY_why": "The calibration describes this gripper; every command is available.",
+    "TEMPLATE_why": "Only the direction is declared: open, close and release are allowed, and millimetre targets are refused (the template geometry is a 120 mm unit's). Run the zero calibration to restore them.",
+    "FACTORY_why": "The SDK's bundled factory data is in use: millimetre readings may be offset until this unit is measured. Allow it on the settings page once you accept the risk.",
+    "BLOCKED_why": "No usable calibration; motion is refused."
+  },
+  "aperture": {
+    "title": "Opening",
+    "closed": "Closed 0",
+    "open": "{{max}} mm open",
+    "unknown": "--"
+  },
+  "actions": {
+    "open": "Open",
+    "close": "Close",
+    "grasp": "Grasp",
+    "release": "Zero gravity",
+    "stop": "Stop",
+    "resetStop": "Reset stop",
+    "clearFault": "Clear fault",
+    "enable": "Enable",
+    "disable": "Disable"
+  },
+  "params": {
+    "title": "Gripper parameters",
+    "targetForce": "Target force",
+    "moveSpeed": "Move speed",
+    "holdSeconds": "Hold for",
+    "holdOff": "Hold until told otherwise"
+  },
+  "readout": {
+    "title": "Live readings",
+    "position": "Position",
+    "force": "Force",
+    "torque": "Torque",
+    "velocity": "Velocity",
+    "temperature": "Temperature",
+    "state": "State",
+    "errorCode": "Error code",
+    "stale": "Status frames are stale",
+    "unknown": "--"
+  },
+  "state": {
+    "ready": "Ready",
+    "moving": "Moving",
+    "grasping": "Grasping",
+    "holding": "Holding",
+    "fault": "Fault",
+    "disabled": "Disabled",
+    "stopped": "Stopped"
+  },
+  "busy": {
+    "label": "Gripper busy",
+    "connect": "Connecting…",
+    "enable": "Enabling…",
+    "fault": "Clearing the fault…",
+    "probe": "Calibrating…"
+  },
+  "zero": {
+    "title": "Zero calibration (measure)",
+    "desc": "The gripper drives into each mechanical stop, records the angles and saves the result. Stop is available throughout.",
+    "travel": "Measured travel (mm)",
+    "start": "Start calibration",
+    "running": "Calibrating",
+    "phase": {
+      "open": "Finding the open limit",
+      "close": "Finding the closed limit",
+      "done": "Done",
+      "failed": "Not completed"
+    },
+    "needsEnabled": "Calibration needs the drive enabled (so do open and close)",
+    "done": "Calibration saved: closed {{closed}} rad / open {{open}} rad ({{scale}} mm/rad)"
+  },
+  "settings": {
+    "title": "Gripper and bus",
+    "description": "Configure the LiteGrip on this CAN interface: channel, CAN ids, mounting, calibration file and measured travel.",
+    "channel": "CAN interface",
+    "canId": "Motor CAN ID",
+    "mstId": "Master CAN ID",
+    "mstAuto": "Auto",
+    "mount": "Mounting",
+    "apply": "Apply and reconnect",
+    "applying": "Applying…",
+    "needsDisconnect": "Disconnect the gripper before changing the channel or ids",
+    "calibrations": "Available calibrations",
+    "calibrationsDesc": "Every calibration this channel could use, in resolution order, with its provenance.",
+    "refresh": "Rescan",
+    "inUse": "In effect",
+    "selected": "Declared",
+    "invalid": "Unusable",
+    "valid": "Usable",
+    "problems": "Problems",
+    "warnings": "Notes",
+    "import": "Load from a file…",
+    "importPlaceholder": "/home/user/my_calibration.json",
+    "importDesc": "Load a JSON calibration from the control machine and pin it to this channel.",
+    "allowFactory": "Allow the factory calibration (risk accepted)",
+    "allowFactoryDesc": "If the factory data is not this unit, every millimetre reading is offset; tick only once you have confirmed it.",
+    "travel": "Measured travel (mm)",
+    "travelDesc": "Per channel: it is the numerator of every millimetre on screen and has to survive a restart.",
+    "noTravel": "The travel must be positive",
+    "applied": "Applied and reconnected",
+    "declareMount": "Load this mounting",
+    "effectiveMount": "The device is running {{mount}}"
+  }
+}

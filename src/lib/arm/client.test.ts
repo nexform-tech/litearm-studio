@@ -277,6 +277,37 @@ describe('ArmClient (daemon WebSocket)', () => {
     expect(FakeWebSocket.instances).toHaveLength(1)
   })
 
+  it('retries the arm link in place when the daemon reported an error', () => {
+    const { client, ws } = connectedClient()
+    ws.receive({
+      t: 'conn', status: 'error', port: null, firmware: '', n: 0, cart: false,
+      error: '未发现 STM32 CDC 设备',
+    })
+    expect(client.status).toBe('error')
+
+    const sent = ws.frames().length
+    client.connect()
+
+    // 传输层没动（不重开 socket），但 daemon 那边重新收到了一次 connect ——
+    // 否则按钮可点却什么都不发生，只能先断开再连接。
+    expect(FakeWebSocket.instances).toHaveLength(1)
+    expect(ws.frames()).toHaveLength(sent + 1)
+    expect(ws.frames().at(-1)).toMatchObject({ t: 'connect' })
+  })
+
+  it('clears the arm state when the socket drops', () => {
+    const { client, ws } = connectedClient()
+    ws.receive({ t: 'state', stamp: 1, state: { q: [1, 2, 3], state: 'ready' } })
+    expect(client.state).not.toBeNull()
+
+    ws.drop()
+
+    // 掉线走的是 reconnecting。旧姿态/故障位留在屏幕上看起来和"实时"一模一样，
+    // 而重连失败时会一直留着。
+    expect(client.status).toBe('reconnecting')
+    expect(client.state).toBeNull()
+  })
+
   it('reconnects with the backoff after the socket drops', async () => {
     vi.useFakeTimers()
     const { client, ws } = connectedClient()

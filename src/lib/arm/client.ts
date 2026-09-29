@@ -1,5 +1,5 @@
-import { formatArmError } from './errors'
-import type { DaemonErrorInfo } from './errors'
+import type { CommandError } from './socket'
+import { DaemonSocket } from './socket'
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'error'
 
@@ -50,8 +50,6 @@ export type JointParams = {
 
 type Listener = () => void
 
-const RECONNECT_DELAYS_MS = [1000, 2000, 4000, 8000, 16000, 30000]
-
 function arraysEqual(a: number[] | undefined, b: number[] | undefined) {
   if (a === b) return true
   if (!a || !b || a.length !== b.length) return false
@@ -99,14 +97,8 @@ export function normalizeRobotState(raw: RobotState | null | undefined): RobotSt
   }
 }
 
-/** 从当前页面推导本地 daemon 的 WebSocket 地址（https 页面用 wss）。 */
-function wsUrl(): string {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return `${proto}//${location.host}/ws`
-}
-
 /** 命令被 daemon 拒绝时抛出的 Error，`err` 携带结构化错误信息。 */
-export type ArmCommandError = Error & { err: DaemonErrorInfo }
+export type ArmCommandError = CommandError
 
 /**
  * 拥有全应用唯一的 daemon WebSocket 连接：
@@ -115,12 +107,11 @@ export type ArmCommandError = Error & { err: DaemonErrorInfo }
  * 因为每个状态帧重渲染。
  */
 export class ArmClient {
-  private socket: WebSocket | null = null
-  private manualDisconnect = true
-  private reconnectAttempt = 0
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null
-  private nextId = 1
-  private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: unknown) => void }>()
+  private _status: ConnectionStatus = 'disconnected'
+  private _conn: ConnInfo | null = null
+  private _state: RobotState | null = null
+  private _motionPending = false
+
   private _lastStateNotify = 0
   private _lastRawState: unknown = null
   private _cachedNormalizedState: RobotState | null = null
@@ -129,16 +120,34 @@ export class ArmClient {
    *  安全相关字段（状态串/故障）变化立即通知，其余最多每 100ms 一次。 */
   private static readonly STATE_NOTIFY_INTERVAL_MS = 100
 
-  private _status: ConnectionStatus = 'disconnected'
-  private _conn: ConnInfo | null = null
-  private _state: RobotState | null = null
-  private _lastError: string | null = null
-  private _motionPending = false
-
   private statusListeners = new Set<Listener>()
   private stateListeners = new Set<Listener>()
   private stateFastListeners = new Set<Listener>()
   private motionListeners = new Set<Listener>()
+
+  /** 共用的 daemon socket。默认自建一条，`armClient` 用默认值；夹爪注入同一条。 */
+  readonly socket: DaemonSocket
+
+  constructor(socket: DaemonSocket = new DaemonSocket()) {
+    this.socket = socket
+    // 一次连接上就请求连接机械臂（夹爪不自动连：它由页面显式连）。
+    this.socket.onOpen(() => {
+      this.socket.sendFrame({ t: 'connect' })
+    })
+    this.socket.onFrame('conn', (msg) => this._applyConn(msg))
+    this.socket.onFrame('state', (msg) => this._applyState(msg.state as RobotState | null | undefined))
+    this.socket.onLifecycle((s) => {
+      if (s === 'connecting' || s === 'reconnecting' || s === 'error' || s === 'disconnected') {
+        // 传输层一动，臂这边的状态就作废：daemon 会在下一次握手时重发 `conn`/`state`，
+        // 在那之前最后一帧姿态属于一条没人在说话的链路。重构前这里也清（`_openSocket`
+        // 开头 + `onclose`）—— 一个看起来"实时"的旧姿态/故障位比空白更危险，而
+        // `GripperClient` 出于同样的理由也在清。
+        this._clearState()
+        this._setMotionBusy(false)
+        this._setStatus(s)
+      }
+    })
+  }
 
   get status() {
     return this._status
@@ -150,7 +159,7 @@ export class ArmClient {
     return this._state
   }
   get lastError() {
-    return this._lastError
+    return this.socket.lastError
   }
 
   /** True while a motion command (home/movej/movel) is in flight. */
@@ -189,36 +198,21 @@ export class ArmClient {
 
   /** 连接本地 daemon（无参：URL 由当前页面推导）。 */
   connect() {
-    // 已连接/连接中时忽略重复点击；重连退避期间（reconnecting）允许取消
-    // 当前定时器并立即重试，用户点击「连接」不必等最长 30s 的退避结束。
-    if (
-      !this.manualDisconnect &&
-      (this._status === 'connecting' || this._status === 'connected')
-    ) {
+    // 传输层已经通着，说明失败的是 daemon 那边的 connect（没找到 CDC 设备、串口被占）：
+    // 原地重发一次就是重试。拆掉重开不会多试任何东西，还会顺手弄断共用这条 socket 的
+    // 夹爪会话。
+    if (this.socket.open) {
+      this.socket.sendFrame({ t: 'connect' })
       return
     }
-    this.manualDisconnect = false
-    this.reconnectAttempt = 0
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer)
-      this.reconnectTimer = null
-    }
-    this._openSocket()
+    this.socket.connect()
   }
 
   /** 断开：通知 daemon 断开机械臂，并关闭本地 WebSocket。 */
   disconnect() {
-    this.manualDisconnect = true
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer)
-      this.reconnectTimer = null
-    }
-    const ws = this.socket
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      this._sendFrame({ t: 'disconnect' })
-    }
-    this._closeSocket()
-    this._rejectAllPending('连接已断开')
+    const open = this.socket.open
+    if (open) this.socket.sendFrame({ t: 'disconnect' })
+    this.socket.disconnect()
     this._clearState()
     this._setMotionBusy(false)
     this._conn = null
@@ -385,97 +379,6 @@ export class ArmClient {
 
   // ─────────────────────────── 内部实现 ───────────────────────────
 
-  private _openSocket() {
-    this._closeSocket()
-    this._clearState()
-    // 新连接会作废所有在途 RPC，运动锁必须在这里释放，否则会永久卡在 busy。
-    this._setMotionBusy(false)
-    this._setStatus(this.reconnectAttempt > 0 ? 'reconnecting' : 'connecting')
-
-    let ws: WebSocket
-    try {
-      ws = new WebSocket(wsUrl())
-    } catch (err) {
-      this._lastError = formatArmError(err)
-      this._setStatus('error')
-      this._scheduleReconnect()
-      return
-    }
-    this.socket = ws
-
-    ws.onopen = () => {
-      if (this.socket !== ws) return
-      // 请求 daemon 连接机械臂；失败原因由后续 `conn` 帧的 error 字段报告。
-      this._sendFrame({ t: 'connect' })
-    }
-    ws.onmessage = (ev: MessageEvent) => {
-      if (this.socket !== ws) return
-      this._handleMessage(ev.data)
-    }
-    ws.onclose = () => {
-      if (this.socket !== ws) return
-      this.socket = null
-      this._rejectAllPending('本地程序连接已断开')
-      this._clearState()
-      this._setMotionBusy(false)
-      if (this.manualDisconnect) {
-        this._setStatus('disconnected')
-        return
-      }
-      this._setStatus('reconnecting')
-      this._scheduleReconnect()
-    }
-  }
-
-  private _closeSocket() {
-    const ws = this.socket
-    this.socket = null
-    if (!ws) return
-    ws.onopen = null
-    ws.onmessage = null
-    ws.onclose = null
-    try {
-      ws.close()
-    } catch {
-      // 关闭失败无碍：引用已摘除。
-    }
-  }
-
-  private _scheduleReconnect() {
-    if (this.manualDisconnect) return
-    const delay = RECONNECT_DELAYS_MS[Math.min(this.reconnectAttempt, RECONNECT_DELAYS_MS.length - 1)]
-    this.reconnectAttempt += 1
-    this.reconnectTimer = setTimeout(() => {
-      if (this.manualDisconnect) return
-      this._openSocket()
-    }, delay)
-  }
-
-  private _handleMessage(data: unknown) {
-    if (typeof data !== 'string') return
-    let msg: Record<string, unknown>
-    try {
-      msg = JSON.parse(data) as Record<string, unknown>
-    } catch {
-      return
-    }
-    switch (msg.t) {
-      case 'hello':
-        break
-      case 'conn':
-        this._applyConn(msg)
-        break
-      case 'state':
-        this._applyState(msg.state as RobotState | null | undefined)
-        break
-      case 'res':
-        this._resolvePending(msg)
-        break
-      default:
-        break
-    }
-  }
-
   private _applyConn(msg: Record<string, unknown>) {
     const conn: ConnInfo = {
       status: typeof msg.status === 'string' ? msg.status : 'disconnected',
@@ -487,10 +390,9 @@ export class ArmClient {
     }
     this._conn = conn
     if (conn.status === 'connected') {
-      this.reconnectAttempt = 0
-      this._lastError = null
+      this.socket.setLastError(null)
     } else if (conn.error) {
-      this._lastError = conn.error
+      this.socket.setLastError(conn.error)
     }
     const mapped: ConnectionStatus =
       conn.status === 'connected'
@@ -528,54 +430,8 @@ export class ArmClient {
     }
   }
 
-  private _resolvePending(msg: Record<string, unknown>) {
-    const id = msg.id
-    if (typeof id !== 'number') return
-    const entry = this.pending.get(id)
-    if (!entry) return
-    this.pending.delete(id)
-    if (msg.ok === true) {
-      entry.resolve(msg.v)
-      return
-    }
-    const info = (msg.err && typeof msg.err === 'object' ? msg.err : {}) as DaemonErrorInfo
-    const detail = typeof info.msg === 'string' && info.msg ? info.msg : '命令执行失败'
-    const error = new Error(detail) as ArmCommandError
-    error.err = info
-    entry.reject(error)
-  }
-
   private _sendCmd(m: string, p?: Record<string, unknown>): Promise<unknown> {
-    const ws = this.socket
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      return Promise.reject(new Error('本地程序未连接'))
-    }
-    const id = this.nextId++
-    return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject })
-      const sent = this._sendFrame({ t: 'cmd', id, m, p: p ?? {} })
-      if (!sent) {
-        this.pending.delete(id)
-        reject(new Error('本地程序未连接'))
-      }
-    })
-  }
-
-  private _sendFrame(frame: Record<string, unknown>): boolean {
-    const ws = this.socket
-    if (!ws || ws.readyState !== WebSocket.OPEN) return false
-    try {
-      ws.send(JSON.stringify(frame))
-      return true
-    } catch {
-      return false
-    }
-  }
-
-  private _rejectAllPending(reason: string) {
-    const pending = [...this.pending.values()]
-    this.pending.clear()
-    for (const entry of pending) entry.reject(new Error(reason))
+    return this.socket.sendCmd(m, p)
   }
 
   private _clearState() {

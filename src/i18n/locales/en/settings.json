@@ -11,7 +11,8 @@
     "payload": "Payload",
     "gravity": "Gravity & Inertia",
     "joints": "Gains & Limits",
-    "diagnostics": "Diagnostics"
+    "diagnostics": "Diagnostics",
+    "gripper": "Gripper & bus"
   },
   "payload": {
     "title": "End-effector payload",

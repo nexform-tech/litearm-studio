@@ -16,9 +16,14 @@ python packaging/build.py
 * **把界面打进包**：`dist/` 以 `--add-data` 放到 `_MEIPASS/dist`，
   `server.resolve_ui_dir()` 认识这个冻结路径（免手工 `--ui-dir`）。
 * **把 SDK 打进包**：`litearm` 不在 PyPI 上，必须随包内嵌（含 `pyserial`）。
+* **夹爪 SDK 按平台收**：`litegrip` 需要 `fcntl` / `PF_CAN`，Windows 上装了也
+  import 不了 —— 那里的构建**不收它**，产物里夹爪是缺席的（D10）。Linux 上缺它
+  则**直接判失败**：一个"忘了装 SDK"的 Linux 产物会静默地没有夹爪，而那是发布物
+  必须具备的能力。
 """
 from __future__ import annotations
 
+import importlib.util
 import os
 import shutil
 import subprocess
@@ -60,6 +65,41 @@ def resolve_version() -> str:
         return "0.0.0+dev"
 
 
+#: 夹爪 SDK 的平台判据。与 daemon 侧的 `__main__.build_gripper_session` 同一条口径：
+#: Linux 上提供，别处缺席。这里用 `sys.platform` 而不是 `os.name`，因为判据是
+#: PF_CAN（POSIX 内核特性）而不是"是不是 Windows"。
+GRIPPER_PLATFORMS = ("linux",)
+
+
+def sdk_available(name: str) -> bool:
+    """这个包在当前解释器里装了吗（不 import 它 —— import 会执行模块代码）。"""
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError):  # pragma: no cover - 名字被别的包挡住
+        return False
+
+
+def gripper_build_args() -> list[str]:
+    """夹爪 SDK 的 PyInstaller 参数, 或一句"为什么没有它"。
+
+    `--collect-all litegrip` 是必须的：包里除了 .py 还有三份 JSON（两个模板与出厂
+    标定）和 `py.typed`，只收模块的话 `load_template()` 找不到文件会抛。
+    """
+    on_gripper_platform = sys.platform.startswith(GRIPPER_PLATFORMS)
+    if not on_gripper_platform:
+        print(f"[package] {sys.platform}: 夹爪缺席 (需要 PF_CAN), 不收 litegrip")
+        return []
+    if not sdk_available("litegrip"):
+        raise SystemExit(
+            "找不到夹爪 SDK `litegrip`，但这是 Linux 构建 —— 发布出来的 Linux 产物"
+            "会**没有夹爪**。请先克隆并安装它（仓库 nexform-tech/litegrip-python，"
+            "钉住的版本见 release.yml）：\n"
+            "    git clone https://github.com/nexform-tech/litegrip-python.git\n"
+            "    pip install ./litegrip-python")
+    print("[package] 收集夹爪 SDK litegrip（含模板与出厂标定）")
+    return ["--collect-all", "litegrip"]
+
+
 def main() -> int:
     if not (UI_DIST / "index.html").is_file():
         raise SystemExit(
@@ -96,6 +136,7 @@ def main() -> int:
         # SDK 不在 PyPI 上, 连数据文件一起收进来
         "--collect-all", "litearm",
         "--collect-all", "serial",
+        *gripper_build_args(),
         # uvicorn 的 loop/protocol 实现是动态导入的, PyInstaller 静态分析看不见
         "--collect-submodules", "uvicorn",
         "--collect-submodules", "websockets",

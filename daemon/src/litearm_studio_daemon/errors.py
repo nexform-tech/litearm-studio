@@ -82,6 +82,44 @@ class MotionBusyError(DaemonError):
         self.method = method
 
 
+class GripperNotConnectedError(DaemonError):
+    """A ``gripper.*`` command arrived before a gripper session exists.
+
+    Two causes, and the message must not conflate them: the daemon has no
+    gripper session at all (this build or platform has none, or ``--no-gripper``
+    was given), or the session exists but is not connected to the bus.  The
+    caller cannot act on the first by pressing 连接, so the session answers with
+    the one that applies.
+    """
+
+    def __init__(self, detail: str = "夹爪会话尚未连接"):
+        super().__init__(detail)
+
+
+class GripperLinkError(DaemonError):
+    """The CAN interface is missing, down, or bus-off."""
+
+
+class GripperFaultActiveError(DaemonError):
+    """The drive reports a latched fault (``errorCode`` outside 0 and 1)."""
+
+    def __init__(self, code: int, message: str = ""):
+        self.code = int(code)
+        super().__init__(message or f"夹爪驱动故障 0x{code:X}")
+
+
+class GripperCalibrationError(DaemonError):
+    """No usable calibration for the requested motion."""
+
+
+class GripperEstoppedError(DaemonError):
+    """Motion refused while the gripper's stop latch is engaged."""
+
+
+class GripperBusyError(DaemonError):
+    """A second long operation (a probe) was requested while one was running."""
+
+
 class NotConnectedCommandError(DaemonError):
     """会话未连接时就发命令。
 

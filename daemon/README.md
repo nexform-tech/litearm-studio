@@ -32,6 +32,18 @@ pip install -e ../litearm-python
 pip install -e "daemon[test]"     # 在仓库根目录执行
 ```
 
+- **`litegrip`（litegrip-python）同样不在 PyPI 上，而且只在 Linux 上有意义**
+  （import 需要 `fcntl` / `PF_CAN`）。要真机驱动夹爪就必须装它：
+
+```bash
+git clone --branch v0.4.0 https://github.com/nexform-tech/litegrip-python.git
+pip install ./litegrip-python
+```
+
+  Linux 上没装它守护进程**照常启动**，只是不提供夹爪（与 Windows 上的"缺席"同一条路）；
+  打包脚本则相反 —— Linux 构建缺它直接判失败，见「打包」一节。想显式关掉夹爪用
+  `--no-gripper`；用 `--fake` 可以在任何平台跑纯 Python 的仿真后端。
+
 ## 运行
 
 ```bash
@@ -95,6 +107,41 @@ litearm-studio-daemon --port /dev/ttyACM1 --http-port 9000 --no-open
 按下「断开」会同时取消在途的自愈；自愈成功后会重新推状态帧，界面不需要刷新。
 
 
+## 夹爪（LiteGrip）
+
+同一个守护进程还能同时驱动一把 LiteGrip 夹爪，走**与机械臂关节同一条 CAN 总线**
+（宿主机 SocketCAN，经典 CAN 1 Mbit）。夹爪有自己的 200Hz 控制 tick、命令队列和急停
+事件，与臂的命令执行器完全分开：一条 3 秒的闭合不该占住服务臂命令的线程。
+
+```bash
+# 仿真：夹爪也走模拟后端，不需要 CAN 硬件
+litearm-studio-daemon --fake
+
+# 真机：默认用上次记录的接口（首次为 can0）
+litearm-studio-daemon --can-channel can0
+
+# 接口由你或 systemd 管理时不弹授权框
+litearm-studio-daemon --no-can-setup
+
+# 完全不要夹爪
+litearm-studio-daemon --no-gripper
+```
+
+几条必须知道的规矩（完整规范见 [`docs/GRIPPER_INTEGRATION.md`](../docs/GRIPPER_INTEGRATION.md)）：
+
+- **同一个夹爪只能有一个说话的人**。`litegrip-studio` 连着的时候不要再让本程序连——它
+  没有仲裁，两个主机会互相覆盖对方的帧。
+- **不自动准备接口就不会有密码框**：默认只在接口状态确实不对时才用 `pkexec` 跑一次固定
+  脚本（`ip link set … bitrate 1000000 restart-ms 100 fd off`），已经正确的总线一次都不弹。
+- **标定是显式决定的**：解析顺序与"哪一份标定在生效"由守护进程从文件系统判定，SDK 只会
+  收到一个明确的 `path=` 或 `template=`（它的无参回退会静默载入出厂文件并返回成功）。
+  标称模板只声明方向，只允许张开/闭合/零重力；毫米目标需要实测标定。
+- **行程是每通道记录的**（默认 85mm），它不在 SDK 的标定格式里，却是界面上每一个毫米的
+  分子——所以它必须活过重启，也必须能按通道分别设置。
+- **退出一定失能**：`--keep-enabled` 只对臂有效；一个还夹着东西的夹爪不该留在原地。
+- 夹爪只在 Linux 上提供（SDK 需要 `PF_CAN`）；Windows 版构建里它是**缺席**的，不是禁用
+  的。`--fake` 例外：仿真后端是纯 Python，任何平台都能跑。
+
 ## 打包（Phase 5）
 
 ```bash
@@ -102,11 +149,17 @@ pnpm build                     # 先构建界面：打包脚本会拒绝在没�
 python packaging/build.py      # 产物：packaging/dist/litearm-studio-daemon[.exe]
 ```
 
-`packaging/build.py` 做三件事：
+`packaging/build.py` 做四件事：
 
 - **把界面打进包**：`dist/` 以 `--add-data` 放到 `_MEIPASS/dist`，`server.resolve_ui_dir()`
   认识这个冻结路径，所以打包后不需要手工传 `--ui-dir`。
 - **把 SDK 打进包**：`litearm` 不在 PyPI 上，连同 `pyserial` 一起内嵌。
+- **夹爪 SDK 按平台收**：Linux 上必须装 `litegrip`（`pip install ../litegrip-python`），
+  脚本会 `--collect-all litegrip` 把三份 JSON 与 `py.typed` 一起收进去；缺了它会**直接
+  判失败**——一个"忘了装 SDK"的 Linux 产物会静默地没有夹爪。Windows 上不装、也不收：
+  那个平台没有 `PF_CAN`，夹爪是**缺席**的（不是禁用）。版本钉在 `v0.4.0`
+  （见 `.github/workflows/release.yml`），也就是"按名字载入标定模板 + 每通道标定文件"
+  的那个版本。
 - **版本单一来源**：`LITEARM_STUDIO_VERSION`（CI 传 git tag）> `git describe --tags` >
   `0.0.0+dev`，写进构建时生成的 `_build_version.py`（不入库）。于是 `hello` 帧报的版本
   就是发出去的那个 tag，而不是 `pyproject.toml` 里的占位符。

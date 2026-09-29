@@ -12,6 +12,8 @@ import settingsZh from './locales/zh/settings.json'
 import settingsEn from './locales/en/settings.json'
 import telemetryZh from './locales/zh/telemetry.json'
 import telemetryEn from './locales/en/telemetry.json'
+import gripperZh from './locales/zh/gripper.json'
+import gripperEn from './locales/en/gripper.json'
 
 export const defaultNS = 'common'
 export const resources = {
@@ -21,6 +23,7 @@ export const resources = {
     solo: soloZh,
     settings: settingsZh,
     telemetry: telemetryZh,
+    gripper: gripperZh,
   },
   en: {
     common: commonEn,
@@ -28,6 +31,7 @@ export const resources = {
     solo: soloEn,
     settings: settingsEn,
     telemetry: telemetryEn,
+    gripper: gripperEn,
   },
 } as const
 
@@ -38,7 +42,7 @@ i18n
     resources,
     fallbackLng: 'zh',
     defaultNS,
-    ns: ['common', 'nav', 'solo', 'settings', 'telemetry'],
+    ns: ['common', 'nav', 'solo', 'settings', 'telemetry', 'gripper'],
     interpolation: {
       escapeValue: false,
     },

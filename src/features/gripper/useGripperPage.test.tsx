@@ -1,0 +1,215 @@
+import { act, renderHook } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import i18n from '@/i18n'
+
+const mocks = vi.hoisted(() => {
+  const conn = { current: null as Record<string, unknown> | null }
+  const state = { current: null as Record<string, unknown> | null }
+  const calib = { current: null as Record<string, unknown> | null }
+  const status = { current: 'disconnected' as string }
+  const present = { current: true }
+  return {
+    conn,
+    state,
+    calib,
+    status,
+    present,
+    open: vi.fn(),
+    close: vi.fn(),
+    grasp: vi.fn(),
+    release: vi.fn(),
+    stop: vi.fn(),
+    resetStop: vi.fn(),
+    clearFault: vi.fn(),
+    enable: vi.fn(),
+    disable: vi.fn(),
+    moveTo: vi.fn(),
+    setMotion: vi.fn(),
+    connect: vi.fn(),
+    disconnect: vi.fn(),
+  }
+})
+
+vi.mock('sonner', () => ({
+  toast: { error: vi.fn(), success: vi.fn(), warning: vi.fn(), info: vi.fn(), dismiss: vi.fn() },
+}))
+
+vi.mock('@/lib/arm/gripperClient', () => ({
+  gripperClient: {
+    open: mocks.open,
+    close: mocks.close,
+    grasp: mocks.grasp,
+    release: mocks.release,
+    stop: mocks.stop,
+    resetStop: mocks.resetStop,
+    clearFault: mocks.clearFault,
+    enable: mocks.enable,
+    disable: mocks.disable,
+    moveTo: mocks.moveTo,
+    setMotion: mocks.setMotion,
+    connect: mocks.connect,
+    disconnect: mocks.disconnect,
+  },
+}))
+
+vi.mock('@/lib/arm/useGripper', () => ({
+  useGripperConnection: () => ({
+    conn: mocks.conn.current,
+    status: mocks.status.current,
+    present: mocks.present.current,
+    busy: { busy: false, what: '' },
+    connect: mocks.connect,
+    disconnect: mocks.disconnect,
+  }),
+  useGripperState: () => mocks.state.current,
+  useGripperCalibration: () => mocks.calib.current,
+  useGripperAlerts: () => undefined,
+}))
+
+const { useGripperPage } = await import('./useGripperPage')
+
+function ready(overrides: Record<string, unknown> = {}) {
+  mocks.present.current = true
+  mocks.status.current = 'connected'
+  mocks.conn.current = {
+    status: 'connected',
+    channel: 'can0',
+    canId: 8,
+    mount: 'normal',
+    declaredMount: 'normal',
+    template: null,
+    source: 'measured',
+    path: '/tmp/cal.json',
+    travelMm: 85,
+    closedRad: 1.775959,
+    openRad: -0.064279,
+    fileRadToMm: 46.73,
+    error: null,
+    gate: 'READY',
+    gateReason: '实测标定',
+  }
+  mocks.state.current = {
+    positionMm: 12.5,
+    forceN: 0,
+    torqueNm: 0,
+    velocityMmS: 0,
+    enabled: true,
+    state: 'holding',
+    errorCode: 1,
+    temps: { mosTemp: 30, coilTemp: 31 },
+    fresh: true,
+    gate: 'READY',
+    gateReason: '实测标定',
+    ...overrides,
+  }
+}
+
+describe('useGripperPage', () => {
+  beforeEach(() => {
+    window.localStorage.clear()
+    ready()
+    vi.clearAllMocks()
+    mocks.moveTo.mockResolvedValue({ ok: true })
+    mocks.setMotion.mockImplementation((p: { speedMmS?: number; forceN?: number }) =>
+      Promise.resolve({ speedMmS: p.speedMmS ?? 50, forceN: p.forceN ?? 20 }),
+    )
+    for (const key of ['open', 'close', 'grasp', 'release', 'stop', 'resetStop', 'clearFault', 'enable', 'disable'] as const) {
+      mocks[key].mockResolvedValue(null)
+    }
+  })
+
+  afterEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('allows every motion when the gate is READY and the drive is enabled', () => {
+    const { result } = renderHook(() => useGripperPage())
+    expect(result.current.canControl).toBe(true)
+    expect(result.current.canDirection).toBe(true)
+    expect(result.current.disabledReason).toBe('')
+  })
+
+  it('refuses millimetre targets under a nominal template but allows open and close', () => {
+    ready()
+    mocks.conn.current = { ...mocks.conn.current, gate: 'TEMPLATE', source: 'template', mount: 'reverse' }
+    mocks.state.current = { ...mocks.state.current, gate: 'TEMPLATE', gateReason: '标称模板（从未实测）' }
+
+    const { result } = renderHook(() => useGripperPage())
+    expect(result.current.canControl).toBe(false)
+    expect(result.current.canDirection).toBe(true)
+    expect(result.current.gateAllows(true)).toBe(false)
+    expect(result.current.gateAllows(false)).toBe(true)
+  })
+
+  it('explains why the controls are disabled instead of leaving them grey', () => {
+    ready({ enabled: false, state: 'disabled' })
+    const { result } = renderHook(() => useGripperPage())
+    expect(result.current.canControl).toBe(false)
+    // 断言的是"说出了原因"，不是某一语言的措辞（i18n 语言由环境决定）。
+    expect(result.current.disabledReason).toBe(i18n.t('common:errors.notEnabled'))
+  })
+
+  it('locks motion behind a latched stop and says so', () => {
+    ready({ state: 'stopped', enabled: false })
+    const { result } = renderHook(() => useGripperPage())
+    expect(result.current.estopped).toBe(true)
+    expect(result.current.canControl).toBe(false)
+    expect(result.current.disabledReason).toBe(i18n.t('common:errors.gripperEstopped'))
+  })
+
+  it('follows the device position while the user is not dragging', () => {
+    const { result, rerender } = renderHook(() => useGripperPage())
+    expect(result.current.aperture).toBeCloseTo(12.5)
+    act(() => {
+      mocks.state.current = { ...mocks.state.current, positionMm: 30 }
+    })
+    rerender()
+    expect(result.current.aperture).toBeCloseTo(30)
+  })
+
+  it('does not echo the device back into the slider while dragging', () => {
+    const { result, rerender } = renderHook(() => useGripperPage())
+    act(() => {
+      result.current.setDragging(true)
+      result.current.setAperture(60)
+      mocks.state.current = { ...mocks.state.current, positionMm: 12.5 }
+    })
+    rerender()
+    expect(result.current.aperture).toBe(60)
+  })
+
+  it('commits an aperture move with the speed currently set', async () => {
+    const { result } = renderHook(() => useGripperPage())
+    await act(async () => {
+      result.current.commitAperture(40)
+    })
+    expect(mocks.moveTo).toHaveBeenCalledWith(40, expect.any(Number))
+  })
+
+  it('shows what the device reports after a motion-parameter write, not what was sent', async () => {
+    mocks.setMotion.mockResolvedValue({ speedMmS: 25, forceN: 20 })
+    const { result } = renderHook(() => useGripperPage())
+    await act(async () => {
+      result.current.commitSpeed(120)
+    })
+    // 请求 120，daemon 回的是它真正生效的值 —— 显示后者。
+    expect(mocks.setMotion).toHaveBeenCalledWith({ speedMmS: 120 })
+    expect(result.current.speedMmS).toBe(25)
+  })
+
+  it('starts from the documented defaults (20 N, 50 mm/s) with no stored preference', () => {
+    const { result } = renderHook(() => useGripperPage())
+    expect(result.current.forceN).toBe(20)
+    expect(result.current.speedMmS).toBe(50)
+  })
+
+  it('reports no session when the daemon has none', () => {
+    mocks.present.current = false
+    mocks.conn.current = null
+    mocks.status.current = 'disconnected'
+    mocks.state.current = null
+    const { result } = renderHook(() => useGripperPage())
+    expect(result.current.present).toBe(false)
+    expect(result.current.disabledReason).toBe(i18n.t('gripper:connection.noSession'))
+  })
+})
