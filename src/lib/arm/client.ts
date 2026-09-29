@@ -138,8 +138,12 @@ export class ArmClient {
     this.socket.onFrame('state', (msg) => this._applyState(msg.state as RobotState | null | undefined))
     this.socket.onLifecycle((s) => {
       if (s === 'connecting' || s === 'reconnecting' || s === 'error' || s === 'disconnected') {
-        // conn 帧仍会覆盖成它自己的判定（见 _applyConn）；这里只映射传输层。
-        if (s === 'disconnected') this._clearState()
+        // 传输层一动，臂这边的状态就作废：daemon 会在下一次握手时重发 `conn`/`state`，
+        // 在那之前最后一帧姿态属于一条没人在说话的链路。重构前这里也清（`_openSocket`
+        // 开头 + `onclose`）—— 一个看起来"实时"的旧姿态/故障位比空白更危险，而
+        // `GripperClient` 出于同样的理由也在清。
+        this._clearState()
+        this._setMotionBusy(false)
         this._setStatus(s)
       }
     })
@@ -194,6 +198,13 @@ export class ArmClient {
 
   /** 连接本地 daemon（无参：URL 由当前页面推导）。 */
   connect() {
+    // 传输层已经通着，说明失败的是 daemon 那边的 connect（没找到 CDC 设备、串口被占）：
+    // 原地重发一次就是重试。拆掉重开不会多试任何东西，还会顺手弄断共用这条 socket 的
+    // 夹爪会话。
+    if (this.socket.open) {
+      this.socket.sendFrame({ t: 'connect' })
+      return
+    }
     this.socket.connect()
   }
 
