@@ -168,7 +168,7 @@ def find_cdc_port() -> Optional[str]:
     return litearm.find_cdc_port()
 
 
-def build_fake_transport_factory():
+def build_fake_transport_factory(*, activated: bool = True):
     """`--fake` 模式的注入工厂 —— 延迟 import, 免得生产运行也拖着 `litearm.testing`。
 
     签名契约 (`litearm-python/tests/conftest.py` 的 `fake_transport_factory` 与
@@ -178,11 +178,18 @@ def build_fake_transport_factory():
     ⚠ 固件版本字面量取 `Litearm1.8.0-7J` + `n=7`: `connect()` 会校验版本约定
     (`Litearm<主.次.修>-{7J|1J}`) 且 `1.8.0 >= MIN_FW (1.5.0)`; `n=7` 让桩固件
     在装配时就把关节数定成 7 (整臂), 于是 `movej` 的 arity 校验一次到位。
+
+    `activated=False` 把假设备变成**未激活**的一台 (`--fake-unactivated`): 授权记录照回
+    (含 UID), 但 `ENABLE` 会被拒 `ERR{0x10,0x08}` —— 于是"未激活"整条界面路径 (授权面板、
+    注册表单、使能被拒的提示) 在没有硬件时也能走一遍。
     """
     from litearm.testing import FakeTransport
 
     def factory(port: str) -> Any:
-        return FakeTransport(port=port, timeout=0.2, fw="Litearm1.8.0-7J", n=7)
+        tr = FakeTransport(port=port, timeout=0.2, fw="Litearm1.8.0-7J", n=7)
+        # ⚠ 桩的 `activated` 默认是 True (它模拟的是一台出厂已授权的板子) —— 这里按需翻掉。
+        tr.activated = bool(activated)
+        return tr
 
     return factory
 
@@ -191,6 +198,7 @@ class Session:
     """单臂会话 —— 线程安全 (状态用一把 `RLock` 圈住)。"""
 
     def __init__(self, *, port: Optional[str] = None, fake: bool = False,
+                 fake_activated: bool = True,
                  port_finder: Optional[Callable[[], Optional[str]]] = None,
                  poll_period: float = POLL_PERIOD_S,
                  state_push_interval: float = STATE_PUSH_INTERVAL_S,
@@ -205,6 +213,9 @@ class Session:
         #: ⚠ `--port` 只是**覆盖**自动发现 (计划 2 节「设备发现」), 所以这里允许 None。
         self._port = port or None
         self._fake = bool(fake)
+        #: `--fake` 下假设备是不是"已激活的那台"。False = 未激活 (界面能看到注册表单)。
+        #: 只在 `--fake` 下有意义; 命令行那边会拒掉"给了它却没给 --fake"的组合。
+        self._fake_activated = bool(fake_activated)
         self._port_finder = port_finder or find_cdc_port
         self._poll_period = float(poll_period)
         self._state_push_interval = float(state_push_interval)
@@ -395,7 +406,8 @@ class Session:
 
     def _dial(self, target: str) -> Arm:
         """按端口建一条链路 —— `connect()` 与断线自愈**共用**的唯一构造点。"""
-        factory = build_fake_transport_factory() if self._fake else None
+        factory = (build_fake_transport_factory(activated=self._fake_activated)
+                   if self._fake else None)
         return Arm(port=target, transport_factory=factory).connect()
 
     def _commit_link(self, arm: Arm, target: str, gen: int) -> bool:

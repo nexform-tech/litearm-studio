@@ -194,6 +194,20 @@ pytest daemon/tests -q
 - **服务端记录来源 IP**，客户端不采集也不上报内网地址/主机名。
 - 契约（请求体、应答、错误码、凭据文件格式）见 [`../docs/ACTIVATION.md`](../docs/ACTIVATION.md)。
 
+### 没有硬件也要能看到界面
+
+```bash
+litearm-studio-daemon --fake --fake-unactivated
+```
+
+`--fake` 起的是**已激活**的假设备（只显示授权状态，不出表单）；`--fake-unactivated` 把它
+翻成未激活的那台，于是注册表单、同意勾选、请求预览、以及按「使能」时固件回的那句
+`ERR{0x10,0x08}` 都能在没有机械臂的情况下走一遍。`--fake-unactivated` 只在 `--fake` 下
+有意义，命令行会拒掉单独使用它。
+
+「导入凭据文件」那条路在假设备上可以真的跑完 —— 桩不验签名（它没有密钥）。README 里有一份
+可以直接用的假凭据。
+
 ## 对计划文档的偏离与补充
 
 1. **`version` 写成 `0.0.0+semantic-release`**，而非规范原文的 `0.0.0-semantic-release`。

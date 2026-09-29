@@ -64,9 +64,24 @@ pip install -e "daemon[test]"     # installs fastapi/uvicorn and the `litearm-st
 pnpm install && pnpm build         # build the UI the daemon will serve
 
 litearm-studio-daemon --fake       # offline: full session on the SDK's fake transport, no hardware
+# litearm-studio-daemon --fake --fake-unactivated   # no hardware, and the device is UNLICENSED:
+#                                                   # the activation panel and its signup form show up
 # litearm-studio-daemon            # real arm: auto-discovers the USB CDC device
 # litearm-studio-daemon --port /dev/ttyACM1 --http-port 9000 --no-open
 ```
+
+The fake device is licensed by default, so the activation panel shows a state and no form.
+Add `--fake-unactivated` to walk the whole unlicensed path: the signup form, the consent boxes,
+the request preview, and the `ERR{0x10,0x08}` refusal when you press Enable. The offline activation
+path (`Import a license file`) can be completed end to end — write a file like the one below and
+import it:
+
+```json
+{"format":1,"uid":"101112131415161718191a1b","cust_id":1042,"issued":20260929,"flags":0,"mac":"00112233445566778899aabbccddeeff"}
+```
+
+That is a **fake** credential for the fake device: the stub does not verify the tag and a real
+board would reject it. Never ship it to a customer.
 
 The console prints the URL it bound to (default `http://127.0.0.1:8765/`, auto-incrementing if busy) and opens a window.
 

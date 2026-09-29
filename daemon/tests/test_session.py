@@ -1090,3 +1090,44 @@ def test_activate_says_so_when_the_service_is_not_configured() -> None:
         assert ei.value.reason == "unconfigured"
     finally:
         s.close()
+
+
+def test_fake_unactivated_transport_reports_an_unlicensed_bench_device() -> None:
+    """`--fake-unactivated` 的落点: 假设备是**未激活**的那台。
+
+    没有硬件时这是唯一能看到授权面板与注册表单的办法 (桩默认是"已授权的板子")。
+    """
+    arm = Arm(port="fake", transport_factory=build_fake_transport_factory(activated=False))
+    try:
+        arm.connect()
+        lic = arm.license()
+        # 未激活也回 UID —— 表单要靠它。
+        assert lic.activated is False and lic.state == 0 and len(lic.uid_hex) == 24
+        # 使能被拒的是**授权那条码**, 与真机一致 (这样"未激活"的提示也能顺带验)。
+        with pytest.raises(litearm.CommandRejectedError) as ei:
+            arm.enable()
+        assert (ei.value.cmd, ei.value.code) == (0x10, 0x08)
+    finally:
+        arm.close()
+
+
+def test_fake_transport_is_activated_by_default() -> None:
+    """默认不变: `--fake` 起来的是一台已授权的板子 (授权面板只显示状态, 不出表单)。"""
+    arm = Arm(port="fake", transport_factory=build_fake_transport_factory())
+    try:
+        arm.connect()
+        assert arm.license().activated is True
+    finally:
+        arm.close()
+
+
+def test_fake_unactivated_session_exposes_the_form_path() -> None:
+    s = Session(fake=True, fake_activated=False, poll_period=0.05, state_push_interval=0.05)
+    try:
+        assert s.connect() is True
+        assert _wait(lambda: s.connected), f"假会话没连上: {s.arm_info()}"
+        info = s.execute("license", {})
+        assert info["activated"] is False and info["state"] == 0
+        assert len(info["uid"]) == 24
+    finally:
+        s.close()

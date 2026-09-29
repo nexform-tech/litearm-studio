@@ -481,3 +481,16 @@ def test_cli_fake_flag_and_port_override() -> None:
     assert args.fake is True
     assert args.port == "/dev/ttyACM9"
     assert args.no_open is True
+
+
+def test_cli_fake_unactivated_requires_fake(capsys) -> None:
+    """组合无意义就明确报错: 用户以为"未激活的假设备"起来了, 实际会去连真硬件。"""
+    assert main(["--fake-unactivated"]) == 2
+    assert "--fake" in capsys.readouterr().err
+
+
+def test_cli_fake_unactivated_parses_with_fake() -> None:
+    args = build_parser().parse_args(["--fake", "--fake-unactivated"])
+    assert args.fake is True and args.fake_activated is False
+    # 默认仍是"已激活的假设备" —— 不给开关就不改变老行为。
+    assert build_parser().parse_args(["--fake"]).fake_activated is True
