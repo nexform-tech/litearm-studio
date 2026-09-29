@@ -79,6 +79,8 @@ export function SoloConsole() {
         <StopButton inert={simMode} />
         <MetricsPanel
           metrics={vm.metricSeries}
+          activeMetric={vm.activeMetric}
+          selectMetric={vm.selectMetric}
           pauseLabel={vm.pauseLabel}
           togglePause={vm.togglePause}
           series={vm.series}

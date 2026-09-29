@@ -23,11 +23,14 @@ export function SegmentedControl({
   containerStyle,
   itemStyle,
   activeItemStyle,
+  ariaLabel,
 }: {
   items: SegItem[]
   containerStyle: CSSProperties
   itemStyle: CSSProperties
   activeItemStyle?: CSSProperties
+  /** 组的可访问名称（`aria-label`）；没有可见标题的组必须给一个。 */
+  ariaLabel?: string
 }) {
   const activeKey = items.find((it) => it.active)?.key
 
@@ -35,6 +38,7 @@ export function SegmentedControl({
     <ToggleGroupPrimitive.Root
       type="single"
       value={activeKey}
+      aria-label={ariaLabel}
       onValueChange={(key) => {
         if (!key) return
         items.find((it) => it.key === key)?.onClick()

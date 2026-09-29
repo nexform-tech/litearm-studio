@@ -100,18 +100,16 @@ Displays real-time joint and end-effector pose readings:
 - Joint Space: Real-time angles for all seven axes J1–J7 (rad);
 - Cartesian Space: Tool Center Point (TCP) spatial coordinates (`X, Y, Z` in meters) and Euler angles (`Roll, Pitch, Yaw` in radians) relative to the base coordinate frame.
 
-### 3.3 Live Telemetry Charts
+### 3.3 Live Telemetry Curve
 
-Provides real-time waveforms to monitor joint states and physical metrics:
+Shows one real-time waveform at a time; you pick which metric it plots:
 
-![Telemetry Charts](images/en/06_solo_telemetry.png)
+![Telemetry Curve](images/en/06_solo_telemetry.png)
 
-- Monitoring Channels:
-  - Temperature (°C): Driver temperature per axis;
-  - Velocity (rad/s): Rotational angular velocity per joint;
-  - Torque (Nm): Output torque per joint;
-  - Tracking Error (rad): Deviation between target and actual joint angles;
+- Metric Tabs: Switch between Temperature (°C), Velocity (rad/s), Torque (Nm), and Tracking Error (rad). The panel draws only the selected metric, at full height — the right column is not tall enough for four readable charts.
+- Remembered Choice: The selected metric is restored the next time you open the control page; temperature is the default.
 - Channel Filters: Select or deselect J1–J7 curves individually, with "Select All", "Clear", and "Pause/Resume" controls.
+- Current Readings: The J1–J7 numbers next to the metric name are the latest sample for the selected metric. Tracking error reads "no real-time data" because the controller broadcast does not carry it.
 
 ---
 
