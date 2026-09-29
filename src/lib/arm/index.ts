@@ -1,8 +1,11 @@
 export { armClient, normalizeLicense } from './client'
 export type {
+  ActivationContact,
+  ActivationRequest,
   ArmCommandError,
   ConnInfo,
   ConnectionStatus,
+  HelloInfo,
   JointParams,
   LicenseRecord,
   LicenseSnapshot,

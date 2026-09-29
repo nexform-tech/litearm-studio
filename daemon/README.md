@@ -175,6 +175,25 @@ pytest daemon/tests -q
 
 全部用例跑在 `litearm.testing.FakeTransport` 上，**不需要硬件，也不会碰串口**。
 
+## 激活（唯一出网的功能）
+
+设备的授权记录（是否已激活 + 设备 UID）由 `license` 命令**只读**取回，界面显示在
+「设置 → 授权激活」。写入授权有两条路，都由 `activate` 系列命令完成：
+
+| 命令 | 出网 | 说明 |
+| --- | --- | --- |
+| `license` | 否 | 读授权记录。未激活是**状态**不是错误 |
+| `activate` | **是** | 把注册信息（姓名/单位/邮箱/电话 + 同意标记）连同设备 UID POST 给激活服务，拿回本机凭据并写进设备 |
+| `import_license` | 否 | 用户手动导入 `lic.json`。没外网的现场走这条 |
+
+- 地址：`--activation-url` 或环境变量 `LITEARM_ACTIVATION_URL`，默认
+  `https://act.nexform.tech`；传空字符串 = 不提供在线激活（界面会明说，并引导到导入那条路）。
+- **本进程只有这一处出网**（`activation.py`）。它**不上报**任何东西：请求体由用户在界面上
+  逐字看过（"将要发送的内容"），同意由用户在界面上勾选 —— 而**门禁判在这里**，因为界面
+  的禁用按钮挡不住直连 WebSocket 的客户端。
+- **服务端记录来源 IP**，客户端不采集也不上报内网地址/主机名。
+- 契约（请求体、应答、错误码、凭据文件格式）见 [`../docs/ACTIVATION.md`](../docs/ACTIVATION.md)。
+
 ## 对计划文档的偏离与补充
 
 1. **`version` 写成 `0.0.0+semantic-release`**，而非规范原文的 `0.0.0-semantic-release`。

@@ -12,6 +12,7 @@ import litearm
 import pytest
 from litearm import Arm
 
+from litearm_studio_daemon import activation
 from litearm_studio_daemon.errors import (
     MotionBusyError,
     NotConnectedCommandError,
@@ -983,3 +984,109 @@ def test_license_lets_a_real_link_failure_propagate(
     monkeypatch.setattr(fake_session._arm, "license", _dead)
     with pytest.raises(litearm.TransportError):
         fake_session.execute("license", {})
+
+
+# ------------------------------------------------- 激活 (在线领凭据 / 手动导入)
+
+LICENSE_DOC = {"format": 1, "uid": "101112131415161718191a1b", "cust_id": 1042,
+               "issued": 20260929, "flags": 0, "mac": "00112233445566778899aabbccddeeff"}
+
+
+def _payload(**over):
+    doc = {
+        "uid": LICENSE_DOC["uid"],
+        "contact": {"name": "张三", "organization": "某大学",
+                    "email": "z@example.com", "phone": ""},
+        "consent": {"required": True, "diagnostics": False},
+    }
+    doc.update(over)
+    return doc
+
+
+def _unlicensed(session: Session):
+    """把假设备变成"未激活" —— 激活这条路上的起点。"""
+    session._arm._tr.activated = False
+    return session._arm._tr
+
+
+def test_import_license_writes_the_credential_and_confirms_by_read_back(
+        fake_session: Session) -> None:
+    """手动导入那条路: 不联网, 直接把文件写进设备, 再**回读**当落位证据。"""
+    tr = _unlicensed(fake_session)
+    rec = fake_session.execute("import_license", {"license": LICENSE_DOC})
+    assert rec["supported"] is True and rec["activated"] is True
+    assert (rec["custId"], rec["issued"]) == (1042, 20260929)
+    assert (tr.license_cust_id, tr.license_issued) == (1042, 20260929)
+
+
+def test_import_license_refuses_a_file_for_another_machine(fake_session: Session) -> None:
+    tr = _unlicensed(fake_session)
+    with pytest.raises(activation.LicenseFileError) as ei:
+        fake_session.execute("import_license",
+                             {"license": {**LICENSE_DOC, "uid": "ff" * 12}})
+    assert ei.value.reason == "uid_mismatch"
+    assert tr.activated is False, "机器不匹配却把凭据写进去了"
+
+
+def test_import_license_rejects_a_file_that_is_not_json(fake_session: Session) -> None:
+    with pytest.raises(activation.LicenseFileError) as ei:
+        fake_session.execute("import_license", {"license": "这不是凭据"})
+    assert ei.value.reason == "not_json"
+
+
+def test_activate_posts_the_consented_request_then_writes_the_credential(
+        fake_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    tr = _unlicensed(fake_session)
+    seen: dict = {}
+
+    def fake_post(base_url, request, *, expected_uid=None, **_kw):
+        seen.update(url=base_url, request=request, uid=expected_uid)
+        return activation.parse_license(LICENSE_DOC)
+
+    monkeypatch.setattr(activation, "request_license", fake_post)
+    rec = fake_session.execute("activate", _payload())
+
+    assert seen["url"] == activation.DEFAULT_ACTIVATION_URL
+    assert seen["request"]["consent"]["required"] is True
+    assert seen["request"]["contact"]["organization"] == "某大学"
+    # 期望 UID 取自**设备**, 不是客户端填的那个。
+    assert seen["uid"] == LICENSE_DOC["uid"]
+    assert rec["activated"] is True
+    assert tr.license_cust_id == 1042
+
+
+def test_activate_refuses_without_consent_before_any_request(
+        fake_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    """同意是硬门禁: 未勾选时**一个请求都不发**。"""
+    called: list = []
+    monkeypatch.setattr(activation, "request_license",
+                        lambda *a, **k: called.append(1))
+    p = _payload()
+    p.pop("consent")
+    with pytest.raises(activation.ActivationError) as ei:
+        fake_session.execute("activate", p)
+    assert ei.value.reason == "consent_required"
+    assert called == []
+
+
+def test_activate_refuses_a_uid_that_is_not_this_machine(
+        fake_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(activation, "request_license",
+                        lambda *a, **k: pytest.fail("不该发请求"))
+    with pytest.raises(activation.ActivationError) as ei:
+        fake_session.execute("activate", _payload(uid="ff" * 12))
+    assert ei.value.reason == "uid_mismatch"
+
+
+def test_activate_says_so_when_the_service_is_not_configured() -> None:
+    """未配置地址时当场说清, 而不是转圈等超时。"""
+    s = Session(fake=True, activation_url="", poll_period=0.05, state_push_interval=0.05)
+    try:
+        assert s.connect() is True
+        assert _wait(lambda: s.connected), f"假会话没连上: {s.arm_info()}"
+        _unlicensed(s)
+        with pytest.raises(activation.ActivationError) as ei:
+            s.execute("activate", _payload())
+        assert ei.value.reason == "unconfigured"
+    finally:
+        s.close()

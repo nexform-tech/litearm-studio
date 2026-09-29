@@ -37,6 +37,7 @@ import litearm
 from litearm import Arm
 
 from . import statemap
+from . import activation
 from .errors import MotionBusyError, NotConnectedCommandError, UnknownCommandError
 
 log = logging.getLogger("litearm_studio_daemon.session")
@@ -150,6 +151,11 @@ COMMANDS: Dict[str, str] = {
     # ---- 授权/激活 (只读那一半; 提交凭据要等凭据格式定稿, 见 docs/ACTIVATION.md) ----
     "license": "读设备授权记录: 是否已激活 + 设备 UID (arm.license) —— "
                "**未激活是一种状态, 不是错误**",
+    # ---- 激活 (写入; 两条路: 在线领凭据 / 手动导入凭据文件) ----
+    "activate": "把注册信息提交给激活服务, 拿回本机凭据并写入设备 "
+                "(唯一出网的一条命令; 须失能态)",
+    "import_license": "用凭据文件 (lic.json) 激活, **不联网** —— 没外网的现场走这条 "
+                      "(须失能态)",
 }
 
 
@@ -193,6 +199,7 @@ class Session:
                  reconnect_period: float = RECONNECT_PERIOD_S,
                  reconnect_window: float = RECONNECT_WINDOW_S,
                  disable_on_exit: bool = True,
+                 activation_url: str = activation.DEFAULT_ACTIVATION_URL,
                  sdk_version: str = litearm.__version__) -> None:
         #: 构造时给的端口 —— 空 = 连接时用 `port_finder` (= SDK `find_cdc_port`) 自动发现。
         #: ⚠ `--port` 只是**覆盖**自动发现 (计划 2 节「设备发现」), 所以这里允许 None。
@@ -209,6 +216,9 @@ class Session:
         self._reconnect_window = float(reconnect_window)
         #: 退出时是否降能量 —— 见 `close()` 与 `_deenergize()`。**产品策略**, 默认开。
         self._disable_on_exit = bool(disable_on_exit)
+        #: 激活服务地址 (见 `activation.py`)。空 = 未配置: 在线激活会当场说清, 而不是
+        #: 转圈等超时; 手动导入凭据那条路不受它影响。
+        self._activation_url = (activation_url or "").strip()
         self.sdk_version = sdk_version
 
         self._lock = threading.RLock()
@@ -956,6 +966,21 @@ class Session:
                 return statemap.jsonable(arm.diag.kin_bench().value)
             if m == "license":
                 return _license_dict(arm)
+            if m == "activate":
+                # ⚠ 唯一出网的一条命令 (见 activation.py 的模块说明)。
+                request = activation.build_request(p)
+                device_uid = _device_uid(arm)
+                if device_uid is not None and device_uid != request["uid"]:
+                    raise activation.ActivationError(
+                        "uid_mismatch",
+                        f"提交的 UID ({request['uid']}) 不是当前这台机器 ({device_uid})")
+                return _submit_license(arm, activation.request_license(
+                    self._activation_url, request,
+                    expected_uid=device_uid or request["uid"]))
+            if m == "import_license":
+                # 没外网的现场走这条: 用户在网站上下载 lic.json, 在这里导入。
+                return _submit_license(arm, activation.parse_license(
+                    p.get("license"), expected_uid=_device_uid(arm)))
             # 白名单与实现**各写一遍**是刻意的: 只在准入处查表的话, 表里加一条而忘了
             # 实现会静默返回 None (前端看到"成功"却什么都没发生)。
             raise UnknownCommandError(m, sorted(COMMANDS))
@@ -1079,6 +1104,27 @@ def _vector(v: Any, n: int, key: str) -> List[float]:
             raise ValueError(f"{key} 需 {n} 个数值")
         out.append(float(x))
     return out
+
+
+def _device_uid(arm: Arm) -> Optional[str]:
+    """当前设备的 UID; 读不到 (固件太旧 / 本次无应答) 时 `None`。
+
+    ⚠ 读不到**不等于**不能激活: 固件要么会拒, 要么本来就没有授权功能。所以调用方在
+    `None` 时降级为"不核对机器", 由固件自己去拒一份不属于本机的凭据 (它会回 `0x3F/0x02`)。
+    """
+    state = _license_dict(arm)
+    return state["uid"] if state.get("supported") is True else None
+
+
+def _submit_license(arm: Arm, lic: dict) -> dict:
+    """把凭据写进设备, 然后**回读确认** —— 成功的 `ACK` 只说明固件答应了。
+
+    回读是这一步唯一的"落位证据" (与 SDK `Arm.activate()` 同一口径)。返回规范化后的
+    授权记录, 界面拿到就能直接刷新, 不用再单独查一次。
+    """
+    arm.activate(cust_id=lic["cust_id"], issued=lic["issued"],
+                 flags=lic["flags"], mac=lic["mac"])
+    return _license_dict(arm)
 
 
 def _license_dict(arm: Arm) -> dict:

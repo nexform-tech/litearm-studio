@@ -48,6 +48,11 @@ def error_to_dict(exc: BaseException, method: Optional[str] = None) -> dict:
         if isinstance(val, bool) or not isinstance(val, int):
             continue
         out[name] = int(val)
+    # 激活那条路上的错误还带一个**短码** (`reason`): 界面靠它选文案 —— 而文案要分中英文,
+    # 所以不能拿 `msg` 当判据 (那是守护进程写的中文)。见 `activation.py`。
+    reason = getattr(exc, "reason", None)
+    if isinstance(reason, str) and reason:
+        out["reason"] = reason
     return out
 
 

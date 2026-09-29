@@ -13,6 +13,17 @@ export type ConnInfo = {
   error: string | null
 }
 
+/**
+ * daemon `hello` 帧的版本信息。
+ *
+ * ⚠ 它只在**握手时**来一条，所以必须自己存下来 —— 激活时要把它随诊断信息一起发给服务端，
+ * 而那时早就过了握手那一刻。
+ */
+export type HelloInfo = {
+  daemon: string
+  sdk: string
+}
+
 /** daemon `state` 帧归一化后的机械臂状态（计划 3.3）。 */
 export type RobotState = {
   q: number[]
@@ -68,6 +79,36 @@ export type LicenseRecord = {
  *              于是等满 1s 抛超时（见 daemon `session._license_dict` 的说明）。
  */
 export type LicenseSnapshot = LicenseRecord | { supported: false } | { supported: null }
+
+/** 谁在申请这把授权 —— 会随设备 UID 一起发给激活服务。 */
+export type ActivationContact = {
+  name: string
+  organization: string
+  email: string
+  phone: string
+}
+
+/**
+ * 提交给激活服务的请求体。
+ *
+ * ⚠ 这个对象会被界面**逐字**渲染给用户看（"将要发送的内容"），所以：字段增减必须同时
+ * 改界面文案，不许在这里偷偷加东西。内网地址/主机名**刻意不采集** —— IP 由服务端在
+ * 收到请求时自己记，比客户端自报可信。
+ */
+export type ActivationRequest = {
+  uid: string
+  contact: ActivationContact
+  /**
+   * `required: false` 的请求会被本地程序**当场拒**（`consent_required`）—— 同意是硬门禁，
+   * 判在守护进程那一层，界面上的按钮禁用只是方便。所以这里刻意不写成字面量 `true`：
+   * 预览要能如实显示"没勾选时的内容长什么样"。
+   */
+  consent: { required: boolean; diagnostics: boolean }
+  /** 只在勾了"诊断信息"时才带 —— 版本号这类环境信息。 */
+  diagnostics?: { studio: string; sdk: string; firmware: string }
+  /** 预留：订单号/激活码那一层。今天界面上没有这个输入框。 */
+  code?: string
+}
 
 /** `get_joint_params` 单轴参数（键名与 SDK 一致，snake_case）。 */
 export type JointParams = {
@@ -181,6 +222,9 @@ export class ArmClient {
   private stateFastListeners = new Set<Listener>()
   private motionListeners = new Set<Listener>()
 
+  /** `hello` 帧只来一条，存下来供激活时填写诊断信息（见 `versions`）。 */
+  private _hello: HelloInfo | null = null
+
   /** 共用的 daemon socket。默认自建一条，`armClient` 用默认值；夹爪注入同一条。 */
   readonly socket: DaemonSocket
 
@@ -191,6 +235,7 @@ export class ArmClient {
       this.socket.sendFrame({ t: 'connect' })
     })
     this.socket.onFrame('conn', (msg) => this._applyConn(msg))
+    this.socket.onFrame('hello', (msg) => this._applyHello(msg))
     this.socket.onFrame('state', (msg) => this._applyState(msg.state as RobotState | null | undefined))
     this.socket.onLifecycle((s) => {
       if (s === 'connecting' || s === 'reconnecting' || s === 'error' || s === 'disconnected') {
@@ -216,6 +261,16 @@ export class ArmClient {
   }
   get lastError() {
     return this.socket.lastError
+  }
+
+  /**
+   * daemon 的版本信息（`hello` 帧）。
+   *
+   * ⚠ 只存不推：它一个进程生命周期里只有一条，没有订阅价值 —— 需要它的地方（激活时的
+   * 诊断信息）在用到的那一刻现读。
+   */
+  get versions(): HelloInfo | null {
+    return this._hello
   }
 
   /** True while a motion command (home/movej/movel) is in flight. */
@@ -354,10 +409,34 @@ export class ArmClient {
    *
    * ⚠ **未激活不是错误**：`activated === false` 是正常返回值 —— 未激活的臂除 ENABLE 外
    * 一切照常。只有真读不到时才由 `supported` 表达（见 `LicenseSnapshot`）。
-   * 提交凭据（`0x3F`）不在这里：凭据格式还没定稿，见 `docs/ACTIVATION.md`。
    */
   async license(): Promise<LicenseSnapshot> {
     return normalizeLicense(await this._sendCmd('license'))
+  }
+
+  /**
+   * 把注册信息提交给激活服务, 拿回本机凭据并写进设备 —— **全应用唯一出网的一条命令**。
+   *
+   * 请求体由界面逐字展示给用户看（见 `ActivationForm` 的"将要发送的内容"），所以这里
+   * **不加任何字段**：界面上没显示的东西，不许偷偷发出去。
+   *
+   * ⚠ 设备必须**失能**：固件要求写授权记录时电机不在无监督下保持使能（会回 `0x3F/0x04`）。
+   * 本地程序**不代劳** `disable()` —— 什么时候可以下电是操作员的决定。
+   *
+   * 返回的是**写入后回读**的授权记录（成功的 ACK 只说明固件答应了）。
+   */
+  async activate(request: ActivationRequest): Promise<LicenseSnapshot> {
+    return normalizeLicense(await this._sendCmd('activate', { ...request }))
+  }
+
+  /**
+   * 用凭据文件（`lic.json` 解析后的对象）激活 —— **不联网**。
+   *
+   * 没外网的台架走这条：在网站上下载文件，拖进来。文件的格式校验和"是不是这台机器的"
+   * 都在本地程序那一层判（它才知道当前设备的 UID）。
+   */
+  async importLicense(license: Record<string, unknown>): Promise<LicenseSnapshot> {
+    return normalizeLicense(await this._sendCmd('import_license', { license }))
   }
 
   // ───────────────── 参数 / 标定 / 自检（设置页用，计划 §5「直接接线」） ─────────────────
@@ -447,6 +526,13 @@ export class ArmClient {
   }
 
   // ─────────────────────────── 内部实现 ───────────────────────────
+
+  private _applyHello(msg: Record<string, unknown>) {
+    this._hello = {
+      daemon: typeof msg.daemon === 'string' ? msg.daemon : '',
+      sdk: typeof msg.sdk === 'string' ? msg.sdk : '',
+    }
+  }
 
   private _applyConn(msg: Record<string, unknown>) {
     const conn: ConnInfo = {

@@ -115,6 +115,8 @@ litearm-python  ──USB CDC (1d50:606f @921600)──>  STM32  ──CAN──
 | `get_ff_vec` / `get_ff_scalar` | 同名 | 读回，与上一组构成写→读回闭环 |
 | `kin_bench` | `arm.diag.kin_bench()` | 固件自检 + 链路诊断计数 |
 | `license` | `arm.license()` | 只读：授权状态 + 设备 UID（**未激活是状态不是错误**；契约见 [ACTIVATION.md](ACTIVATION.md)） |
+| `activate` | 激活服务 + `arm.activate()` | 提交注册信息换取本机凭据并写入设备（**唯一出网的一条**，须失能态） |
+| `import_license` | `arm.activate()` | 手动导入凭据文件，**不联网**（没外网的现场走这条） |
 
 ### 3.3 状态字段
 
@@ -245,7 +247,7 @@ mode==ZERO_G(7) 或 zero_g 会话激活    → 'zero_gravity'
 
 ## 6. 不在本次范围
 
-多臂支持；遥操；VR；轨迹拖拽示教与回放；「控制器日志」页；安装器签名与自动更新；固件升级（DFU）；授权凭据的**提交**（只读的授权状态面板已做，提交等凭据格式定稿，见 [ACTIVATION.md](ACTIVATION.md)）。
+多臂支持；遥操；VR；轨迹拖拽示教与回放；「控制器日志」页；安装器签名与自动更新；固件升级（DFU）；激活服务站点本身（`act.nexform.tech` 是另一个项目，本仓只做客户端，契约见 [ACTIVATION.md](ACTIVATION.md)）。
 
 ---
 

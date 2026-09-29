@@ -6,7 +6,9 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import type { LicenseRecord } from '@/lib/arm'
+import { useArmConnection, useArmState } from '@/lib/arm'
 import { useActivation } from './useActivation'
+import { ActivationForm } from './ActivationForm'
 
 type BadgeVariant = 'success' | 'outline' | 'destructive'
 
@@ -44,8 +46,14 @@ function formatIssued(issued: number): string {
 export function ActivationSection() {
   const { t } = useTranslation(['common', 'settings'])
   const vm = useActivation()
+  const armState = useArmState()
+  const { conn } = useArmConnection()
+  const firmware = conn?.firmware ?? ''
   const snapshot = vm.snapshot
   const record: LicenseRecord | null = snapshot?.supported === true ? snapshot : null
+  // ⚠ 固件只在**失能**时写授权记录（使能中会回 `0x3F/0x04`）。状态帧还没来时按"可试"处理：
+  // 拿不到状态就不该替用户把按钮锁死，真被拒了固件会说清楚。
+  const disarmed = !(armState?.enabled ?? false)
 
   const copyUid = useCallback(async () => {
     const uid = record?.uid
@@ -170,6 +178,11 @@ export function ActivationSection() {
               <span className="font-mono text-xs text-foreground">{record.ver}</span>
             </Field>
           </div>
+
+          {/* 只有**未激活**时才出表单：已激活的机器不需要注册信息，摆在那儿只会让人误点。 */}
+          {!record.activated ? (
+            <ActivationForm vm={vm} uid={record.uid} firmware={firmware} disarmed={disarmed} />
+          ) : null}
         </>
       ) : (
         <Notice>{t('common:loading')}</Notice>

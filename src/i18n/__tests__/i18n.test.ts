@@ -33,6 +33,11 @@ describe('i18n Internationalization', () => {
     expect(i18n.t('settings:tabs.activation')).toBe('授权激活')
     expect(i18n.t('settings:activation.stateNotActivated')).toBe('未激活')
     expect(i18n.t('common:errors.notActivated')).toContain('未激活')
+    // 注册与同意（激活那一半）：这套文案是给用户签字看的，两种语言都必须存在。
+    expect(i18n.t('settings:activation.formTitle')).toContain('激活')
+    expect(i18n.t('settings:activation.consentRequired')).toContain('同意')
+    expect(i18n.t('settings:activation.consentNote')).toContain('IP')
+    expect(i18n.t('common:errors.activationUnreachable')).toContain('激活服务')
   })
 
   it('switches to English (en) and returns corresponding keys', async () => {
@@ -62,6 +67,8 @@ describe('i18n Internationalization', () => {
     expect(i18n.t('settings:tabs.activation')).toBe('Activation')
     expect(i18n.t('settings:activation.stateNotActivated')).toBe('Not activated')
     expect(i18n.t('common:errors.notActivated')).toContain('not activated')
+    expect(i18n.t('settings:activation.consentRequired')).toContain('agree')
+    expect(i18n.t('common:errors.activationUnreachable')).toContain('activation service')
   })
 
   it('updates document.documentElement.lang on language change', async () => {

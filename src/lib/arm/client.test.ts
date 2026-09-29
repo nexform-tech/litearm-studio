@@ -59,6 +59,13 @@ class FakeWebSocket {
 
 const { ArmClient } = await import('./client')
 
+/** 激活请求体 —— 前端**逐字**展示给用户看，所以这里也逐字比对。 */
+const ACTIVATION_REQUEST = {
+  uid: '101112131415161718191a1b',
+  contact: { name: '张三', organization: '某大学', email: 'z@example.com', phone: '' },
+  consent: { required: true, diagnostics: false },
+}
+
 /** 建一个已通过 WS 握手、daemon 报 connected 的客户端。 */
 function connectedClient() {
   const client = new ArmClient()
@@ -277,6 +284,47 @@ describe('ArmClient (daemon WebSocket)', () => {
     const f3 = ws.lastFrame('cmd')!
     ws.receive({ t: 'res', id: f3.id, ok: true, v: { uid: 'aa' } })
     await expect(garbage).resolves.toEqual({ supported: null })
+  })
+
+  it('activate() sends the request body verbatim and returns the read-back record', async () => {
+    const { client, ws } = connectedClient()
+    const promise = client.activate(ACTIVATION_REQUEST)
+    const frame = ws.lastFrame('cmd')!
+    // ⚠ `p` 就是界面展示给用户看的那个对象，**一个字段都不许多**。
+    expect(frame).toEqual({ t: 'cmd', id: frame.id, m: 'activate', p: ACTIVATION_REQUEST })
+
+    ws.receive({
+      t: 'res',
+      id: frame.id,
+      ok: true,
+      v: { supported: true, state: 1, stateName: 'activated', activated: true,
+           factoryMode: false, ver: 1, uid: ACTIVATION_REQUEST.uid,
+           custId: 1042, issued: 20260929, flags: 0 },
+    })
+    await expect(promise).resolves.toMatchObject({ supported: true, activated: true, custId: 1042 })
+  })
+
+  it('importLicense() sends the parsed file — the offline path never touches the network', async () => {
+    const { client, ws } = connectedClient()
+    const doc = { format: 1, uid: ACTIVATION_REQUEST.uid, cust_id: 1042, issued: 20260929,
+                  flags: 0, mac: '00'.repeat(16) }
+    const promise = client.importLicense(doc)
+    const frame = ws.lastFrame('cmd')!
+    expect(frame).toMatchObject({ m: 'import_license', p: { license: doc } })
+    ws.receive({
+      t: 'res',
+      id: frame.id,
+      ok: true,
+      v: { supported: true, state: 1, stateName: 'activated', activated: true,
+           factoryMode: false, ver: 1, uid: doc.uid, custId: 1042, issued: 20260929, flags: 0 },
+    })
+    await expect(promise).resolves.toMatchObject({ activated: true })
+  })
+
+  it('keeps the hello versions — the activation request carries them as diagnostics', () => {
+    const { client } = connectedClient()
+    // hello 帧只在握手时来一条；激活发生在很久之后，所以要能一直读到它。
+    expect(client.versions).toEqual({ daemon: '0.1.0', sdk: '2.1.0' })
   })
 
   it('rejects commands while the socket is not open', async () => {

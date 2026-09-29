@@ -108,3 +108,48 @@ describe('formatArmError (daemon err.kind → i18n)', () => {
     expect(formatArmError('')).toBe('')
   })
 })
+
+describe('formatArmError (activation reasons)', () => {
+  it('explains activation failures by short code, never by the daemon wording', async () => {
+    // ⚠ 本地程序写的 msg 是中文；英文界面上必须换一句话，所以判据只能是 `reason`。
+    const err = (reason: string) =>
+      daemonErr('ActivationError', '连不上激活服务: Name or service not known', { reason, method: 'activate' })
+
+    await i18n.changeLanguage('zh')
+    expect(formatArmError(err('unreachable'))).toContain('网络')
+    expect(formatArmError(err('not_found'))).toContain('设备 UID')
+    expect(formatArmError(err('consent_required'))).toContain('勾选')
+    expect(formatArmError(err('unconfigured'))).toContain('--activation-url')
+
+    await i18n.changeLanguage('en')
+    const en = formatArmError(err('unreachable'))
+    expect(en).toContain('network')
+    // 中文那句**不许**被拼进英文句子（那是最容易漏的一种串台）。
+    expect(en).not.toContain('连不上')
+
+    await i18n.changeLanguage('zh')
+  })
+
+  it('names what to do with a bad licence file', async () => {
+    await i18n.changeLanguage('zh')
+    const file = (reason: string) => daemonErr('LicenseFileError', '凭据文件缺 mac 字段', { reason })
+    expect(formatArmError(file('uid_mismatch'))).toContain('不是当前这台机器')
+    expect(formatArmError(file('unsupported_format'))).toContain('升级上位机')
+    // 缺字段/不是 JSON 归成"换一份文件"这一个动作。
+    expect(formatArmError(file('missing_field'))).toContain('lic.json')
+    expect(formatArmError(file('not_json'))).toContain('lic.json')
+
+    await i18n.changeLanguage('en')
+    expect(formatArmError(file('unsupported_format'))).toContain('upgrade')
+    await i18n.changeLanguage('zh')
+  })
+
+  it('falls back to the generic activation text for an unknown reason', async () => {
+    await i18n.changeLanguage('zh')
+    const text = formatArmError(daemonErr('ActivationError', '出错了', { reason: 'brand_new' }))
+    // 认不出的短码不许静默变成空串 —— 那会让界面上什么都不显示。
+    expect(text).not.toBe('')
+    expect(text).toMatch(/激活|凭据/)
+    await i18n.changeLanguage('zh')
+  })
+})

@@ -8,9 +8,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import sys
 from typing import List, Optional
 
+from . import activation
 from .server import _is_loopback, serve
 from .session import Session
 
@@ -44,6 +46,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-can-setup", action="store_true",
                    help="不尝试用 pkexec 拉起 CAN 接口 (接口由你或 systemd 管理时用;"
                         "也用于测试)")
+    p.add_argument("--activation-url", metavar="URL",
+                   default=os.environ.get("LITEARM_ACTIVATION_URL")
+                   or activation.DEFAULT_ACTIVATION_URL,
+                   help="激活服务地址 (默认 %(default)s; 传空字符串 = 不提供在线激活,"
+                        "只能手动导入凭据文件; 也可用环境变量 LITEARM_ACTIVATION_URL)")
     p.add_argument("--verbose", "-v", action="store_true", help="打印调试日志")
     return p
 
@@ -100,7 +107,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 2
     session = Session(port=args.port, fake=args.fake,
                       reconnect=not args.no_reconnect,
-                      disable_on_exit=not args.keep_enabled)
+                      disable_on_exit=not args.keep_enabled,
+                      activation_url=args.activation_url)
     gripper = build_gripper_session(args)
     try:
         asyncio.run(serve(session, gripper=gripper, host=args.host,

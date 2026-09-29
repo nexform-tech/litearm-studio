@@ -7,6 +7,8 @@ export type DaemonErrorInfo = {
   method?: string
   cmd?: number
   code?: number
+  /** 激活那条路的短码（`activation.py` 的 `ActivationError.reason` / `LicenseFileError.reason`）。 */
+  reason?: string
 }
 
 /** daemon 回传的 `err.kind` → i18n key（common:errors.*）。 */
@@ -29,6 +31,34 @@ const KIND_KEYS: Record<string, string> = {
   GripperCalibrationError: 'gripperCalibration',
   GripperEstoppedError: 'gripperEstopped',
   GripperBusyError: 'gripperBusy',
+  // 激活（凭据/注册）。具体原因看 `err.reason`（见下面的 REASON_KEYS）。
+  ActivationError: 'activationFailed',
+  LicenseFileError: 'licenseUnreadable',
+}
+
+/**
+ * `err.reason` → i18n key（激活那条路的短码，契约见 `docs/ACTIVATION.md`）。
+ *
+ * ⚠ 为什么不能拿 `err.msg` 当文案：那是**本地程序**写的中文，英文界面上必须换一句话。
+ * 所以判据只能是短码，不能是那句话本身。
+ */
+const REASON_KEYS: Record<string, string> = {
+  // 服务这一侧
+  unconfigured: 'activationUnconfigured',
+  unreachable: 'activationUnreachable',
+  not_found: 'activationNotFound',
+  rate_limited: 'activationRateLimited',
+  maintenance: 'activationMaintenance',
+  bad_response: 'activationBadResponse',
+  // 这次提交本身不成立
+  consent_required: 'activationConsentRequired',
+  uid_mismatch: 'licenseUidMismatch',
+  // 凭据文件读不出来。缺字段 / 字段不对 / 不是 JSON 归成同一句：用户能做的动作是同一个
+  // —— 换一份文件。只有"格式版本认不出"要单独说（那是要升级上位机，不是换文件）。
+  not_json: 'licenseUnreadable',
+  missing_field: 'licenseUnreadable',
+  bad_field: 'licenseUnreadable',
+  unsupported_format: 'licenseUnsupportedFormat',
 }
 
 /**
@@ -66,6 +96,21 @@ const FALLBACK_ZH: Record<string, string> = {
   gripperBusy: '夹爪正在执行另一项长操作（标定），请等它结束',
   notActivated:
     '这台机械臂尚未激活，固件拒绝使能。请到「设置 → 授权激活」复制设备 UID，向供应商换取授权凭据',
+  activationFailed: '激活失败：请稍后重试，或改用「导入凭据文件」离线激活',
+  activationUnconfigured:
+    '本地程序没有配置激活服务地址：请用 --activation-url 启动，或改用手动导入凭据文件',
+  activationUnreachable:
+    '连不上激活服务：请检查这台机器的网络，或改用「导入凭据文件」离线激活',
+  activationNotFound:
+    '激活服务上没有这台机器的凭据：请把设备 UID 提供给供应商，拿到凭据后再试',
+  activationRateLimited: '激活服务暂时拒绝了本次请求（请求过于频繁）：请过一会儿再试',
+  activationMaintenance: '激活服务正在维护：请稍后重试，或改用「导入凭据文件」离线激活',
+  activationConsentRequired: '请先勾选同意发送注册信息',
+  activationBadResponse: '激活服务的应答不可用：请稍后重试，或改用「导入凭据文件」离线激活',
+  licenseUnreadable: '凭据文件不可用：请确认选的是供应商签发的 lic.json（不是别的东西）',
+  licenseUnsupportedFormat:
+    '凭据文件的格式版本比当前上位机新：请升级上位机，或换一份与它匹配的凭据',
+  licenseUidMismatch: '这份凭据不是当前这台机器的：请用发给本机 UID 的那一份',
   unknownError: '操作失败：{{message}}',
 }
 
@@ -104,9 +149,12 @@ export function formatArmError(err: unknown): string {
 
   const kind = info?.kind
   if (!msg && !kind) return ''
-  // 固件拒绝码**优先于** `kind` 的通用文案：`kind` 只说"被拒了"，码才说清"为什么、
-  // 下一步做什么"。没登记的码落到下面，照旧带原始码回（不静默折叠）。
-  const key = REJECTED_KEYS[`${info?.cmd}:${info?.code}`] ?? (kind ? KIND_KEYS[kind] : undefined)
+  // 判据优先级: 固件拒绝码 > 激活的短码 > 异常类名。
+  // 拒绝码只说"被拒了"的通用情况由类名兜底，短码才说清激活失败在哪一步。
+  const key =
+    REJECTED_KEYS[`${info?.cmd}:${info?.code}`] ??
+    (info?.reason ? REASON_KEYS[info.reason] : undefined) ??
+    (kind ? KIND_KEYS[kind] : undefined)
   if (key) {
     const vars: Record<string, string> = {
       message: msg,

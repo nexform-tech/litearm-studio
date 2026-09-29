@@ -82,19 +82,113 @@ The fix belongs to the SDK (add `echo_cmd` to that `expect` call, in
 litearm-python). When it lands, old firmware will report `supported: false` and no
 longer stall for a second. The daemon already handles both.
 
-## 5. Submitting a credential is not implemented
+## 5. The credential file and the activation service
 
 `CMD_ACTIVATE(0x3F)` takes 28 bytes: `cust_id u32 LE + issued u32 LE + flags u32 LE
 + mac[16]` (two SipHash-2-4 tags). The firmware writes sector 6 on success.
 
-The credential file format is Studio's to define, and it is not settled yet. Until
-it is, the panel offers no submit button: a button that can only fail is worse than
-no button. The open questions are the JSON field names, how the 16-byte tag is
-encoded, whether the signer writes the machine UID into the file (so Studio can
-reject "this credential belongs to another arm" before sending), and whether the
-signer takes a `--flags` argument at all.
+Studio never produces that tag. It gets it from **one of two sources**, and both end
+in the same parser (`daemon/src/litearm_studio_daemon/activation.py`):
 
-## 6. Rules the panel must keep
+1. **The activation service** — `POST https://act.nexform.tech/api/v1/license`
+   (see section 7). Studio sends the operator's registration details plus the
+   device UID and receives the credential file for that board.
+2. **A credential file** the operator imports by hand. This path never touches the
+   network and exists for machines with no internet access.
+
+### The credential file (`lic.json`)
+
+```json
+{
+  "format": 1,
+  "uid": "0a1b2c3d4e5f60718293a4b5",
+  "cust_id": 1042,
+  "issued": 20260929,
+  "flags": 0,
+  "mac": "3f2a91c47d0e5b6812ac4f90de7713b5"
+}
+```
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `format` | int, required | File format version. Currently `1`. An unknown value is **rejected**, never guessed at. |
+| `uid` | string, required | 24 lowercase hex, the same string the operator reads off the device. Studio refuses a file whose `uid` is not the connected arm. |
+| `cust_id` | int, required | Customer number, passed to the firmware unchanged. |
+| `issued` | int, required | Issue date `YYYYMMDD`. Integer on purpose: a date string would drag a parser and a timezone into the wire. |
+| `flags` | int, optional, default 0 | Only bit 0 (factory code) is defined. |
+| `mac` | string, required | 16 bytes as 32 lowercase hex characters. Hex, not base64: it survives being copied through chat apps and spreadsheets. |
+
+Do not add interpretive fields (customer name, notes, expiry). Nothing can verify
+them, and they drift into "the file and the device disagree, which one do I
+believe". The file name carries that information instead
+(`lic-<cust_id>-<first 8 of uid>.json`).
+
+## 6. Registration and the activation service
+
+### The request
+
+`POST <base>/api/v1/license`, `Content-Type: application/json`. `<base>` comes from
+`--activation-url` or `$LITEARM_ACTIVATION_URL` and defaults to
+`https://act.nexform.tech`.
+
+```json
+{
+  "uid": "0a1b2c3d4e5f60718293a4b5",
+  "contact": {
+    "name": "Zhang San",
+    "organization": "Example University",
+    "email": "z@example.com",
+    "phone": ""
+  },
+  "consent": { "required": true, "diagnostics": false, "text_version": "draft-1" },
+  "diagnostics": { "studio": "0.1.0", "sdk": "2.1.0", "firmware": "Litearm1.8.0-7J" },
+  "code": ""
+}
+```
+
+- `contact`: `name`, `organization` and `email` are required; `phone` may be empty.
+  Every value is trimmed and capped at 200 characters.
+- `consent.required: false` is **rejected** by the daemon before any request is
+  sent. The panel disables the button, but the daemon is the gate — a client that
+  talks to the WebSocket directly must not be able to send personal data without
+  consent.
+- `consent.text_version` records **which wording** the operator agreed to.
+- `diagnostics` is present **only** when the operator ticked the optional box. It
+  carries versions, nothing else: LAN addresses and host names are deliberately not
+  collected. The service records the source IP itself.
+- `code` is reserved for an order/activation code. Studio sends it when non-empty;
+  no input for it exists yet. **Decide this before the service goes live**: the UID
+  is printed on the board and readable by anyone with the machine, so without a
+  second factor "has the machine" equals "can self-activate".
+
+### The response
+
+`200` with the credential file from section 5 as the body.
+
+Any other status must carry:
+
+```json
+{ "error": { "code": "not_found", "message": "no license for this UID" } }
+```
+
+`code` maps to what the operator is told. Known values: `not_found`,
+`invalid_uid`, `consent_required`, `rate_limited`, `maintenance`, `code_required`.
+Anything else is reported as a plain server error.
+
+### Rules
+
+- The service **stores** credentials; it does not sign them. The signing key stays
+  on the vendor's offline machine, exactly as the mechanism requires.
+- The panel shows the operator **the complete request body** before sending it, and
+  the body it shows is the object it sends (pinned by a test). Do not add a field
+  that the panel does not display.
+- The credential is not a secret: it is bound to one board's UID and the firmware
+  rejects it anywhere else. Sending it over plain HTTPS without an account is fine.
+- The operator needs a path that works with no internet. `import_license` is that
+  path, and it is not a degraded mode: it is the same parser and the same firmware
+  command.
+
+## 7. Rules the panel must keep
 
 - **Never compute or verify the tag.** The key lives in firmware and in the vendor
   signer only. Any customer-side code able to produce a tag voids the mechanism.
