@@ -32,6 +32,18 @@ pip install -e ../litearm-python
 pip install -e "daemon[test]"     # 在仓库根目录执行
 ```
 
+- **`litegrip`（litegrip-python）同样不在 PyPI 上，而且只在 Linux 上有意义**
+  （import 需要 `fcntl` / `PF_CAN`）。要真机驱动夹爪就必须装它：
+
+```bash
+git clone --branch v0.4.0 https://github.com/nexform-tech/litegrip-python.git
+pip install ./litegrip-python
+```
+
+  Linux 上没装它守护进程**照常启动**，只是不提供夹爪（与 Windows 上的"缺席"同一条路）；
+  打包脚本则相反 —— Linux 构建缺它直接判失败，见「打包」一节。想显式关掉夹爪用
+  `--no-gripper`；用 `--fake` 可以在任何平台跑纯 Python 的仿真后端。
+
 ## 运行
 
 ```bash

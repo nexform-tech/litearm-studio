@@ -39,11 +39,6 @@ from .errors import error_to_dict
 from .statemap import jsonable
 from .session import ENERGY_DOWN_COMMANDS, Session
 
-try:  # 夹爪在非 Linux 上不存在 (D10) —— 这条 import 不该让守护进程起不来
-    from .gripper.session import GripperSession
-except Exception:  # noqa: BLE001 - 缺 SDK/平台不支持都走这里
-    GripperSession = None  # type: ignore[assignment]
-
 log = logging.getLogger("litearm_studio_daemon.server")
 
 #: `run()` 允许绑定的地址白名单 —— 只监听本机 (计划 2 节架构: "Studio 本地程序,

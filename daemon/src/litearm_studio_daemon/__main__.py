@@ -56,6 +56,14 @@ def build_gripper_session(args: argparse.Namespace):
     nothing to configure and no button that would only fail.  ``--fake`` is the
     exception — the simulator is pure Python and runs anywhere, which is what
     makes the page testable on a machine with no CAN bus at all.
+
+    ⚠ The **construction** is inside the ``try`` as well, not just the import.
+    ``from .gripper.session import GripperSession`` does not touch the SDK (the
+    real backend is imported lazily, ``gripper/session.py``); the SDK import
+    happens when the session builds its backend, which is the constructor call.
+    Guarding only the import therefore let a missing SDK escape as an
+    ``ImportError`` out of ``main`` — the daemon did not start at all on Linux,
+    arm included, which is the opposite of "absent, not disabled".
     """
     if args.no_gripper:
         return None
@@ -65,12 +73,20 @@ def build_gripper_session(args: argparse.Namespace):
         return None
     try:
         from .gripper.session import GripperSession
-    except Exception:  # noqa: BLE001 - 缺 SDK 时夹爪缺席, 而不是拒绝启动
+
+        return GripperSession(fake=args.fake, channel=args.can_channel,
+                              can_setup=not args.no_can_setup)
+    except ImportError:
+        # The SDK is genuinely not installed: expected off Linux, and a deliberate
+        # "no gripper here" on a Linux box that has not cloned it.  No traceback —
+        # this is a configuration answer, not a fault.
         logging.getLogger("litearm_studio_daemon").warning(
-            "无法加载夹爪模块 (缺 litegrip SDK?); 本次不提供夹爪", exc_info=True)
+            "没有夹爪 SDK (litegrip)，本次不提供夹爪；见 daemon/README 的「依赖」一节")
         return None
-    return GripperSession(fake=args.fake, channel=args.can_channel,
-                          can_setup=not args.no_can_setup)
+    except Exception:  # noqa: BLE001 - 其它任何失败同样只是"这次没有夹爪"
+        logging.getLogger("litearm_studio_daemon").warning(
+            "无法加载夹爪模块；本次不提供夹爪", exc_info=True)
+        return None
 
 
 def main(argv: Optional[List[str]] = None) -> int:

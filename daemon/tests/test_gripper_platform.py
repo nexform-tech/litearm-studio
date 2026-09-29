@@ -45,6 +45,13 @@ assert "litegrip" not in sys.modules, "仿真路径不该导入 SDK"
 # 4. server 模块本身也认得"本进程没有夹爪"。
 assert server.create_app.__doc__ is not None
 
+# 5. Linux 上缺 SDK ⇒ 也只是"这一次没有夹爪", 守护进程照常起 (D10 的本意)。
+#    ⚠ 这条才是真正的回归测试: 构造函数的 import 发生在 `_build_loop` 里 (懒加载
+#    backend.real), 只 try 住 `from .gripper.session import ...` 会让 ImportError
+#    逃出 `build_gripper_session` 和 `main`, 结果是 Linux 上连臂都起不来。
+sys.platform = "linux"
+assert build_gripper_session(build_parser().parse_args([])) is None
+
 print("OK")
 '''
 
