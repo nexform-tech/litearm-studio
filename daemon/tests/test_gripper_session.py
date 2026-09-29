@@ -490,3 +490,56 @@ def test_channel_config_is_a_frozen_record() -> None:
     assert record.mounted is False
     assert ChannelConfig(channel="can0", mount="normal").mounted is True
     assert ChannelConfig(channel="can0").to_wire()["canId"] == 8
+
+# ------------------------------------------------------------------ 告警的 kind
+
+def test_alerts_carry_a_wire_kind_for_the_browser_to_translate(tmp_path: Path) -> None:
+    """tick 线程上的拒绝没有 `res` 可回 —— kind 是前端唯一能翻译的字段。"""
+    frames: List[dict] = []
+    session = make_session(tmp_path, on_event=frames.append)
+    try:
+        session._on_alert("warn", "「闭合」被拒绝：标称模板（从未实测）",
+                          "GripperCalibrationError")
+        session._on_alert("info", "已记录张开极限", None)
+        session._on_fault(0x9, "欠压故障 (UV)", "请检查夹爪 24V 供电")
+        session._on_fault(0x1, "已使能", "")
+
+        alerts = [f for f in frames if f["t"] == "gripper_alert"]
+        assert alerts[0]["kind"] == "GripperCalibrationError"
+        assert alerts[0]["text"].startswith("「闭合」被拒绝")
+        assert alerts[1]["kind"] is None          # 没有可推的 kind 就不编一个
+        assert alerts[2]["kind"] == "GripperFaultActiveError"
+        assert alerts[2]["code"] == 0x9
+        assert alerts[3]["kind"] is None          # 0x1 是"已使能"，不是故障
+        assert alerts[3]["level"] == "info"
+    finally:
+        session.close()
+
+
+def test_a_refused_motion_takes_its_kind_from_the_gate(tmp_path: Path) -> None:
+    """把闸门推到 BLOCKED，再让指令走到 tick 上被拒 —— 帧里应带标定类错误。"""
+    from litearm_studio_daemon.gripper.core import commands as cmd
+    from litearm_studio_daemon.gripper.core.worker import GateState
+
+    session = make_session(tmp_path)
+    try:
+        connect(session)
+        session.execute("gripper.enable", {})
+        assert wait_for(lambda: session.state() and session.state()["enabled"])
+        # 一份通道不匹配的标定：解析有效但被拒 → 闸门 BLOCKED。
+        bad = tmp_path / "foreign.json"
+        bad.write_text(json.dumps({
+            "channel": "can9",
+            "zero_position_rad": 1.7, "max_position_rad": -0.06, "rad_to_mm": 46.7,
+        }), encoding="utf-8")
+        session.loop.submit(cmd.LoadCalibration(str(bad)))
+        assert wait_for(lambda: session.gate() is GateState.BLOCKED), session.gate()
+
+        frames: List[dict] = []
+        session.add_listener(frames.append)
+        session.loop.submit(cmd.Open())
+        assert wait_for(lambda: any(
+            f["t"] == "gripper_alert" and f.get("kind") == "GripperCalibrationError"
+            for f in frames)), frames
+    finally:
+        session.close()

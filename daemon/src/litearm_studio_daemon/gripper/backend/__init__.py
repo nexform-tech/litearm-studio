@@ -46,9 +46,15 @@ class BackendError(RuntimeError):
 class ConnectFailed(BackendError):
     """The transport could not be opened (missing interface, no adapter)."""
 
+    #: The wire error this reaches the operator as, so an alert raised on the
+    #: tick thread can be translated by the browser (see ``common:errors.*``).
+    kind = "GripperLinkError"
+
 
 class EnableFailed(BackendError):
     """The motor refused to enable — usually a latched fault or no 24 V."""
+
+    kind = "GripperFaultActiveError"
 
 
 class LinkDown(BackendError):
@@ -61,9 +67,13 @@ class LinkDown(BackendError):
     socket; the first frame that has to leave is the enable's.
     """
 
+    kind = "GripperLinkError"
+
 
 class FaultActive(BackendError):
     """The motor is reporting a fault; carries the raw error code."""
+
+    kind = "GripperFaultActiveError"
 
     def __init__(self, code: int, message: str = "") -> None:
         self.code = code

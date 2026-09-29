@@ -49,13 +49,16 @@ export function useGripperCalibration(): GripperCalibProgress | null {
  * tick 线程上的拒绝/故障没有 `res` 可以回，这条通道就是它们的出口；id 固定是为了
  * 不让连续几条把屏幕刷满 —— 操作员要看的是最新那一条。
  *
- * ⚠ 文字来自 daemon（夹爪侧的诊断目前只有中文）。同步拒绝走 `res` 的 `kind`，那条
- * 路是翻译过的；这条只兜住"tick 上发生的事"。
+ * ⚠ 文字来自 daemon（诊断原文只有中文）。带 `kind` 的告警走与 `res` 同一张翻译表 ——
+ * 否则英文界面上会突然冒出一句中文；没有 kind 的（推不出可翻译的类别）原样显示，
+ * 因为把原文换成一句空泛的"操作失败"反而丢掉了唯一的线索。
  */
 export function useGripperAlerts(): void {
   useEffect(() => {
     const onAlert = (alert: GripperAlert) => {
-      const text = alert.text
+      const text = alert.kind
+        ? formatArmError({ kind: alert.kind, msg: alert.text }) || alert.text
+        : alert.text
       if (alert.level === 'error' || alert.level === 'fatal') {
         toast.error(text, { id: 'gripper-alert' })
       } else if (alert.level === 'warn') {

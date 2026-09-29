@@ -59,10 +59,16 @@ export type GripperCalibProgress = {
   detail: string
 }
 
-/** daemon `gripper_alert` 帧：tick 线程上的拒绝/故障，没有 `res` 可回的那一半。 */
+/**
+ * daemon `gripper_alert` 帧：tick 线程上的拒绝/故障，没有 `res` 可回的那一半。
+ *
+ * `kind` 是**线上错误类名**（与 `res` 帧的 `err.kind` 同一套）。有它就能翻译；
+ * 没有（daemon 推不出可翻译的类别）时显示 `text` —— 诊断原文，中文。
+ */
 export type GripperAlert = {
   level: 'info' | 'warn' | 'error' | 'fatal' | string
   text: string
+  kind?: string
   code?: number
 }
 
@@ -404,6 +410,7 @@ export class GripperClient {
     const alert: GripperAlert = {
       level: str(msg.level, 'info'),
       text: str(msg.text),
+      kind: typeof msg.kind === 'string' && msg.kind ? msg.kind : undefined,
       code: typeof msg.code === 'number' ? msg.code : undefined,
     }
     for (const l of [...this.alertListeners]) l(alert)

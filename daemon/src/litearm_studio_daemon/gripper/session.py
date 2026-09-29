@@ -500,17 +500,29 @@ class GripperSession:
 
     def _on_fault(self, code: int, message: str, hint: str) -> None:
         text = message if not hint else f"{message} —— {hint}"
-        level = "info" if int(code) in constants.OK_ERROR_CODES else "error"
-        self._broadcast({"t": "gripper_alert", "level": level, "text": text,
-                         "code": int(code)})
+        healthy = int(code) in constants.OK_ERROR_CODES
+        self._broadcast({
+            "t": "gripper_alert",
+            "level": "info" if healthy else "error",
+            "text": text,
+            "code": int(code),
+            # 故障帧的 kind 只有一个：它就是「驱动报故障」这件事。
+            "kind": None if healthy else "GripperFaultActiveError",
+        })
 
     def _on_log(self, level: str, text: str) -> None:
         log.log({"debug": logging.DEBUG, "info": logging.INFO, "warn": logging.WARNING,
                  "error": logging.ERROR, "fatal": logging.CRITICAL}.get(level, logging.INFO),
                 "%s", text)
 
-    def _on_alert(self, level: str, text: str) -> None:
-        self._broadcast({"t": "gripper_alert", "level": level, "text": text})
+    def _on_alert(self, level: str, text: str, kind: str | None = None) -> None:
+        """一个操作员必须看见的事件 —— 帧里带上线上错误类名。
+
+        tick 线程上的拒绝没有 ``res`` 可回，这条通道就是它们的出口；``kind`` 是浏览器
+        唯一能拿来翻译的字段（文本本身是 daemon 的诊断原文，仍然是详情）。
+        """
+        self._broadcast({"t": "gripper_alert", "level": level, "text": text,
+                         "kind": kind})
 
     def _on_busy(self, busy: bool, what: str) -> None:
         self._broadcast({"t": "gripper_busy", "busy": bool(busy), "what": what})

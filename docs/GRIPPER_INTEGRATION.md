@@ -121,7 +121,8 @@ Additive. Existing arm frames and commands do not change.
 {"t":"gripper_calib","probe":"zero","phase":"close|open|done|failed",
  "step":12,"total":80,"detail":"寻找闭合限位"}
 
-{"t":"gripper_alert","level":"info|warn|error|fatal","text":"…"}
+{"t":"gripper_alert","level":"info|warn|error|fatal","text":"…",
+ "kind":"GripperCalibrationError|null","code":0}
 
 {"t":"gripper_busy","busy":true,"what":"正在连接夹爪…"}
 ```
@@ -142,7 +143,12 @@ never as zero, because zero is the closed stop.
 
 `gripper_alert` carries the asynchronous half of the error surface: a refusal or
 a fault that happens on the tick thread has no `res` frame to answer, and an
-operator who is not told why a button did nothing will press it again.
+operator who is not told why a button did nothing will press it again. Its
+`kind` is the same wire error class name a `res` frame carries, so the browser
+translates both through one table (`common:errors.*`); `text` stays the daemon's
+own diagnostic sentence and is shown as the detail. An alert whose kind the
+daemon cannot name passes `null` and the browser shows `text` unchanged — a
+generic "operation failed" would throw away the only clue there is.
 `gripper_busy` says a blocking call (connect, enable, clear-fault) is in
 progress, so the page can say why it is waiting.
 

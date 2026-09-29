@@ -121,6 +121,34 @@ GATE_LABELS = {
     GateState.BLOCKED: "已阻断",
 }
 
+# ── wire error kinds, for alerts raised on the tick thread ──────────────────
+# The browser translates these names through ``common:errors.*`` (see
+# ``src/lib/arm/errors.ts``).  They are the same strings the daemon uses as
+# ``err.kind`` on a ``res`` frame, so a failure reads the same however it
+# reaches the operator — synchronously or from the tick.
+KIND_NOT_CONNECTED = "GripperNotConnectedError"
+KIND_LINK = "GripperLinkError"
+KIND_FAULT = "GripperFaultActiveError"
+KIND_CALIBRATION = "GripperCalibrationError"
+KIND_ESTOPPED = "GripperEstoppedError"
+KIND_BUSY = "GripperBusyError"
+
+
+def exception_kind(exc: BaseException) -> str | None:
+    """The wire kind for a backend failure, or ``None`` when it has none.
+
+    A backend exception that declares ``kind`` names its own wire error (the
+    transport failures do — see ``backend/__init__.py``); anything else falls
+    back to its class name, which is what the arm's ``res`` frames already carry
+    (``errors.error_to_dict``).  A bare ``ValueError`` therefore arrives as
+    ``"ValueError"``: untranslated, but honest, and the text is still there.
+    """
+    declared = getattr(exc, "kind", None)
+    if isinstance(declared, str) and declared:
+        return declared
+    return type(exc).__name__
+
+
 #: The gate states whose limits may be used to *name a pose* in millimetres:
 #: a measured calibration, or a template's nominal geometry (the pose a hold
 #: freezes is the one the encoder just reported, so the span only has to be
@@ -518,7 +546,7 @@ class WorkerLoop:
             # name a millimetre") is asked where a command enters, in
             # ``_require_motion``, because the FSM cannot tell an in-flight 闭合
             # from an in-flight 移动.
-            refusal = self._refusal(geometry=False)
+            refusal, _kind = self._refusal(geometry=False)
             out = self._motion.tick(
                 self.backend,
                 tele,
@@ -717,37 +745,44 @@ class WorkerLoop:
             f"标定不可用：已在 {measured_rad:.6f} rad 驻留（按实测角度，不经过毫米换算）",
         )
 
-    def _refusal(self, geometry: bool = True) -> str:
-        """Why motion is refused right now, or ``""`` when it is allowed.
+    def _refusal(self, geometry: bool = True) -> tuple[str, str | None]:
+        """Why motion is refused right now, and which wire error kind it is.
 
-        ``geometry`` says whether the command needs a measured span or only a
-        direction.  A nominal template answers the second and not the first, so
-        the difference is the whole reason the gate has a state of its own for
-        it: 张开 and 闭合 drive to the ends of the travel and are meaningful
-        whatever the span is, while a millimetre target computed from nominal
-        geometry is wrong by the ratio between this unit and a 120 mm one.
+        Returns ``("", None)`` when motion is allowed.  ``geometry`` says whether
+        the command needs a measured span or only a direction.  A nominal
+        template answers the second and not the first, so the difference is the
+        whole reason the gate has a state of its own for it: 张开 and 闭合 drive
+        to the ends of the travel and are meaningful whatever the span is, while
+        a millimetre target computed from nominal geometry is wrong by the ratio
+        between this unit and a 120 mm one.
+
+        The kind travels with the reason because a refusal raised on the tick
+        thread has no ``res`` frame to answer: it reaches the operator as a
+        ``gripper_alert``, and without a kind the browser has nothing to
+        translate and shows the daemon's Chinese text (``daemon/README.md``).
         """
         if self._estop.is_set():
-            return f"急停已触发（{self._estop_reason}）；请先复位"
+            return f"急停已触发（{self._estop_reason}）；请先复位", KIND_ESTOPPED
         if not self._connected:
-            return "尚未连接"
+            return "尚未连接", KIND_NOT_CONNECTED
         if not self._enabled:
-            return "电机未使能"
+            return "电机未使能", None
         if self._gate is not GateState.READY:
             if self._gate is GateState.TEMPLATE and not geometry:
                 pass
             else:
-                return self._gate_reason or "标定未就绪"
+                return self._gate_reason or "标定未就绪", KIND_CALIBRATION
         if self._link_dead():
-            return f"链路已断：{self._stale_ms():.0f} ms 未收到状态帧"
+            return f"链路已断：{self._stale_ms():.0f} ms 未收到状态帧", KIND_FAULT
         # Last, and deliberately: no measurement is *why* nothing can be
         # commanded, but a dead link or a shut gate is *why* there is no
         # measurement, and the cause is the half the operator can act on.
         if self._measured_mm() is None:
-            return "尚未读到位置；本次使能后还没收到过状态帧"
+            return "尚未读到位置；本次使能后还没收到过状态帧", None
         if self._tele.is_error:
-            return f"电机故障：{constants.describe_error(self._tele.error_code)}"
-        return ""
+            return (f"电机故障：{constants.describe_error(self._tele.error_code)}",
+                    KIND_FAULT)
+        return "", None
 
     # ── the gate ────────────────────────────────────────────────────────────
     def _evaluate_gate(self) -> None:
@@ -906,7 +941,8 @@ class WorkerLoop:
             try:
                 self._apply(command)
             except Exception as exc:  # noqa: BLE001 - reported, never fatal
-                self._alert("error", f"命令失败「{command.describe()}」: {exc}")
+                self._alert("error", f"命令失败「{command.describe()}」: {exc}",
+                            kind=exception_kind(exc))
 
     def _apply(self, command: AnyCommand) -> None:  # noqa: C901 - a dispatch table
         self._log("debug", f"命令: {command.describe()}")
@@ -1064,7 +1100,7 @@ class WorkerLoop:
             self.backend.connect()
         except Exception as exc:
             self._conn_emit(CONN_ERROR, str(exc))
-            self._alert("error", f"连接失败: {exc}")
+            self._alert("error", f"连接失败: {exc}", kind=exception_kind(exc))
             return
         finally:
             self._signals.busy.emit(False, "")
@@ -1098,13 +1134,14 @@ class WorkerLoop:
             outcome = link.ensure()
         except Exception as exc:  # noqa: BLE001 - reported, never fatal
             self._alert(
-                "warn", f"准备 {link.channel} 时出错（仍会尝试连接）: {exc!r}"
+                "warn", f"准备 {link.channel} 时出错（仍会尝试连接）: {exc!r}",
+                kind=KIND_LINK,
             )
             return
 
         self._log("warn" if outcome.needs_attention else "info", outcome.detail)
         if outcome.needs_attention:
-            self._alert("warn", outcome.detail)
+            self._alert("warn", outcome.detail, kind=KIND_LINK)
 
     def _disconnect(self) -> None:
         if not self._connected:
@@ -1128,11 +1165,12 @@ class WorkerLoop:
         # axis — and the queue is reachable without the window.
         if self._estop.is_set():
             self._alert(
-                "warn", f"急停中，无法使能（{self._estop_reason}）；请先复位"
+                "warn", f"急停中，无法使能（{self._estop_reason}）；请先复位",
+                kind=KIND_ESTOPPED,
             )
             return
         if not self._connected:
-            self._alert("warn", "请先连接")
+            self._alert("warn", "请先连接", kind=KIND_NOT_CONNECTED)
             return
         # The gate decides what may be *commanded*, never whether the axis may be
         # energised at all.  Refusing to enable on a console whose calibration is
@@ -1153,7 +1191,7 @@ class WorkerLoop:
         try:
             self.backend.enable()
         except Exception as exc:
-            self._alert("error", f"使能失败: {exc}")
+            self._alert("error", f"使能失败: {exc}", kind=exception_kind(exc))
             code = getattr(exc, "code", None)
             if code is not None:
                 self._signals.fault.emit(
@@ -1196,13 +1234,13 @@ class WorkerLoop:
 
     def _clear_fault(self) -> None:
         if not self._connected:
-            self._alert("warn", "请先连接")
+            self._alert("warn", "请先连接", kind=KIND_NOT_CONNECTED)
             return
         self._signals.busy.emit(True, "正在清除故障…")
         try:
             self.backend.clear_fault()
         except Exception as exc:
-            self._alert("error", f"清除故障失败: {exc}")
+            self._alert("error", f"清除故障失败: {exc}", kind=exception_kind(exc))
             return
         finally:
             self._signals.busy.emit(False, "")
@@ -1220,7 +1258,7 @@ class WorkerLoop:
         # reason it latched.
         state, reason = evaluate_gate(self._info, self._allow_factory)
         if state not in GATE_POSE:
-            self._alert("warn", f"无法复位急停：{reason}")
+            self._alert("warn", f"无法复位急停：{reason}", kind=KIND_CALIBRATION)
             return
         self._estop.clear()
         self._estop_engaged = False
@@ -1230,9 +1268,9 @@ class WorkerLoop:
 
     # ── motion ──────────────────────────────────────────────────────────────
     def _require_motion(self, what: str, *, geometry: bool = True) -> bool:
-        refusal = self._refusal(geometry=geometry)
+        refusal, kind = self._refusal(geometry=geometry)
         if refusal:
-            self._alert("warn", f"「{what}」被拒绝：{refusal}")
+            self._alert("warn", f"「{what}」被拒绝：{refusal}", kind=kind)
             return False
         return True
 
@@ -1268,7 +1306,7 @@ class WorkerLoop:
                 self._alert("warn", "；".join(info.warnings))
         else:
             reason = "；".join(info.problems) if info is not None else "未知原因"
-            self._alert("error", f"标定不可用：{reason}")
+            self._alert("error", f"标定不可用：{reason}", kind=KIND_CALIBRATION)
 
     def _save_calibration(self, path: str | None) -> str | None:
         """Write the calibration out, returning where it landed or ``None``.
@@ -1282,7 +1320,7 @@ class WorkerLoop:
         try:
             written = self.backend.save_calibration(path)
         except Exception as exc:
-            self._alert("error", f"保存标定失败: {exc}")
+            self._alert("error", f"保存标定失败: {exc}", kind=KIND_CALIBRATION)
             return None
         self._refresh_calibration()
         self._alert("info", f"标定已保存到 {written}")
@@ -1352,16 +1390,16 @@ class WorkerLoop:
         # first" — advice that cannot be taken until the E-stop is reset, and
         # which hides the actual cause from the operator.
         if self._estop.is_set():
-            self._alert("warn", "急停中，无法开始标定")
+            self._alert("warn", "急停中，无法开始标定", kind=KIND_ESTOPPED)
             return
         if not self._connected:
-            self._alert("warn", "请先连接")
+            self._alert("warn", "请先连接", kind=KIND_NOT_CONNECTED)
             return
         if not self._enabled:
             self._alert("warn", "标定需要电机使能；请先使能再开始")
             return
         if self._probe is not None and self._probe.is_active:
-            self._alert("warn", "已有标定正在进行")
+            self._alert("warn", "已有标定正在进行", kind=KIND_BUSY)
             return
 
         # The measured travel, written down here rather than read off the limits
@@ -1383,7 +1421,7 @@ class WorkerLoop:
         # position at the same time, or the two would send frames alternately.
         self._motion.idle()
         if not probe.start(self._tele.position_rad):
-            self._alert("error", f"无法开始标定：{probe.note}")
+            self._alert("error", f"无法开始标定：{probe.note}", kind=KIND_CALIBRATION)
             return
         self._probe = probe
         self._probe_pub_t = 0.0
@@ -1527,7 +1565,7 @@ class WorkerLoop:
             for line in getattr(probe, "notes", ()):
                 self._log("info", f"标定记录：{line}")
             self._refresh_calibration()
-            self._alert("warn", f"标定未完成：{probe.note}")
+            self._alert("warn", f"标定未完成：{probe.note}", kind=KIND_CALIBRATION)
             saved = False
         self._signals.calib_progress.emit(probe.phase.value, 1.0, probe.note)
         self._hand_back_after_probe(probe, saved=saved)
@@ -1656,7 +1694,7 @@ class WorkerLoop:
         self._end_probe_on_interrupt("停止")
         self._probe = None
         self._motion.idle()
-        self._alert("error", reason)
+        self._alert("error", reason, kind=KIND_ESTOPPED)
         self._safe_stop()
 
     def _safe_stop(self) -> None:
@@ -1694,7 +1732,7 @@ class WorkerLoop:
         else:
             log.debug(text)
 
-    def _alert(self, level: str, text: str) -> None:
+    def _alert(self, level: str, text: str, kind: str | None = None) -> None:
         """Show the operator something, and write it to the log file as well.
 
         The two channels answer different questions.  The alert is what the
@@ -1704,13 +1742,20 @@ class WorkerLoop:
         reason exists at all.  Written nowhere but the widget, it is gone the
         moment the window is.
 
+        ``kind`` is the wire error class name (``GripperCalibrationError`` and
+        friends) when this alert has one.  The text stays the daemon's own — it
+        is the diagnostic detail — but the browser can now translate the *label*
+        for the kinds it knows, instead of showing a Chinese sentence in an
+        English window.  An alert with no derivable kind passes ``None`` and the
+        browser falls back to the text.
+
         The level mapping is written out rather than shared with :meth:`_log`,
         because the two disagree on purpose: an ``info`` line in the log is a
         running commentary and belongs at DEBUG, while an ``info`` alert is
         something the operator was shown and belongs in the file at the level it
         was shown at.
         """
-        self._signals.alert.emit(level, text)
+        self._signals.alert.emit(level, text, kind)
         if level in ("error", "fatal"):
             log.error(text)
         elif level == "warn":

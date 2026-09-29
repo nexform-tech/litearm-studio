@@ -317,7 +317,10 @@ def test_the_worker_refuses_a_millimetre_target_under_a_template() -> None:
     loop.submit(cmd.MoveToMm(20.0, source="test"))
     now[0] += 0.005
     loop.tick_once(0.005)
-    assert any("被拒绝" in text for _level, text in signals.alerts), signals.alerts
+    refusals = [e for e in signals.alerts if "被拒绝" in e[1]]
+    assert refusals, signals.alerts
+    # ⚠ 被 tick 拒掉的指令没有 `res` 可回，kind 是浏览器唯一能翻译的字段。
+    assert refusals[0][2] == "GripperCalibrationError", refusals
     assert loop.motion.state.value != "SERVO"
 
     loop.submit(cmd.Open(source="test"))
