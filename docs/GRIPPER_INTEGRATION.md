@@ -1,0 +1,438 @@
+# Gripper integration in LiteArm Studio
+
+This document specifies how LiteGrip gripper control is added to LiteArm Studio;
+read it if you are implementing or reviewing the daemon-side gripper session, the
+WebSocket contract, or the gripper pages.
+
+## 1. Scope
+
+**In scope**
+
+- A second device session inside `litearm-studio-daemon` that drives one LiteGrip
+  over SocketCAN.
+- The WebSocket frames and commands the UI uses for it, alongside the existing arm
+  contract.
+- Calibration handling: which file is in effect, and what the UI is allowed to do
+  with which provenance.
+- A gripper page and a settings section, both reusing the UX of the retired
+  end-effector panels (see §6.4).
+
+**Out of scope**
+
+- Firmware changes. The arm controller gets no end-effector command.
+- The dexterous hand (LinkerHand). The old UI had one; it is not being restored.
+- Multi-arm, teleoperation, VLA integration.
+- Gripper support on Windows (see D10).
+
+## 2. Frozen decisions
+
+These are settled; the rest of the document assumes them.
+
+| # | Decision | Why |
+| --- | --- | --- |
+| D1 | The gripper sits on the **same CAN bus as the arm's joints**. The daemon reaches it through a **host SocketCAN interface**, classic CAN at 1 Mbit, default `can0`. | The arm's USB CDC link is not a data path to the gripper: the firmware exposes no end-effector command, and the SDK's passthrough entries (`send_mit`, `move_mit_all`) are addressed by joint index, so they cannot reach a motor at CAN ID `0x08`. |
+| D2 | The studio daemon is the **only** talker for the gripper. Connecting while `litegrip-studio` is connected is refused, not merged. | The gripper has one state and no arbitration; two talkers overwrite each other's frames. |
+| D3 | The daemon never calls `load_calibration()` with no argument. It always passes an explicit `path=` or `template=`. | The SDK's no-argument chain falls back to its bundled factory file and reports success either way, so the caller cannot tell which file moved the jaws. |
+| D4 | The factory default is the SDK's `normal` / `reverse` template, loaded **by name**. Nothing is copied into the user calibration directory. | The templates are nominal (120 mm geometry) and exist to declare direction. Copying one into `~/.litegrip/<channel>_calibration.json` would make nominal data pass for a measurement and defeat every provenance check. |
+| D5 | The travel (`max_stroke_mm`) is owned by the host, stored per channel. It starts at `85.0` (the reference unit's measured travel) and the operator confirms it during first-time setup. | The SDK's calibration schema has no field for it, but `zero()` uses it as the numerator of `rad_to_mm`. Left at the SDK default of `120.0` it scales every millimetre reading by about 1.4. |
+| D6 | The daemon drives the gripper with its **own 200 Hz MIT tick** and does not call the SDK's `open` / `close` / `grasp` / `move_at_speed` / `goto`. | They block for the whole move and have no abort hook, so an E-stop cannot interrupt them; `move_at_speed` also ends with a fixed ~100 ms hold that stutters a live control loop. |
+| D7 | Every SDK call happens on the tick thread. No other thread touches the gripper object. | The SDK is not thread-safe: one socket, one cached motor state, no locks. |
+| D8 | The E-stop is a `threading.Event` checked at the top of every tick. It is not a queued command. | A stop that can queue behind other work is not an emergency stop. |
+| D9 | The tick is also the keepalive. | The drive leaves the enabled state after 0.4 s without a frame from the host. |
+| D10 | Gripper support is Linux-only and is absent, not disabled, on Windows. | `import litegrip` needs `fcntl` and `PF_CAN`; it raises at import on Windows. |
+
+## 3. Architecture
+
+```
+browser (React UI)
+  │ HTTP  static assets
+  │ WS    /ws   (one socket, one command id space)
+  ▼
+litearm-studio-daemon       (Python, 127.0.0.1 only)
+  ├── ArmSession        ──USB CDC──► STM32 ──┐
+  └── GripperSession    ──PF_CAN───► can0 ───┤ one CAN bus, 1 Mbit classic
+                                             └─► arm joints + LiteGrip DM4310 (0x08 / 0x18)
+```
+
+Two session objects behind one WebSocket and one process. The arm's path, its
+command whitelist, its executors and its state frames are unchanged.
+
+`GripperSession` owns:
+
+- one **tick thread** at 200 Hz, the only thread that touches the SDK;
+- a **command queue** (`queue.Queue`) the WS thread fills and the tick drains;
+- an **E-stop event** the WS thread sets and the tick reads first thing;
+- a **state snapshot** published to the WS at 50 Hz plus on every change.
+
+It never uses the arm's command executor or its safety executor. A 3-second
+gripper move must not occupy the thread that serves arm commands, and the
+gripper's safety path is the tick, not an executor.
+
+### 3.1 Reuse: lift the Qt-free core, write only the adapter
+
+`litegrip-studio` already contains a tested, hardware-free implementation of
+everything below the UI, and it was written Qt-free on purpose. Both repositories
+are Apache-2.0 and owned by the same organization, so the code is lifted rather
+than rewritten:
+
+| Lift as-is | Why it is usable here |
+| --- | --- |
+| `units.py` | Angle/millimetre mapping, travel validation. No Qt, no SDK. |
+| `calibration.py` | Provenance, validation, cross-check. No Qt, no SDK at import. |
+| `can_link.py` | Interface probe and privileged bring-up. No Qt. |
+| `telemetry.py` | State snapshot struct. No Qt. |
+| `core/commands.py` | Frozen command dataclasses and the queue. No Qt. |
+| `core/profile.py`, `core/motion.py` | Ramp, contact detection, travel clamping. No Qt. |
+| `core/calibration_fsm.py` | Guided and two-point probes as state machines. No Qt. |
+| `backend/real.py`, `backend/sim.py`, `backend/plant.py` | SDK primitives behind one interface, plus a simulator that runs the same FSM. No Qt. |
+| `core/worker.py` `WorkerLoop` | The tick, the gate, the probe, the E-stop. Its docstring says it has no Qt in it; the Qt `QThread` is a separate class at the bottom of the file. |
+
+**Write new** (this is the actual work):
+
+| New module | Responsibility |
+| --- | --- |
+| `daemon/.../gripper/session.py` | Adapts `WorkerLoop` to the daemon: replaces its signal object with a callback that emits WebSocket frames, adds `gripper.*` command intake, channel enumeration, and the per-channel settings record. |
+| `daemon/.../gripper/config.py` | Per-channel device record (channel, CAN id, mount, calibration path override, travel) persisted next to the daemon's settings. |
+| `daemon/.../server.py` (edit) | Route `gripper.*` commands, relay gripper frames to clients, add the gripper to `/api/health`. |
+| `src/lib/arm/gripperClient.ts` (new) | Frontend client half: gripper frame handling and command wrappers. |
+
+The `units.py` / `calibration.py` copies must be updated on one point: the SDK
+moved to per-channel calibration files and named templates. The lifted code still
+resolves the legacy single file. See §5.3.
+
+## 4. Wire protocol
+
+Additive. Existing arm frames and commands do not change.
+
+### 4.1 Downlink (daemon to browser)
+
+```jsonc
+{"t":"gripper_conn","status":"disconnected|connecting|connected|error",
+ "channel":"can0","canId":8,"mount":"normal|reverse|null",
+ "source":"template|measured|factory|missing|null","path":"/home/u/.litegrip/can0_calibration.json",
+ "travelMm":85.0,"error":null}
+
+{"t":"gripper_state","stamp":123.4,"state":{
+  "positionMm":41.2,"forceN":0.0,"torqueNm":0.0,
+  "enabled":true,"state":"ready|moving|grasping|holding|fault|disabled|stopped",
+  "errorCode":1,"temps":{"mosTemp":31,"coilTemp":34},
+  "fresh":true}}
+
+{"t":"gripper_calib","probe":"zero","phase":"close|open|done|failed",
+ "step":12,"total":80,"detail":"寻找闭合限位"}
+```
+
+`gripper_conn` is the single source of truth for the gripper's connection, the
+same way `conn` is for the arm. `status:"error"` with `channel:""` means the
+interface or the device went away.
+
+`gripper_state` is pushed at 50 Hz, and immediately whenever `state`, `enabled`,
+`errorCode` or `mount` changes.
+
+### 4.2 Uplink (browser to daemon)
+
+```jsonc
+{"t":"cmd","id":1,"m":"gripper.close","p":{}}
+```
+
+| `m` | `p` | `v` |
+| --- | --- | --- |
+| `gripper.connect` | `channel?`, `canId?`, `mstId?`, `mount?` | `{"started":true}` |
+| `gripper.disconnect` | — | `{"stopped":true}` |
+| `gripper.list_channels` | — | `["can0","can1"]` |
+| `gripper.enable` | — | `{"enabled":true}` |
+| `gripper.disable` | — | `null` |
+| `gripper.clear_fault` | — | `null` |
+| `gripper.open` | — | `{"ok":true}` |
+| `gripper.close` | — | `{"ok":true}` |
+| `gripper.grasp` | `forceN?`, `holdS?` | `{"ok":true}` |
+| `gripper.move_to` | `targetMm` (0..travel), `speedMmS?` | `{"ok":true}` |
+| `gripper.release` | — | `null` (zero torque, stays enabled, back-drivable) |
+| `gripper.stop` | — | `null` (E-stop) |
+| `gripper.reset_stop` | — | `null` (release the latch) |
+| `gripper.set_motion` | `speedMmS?`, `forceN?` | the settings now in effect |
+| `gripper.load_template` | `mount` (`normal` or `reverse`) | `{"mount":…,"source":"template"}` |
+| `gripper.list_calibrations` | — | `[{"path","source","valid","problems":[],"warnings":[],"closedRad","openRad","fileRadToMm"}]` |
+| `gripper.import_calibration` | `path` (on the control machine) | `{"path":…,"source":"measured"}` |
+| `gripper.zero` | `travelMm` | `{"closedRad":…,"openRad":…,"radToMm":…}` |
+
+Rules:
+
+- Commands keep the existing `{"t":"cmd","id":N,…}` envelope and the shared id
+  space, so `res` handling on the client does not change.
+- `gripper.stop` is handled before the queue: the WS thread sets the E-stop event
+  and answers immediately. The tick engages it within one tick (5 ms).
+- `gripper.disable` is a normal queued command; `gripper.stop` is what must never
+  queue.
+- `gripper.zero` is long (tens of seconds) and streams `gripper_calib` progress
+  frames. It must not hold the WS read loop: the tick runs the probe as a state
+  machine, one step per tick.
+- Command timeout stays at the daemon's existing 60 s, except `gripper.zero`,
+  which the client must not subject to a 60 s timeout.
+
+### 4.3 Error kinds
+
+Reuse `{"kind","msg"}`. New kinds map to new `common:errors.*` keys:
+
+| kind | Meaning |
+| --- | --- |
+| `GripperNotConnectedError` | A command arrived before a gripper session exists. |
+| `GripperLinkError` | The CAN interface is missing, down, or bus-off. |
+| `GripperFaultActiveError` | The drive reports a latched fault (`errorCode` outside 0 and 1). |
+| `GripperCalibrationError` | No usable calibration for the requested motion. |
+| `GripperEstoppedError` | Motion refused while the stop latch is engaged. |
+| `GripperBusyError` | A second long operation (probe) was requested. |
+
+## 5. Daemon implementation
+
+### 5.1 Session lifecycle
+
+1. `GripperSession.start(config)` reads the per-channel record, enumerates CAN
+   interfaces, then `WorkerLoop` connects: it prepares the interface (see §5.4),
+   opens the SDK object, and pushes `gripper_conn`.
+2. It loads **no calibration** at connect time. Load is an explicit command, and
+   the gate (§5.3) blocks motion until one is in effect. This matches the arm's
+   rule that a session never silently adopts a configuration.
+3. The tick starts at 200 Hz and runs until shutdown. It polls a status frame
+   every tick and publishes state at 50 Hz.
+4. `gripper.disconnect` stops the tick, zero-torques, disables and closes the
+   socket. The per-channel record is not touched.
+5. Process shutdown (`serve()`'s `finally`) zero-torques, disables and closes —
+   the same shape as the arm's de-energize path, and for the same reason: leaving
+   a drive enabled with the last command it received is not acceptable when the
+   process that would correct it is gone. `--keep-enabled` applies to the arm
+   only; the gripper always disables on exit.
+
+### 5.2 Tick order
+
+The tick borrows `WorkerLoop.tick_once`, whose order is deliberate:
+
+1. Drain the command queue, so a command given this tick takes effect this tick.
+2. Read the E-stop event. If set, engage it (zero torque, then disable) and latch.
+3. Service the GUI watchdog (`GUI_WATCHDOG_S = 3.0`): if the browser stops talking
+   for three seconds, stop the motion. A closed tab must not leave the jaws
+   pressing.
+4. Poll one status frame.
+5. Advance the active FSM: probe, or motion, or a hold frame.
+6. Evaluate the gate and publish.
+
+### 5.3 Calibration: resolution, provenance, gate
+
+The daemon decides which calibration is in effect and tells the SDK explicitly.
+It never asks the SDK what it loaded.
+
+**Resolution order** (first hit wins, and the result carries its provenance):
+
+| # | Source | Condition | Provenance |
+| --- | --- | --- | --- |
+| 1 | Path pinned in the per-channel record | channel field matches, or is absent | `measured` |
+| 2 | `~/.litegrip/<channel>_calibration.json` | parses and validates | `measured` |
+| 3 | `LITEGRIP_CALIB` | set in the environment | `measured`, flagged as an environment override |
+| 4 | `~/.litegrip/litegrip_calibration.json` | channel field matches or is absent | `measured`, flagged as legacy |
+| 5 | SDK template `normal` / `reverse` | a mount is declared | `template` |
+| 6 | SDK bundled `factory_calibration.json` | an operator has enabled it | `factory` |
+| 7 | nothing | — | `missing` |
+
+**Gate.** Motion is allowed only when the provenance is `measured`, or `template`
+for the commands that do not depend on geometry: `open`, `close`, `release`.
+Every millimetre target (`gripper.move_to`, `gripper.grasp`) requires `measured`.
+`factory` requires an explicit, persisted operator acknowledgement. `missing`
+allows nothing but `zero`.
+
+**Cross-check.** After loading, read back the limits the SDK actually applied and
+compare them with the file. A mismatch means the numbers on screen do not describe
+the gripper in front of the operator; refuse further motion and say so.
+
+**Validation.** Parse the JSON before handing it to the SDK: the three required
+keys must be present and numeric, the travel must be positive, and the derived
+millimetres per rad must fall inside the plausible band. The SDK itself validates
+nothing.
+
+**Direction.** `normal` and `reverse` are the only ways to declare it, and only a
+human can choose: nudge the jaws at low torque and see which way the angle moves.
+Read the result back from the SDK and show it; a wrong pick is not silent to the
+software but it is to the operator.
+
+### 5.4 CAN link and channel enumeration
+
+- Enumerate interfaces by reading `/sys/class/net/*/type` for `280` (ARPHRD_CAN).
+  Do not hardcode `can0`..`can2` the way the retired UI did.
+- Probe state with `ip -details link show <dev>` and treat a controller that is
+  not `ERROR-ACTIVE` as needing attention.
+- Bring-up is privileged and goes through `pkexec` with the interface name and
+  bitrate passed as positional arguments to one fixed script, exactly as
+  `can_link.py` does. It runs only when the interface is actually wrong, so a
+  correctly configured bus never produces a password dialog.
+- `--no-can-setup` exists for machines where the interface is managed by the
+  operator or by systemd, and for tests.
+
+### 5.5 Simulation
+
+`--fake` must cover the gripper too, or the page is untestable in CI. Lift
+`backend/sim.py` and `backend/plant.py`: they run the same FSM against a
+simulated plant, so the simulator exercises production logic instead of sitting
+beside it. `gripper.zero` against the simulator is how the calibration flow gets
+end-to-end coverage without hardware.
+
+### 5.6 Persistence
+
+Per-channel record, next to the daemon's existing settings:
+
+```jsonc
+{"channel":"can0","canId":8,"mstId":null,"mount":"normal",
+ "calibrationPath":null,"travelMm":85.0,"allowFactory":false}
+```
+
+`travelMm` is per channel because two grippers on one machine can differ, and it
+must survive a restart: the SDK does not store it, and the next `zero()` would
+otherwise use its own default of 120.
+
+## 6. Frontend implementation
+
+### 6.1 Client refactor
+
+The current client is a single-device singleton: one `ArmClient`, one socket, one
+`pending` map, one frame switch on `t`, and zero-argument hooks. That has to
+become device-parameterised before any gripper UI can exist.
+
+1. Keep `armClient` as the arm's client. Add a second instance for the gripper
+   that shares the socket, or a `deviceClients = { arm, gripper }` registry.
+2. Extend the frame switch with the `gripper_*` tags.
+3. Parameterise the hooks: `useArmConnection(device)`, `useArmState(device)`, or
+   add `useGripperConnection()` / `useGripperState()` that subscribe to the
+   gripper half. Keep the existing zero-argument exports as thin wrappers so no
+   arm component changes.
+4. Errors keep flowing through `formatArmError`; add the new kinds to `KIND_KEYS`
+   and to `common:errors.*` in both locales.
+
+### 6.2 Where the UI goes
+
+There are two surfaces, matching the retired product:
+
+- **A gripper page**, `/gripper`, for operating the gripper: connect state,
+  aperture, open/close/grasp/release, force and speed, live position and
+  temperature, fault clearing, E-stop state.
+- **A section in the existing settings page**, for configuring it: CAN channel,
+  CAN ids, mount, which calibration file is in effect, import a calibration,
+  run `zero()`, and the per-channel travel.
+
+Route, navigation entry, top-bar title and i18n namespace follow the existing
+pattern: lazy export in `src/routes.tsx`, a `<Route>` in `src/main.tsx`, an item
+in `RAIL_ITEMS`, a title in the top bar's map, and `locales/{en,zh}/gripper.json`
+plus the namespace registration and the i18n assertions.
+
+### 6.3 Page behaviour
+
+- Everything writable is disabled unless the gripper `status` is `connected`, the
+  drive is enabled, and the gate allows the command. Show why it is disabled.
+- The aperture slider is `0..travelMm`, commits on release, and is not echoed back
+  from the device while the user is dragging.
+- Read-back discipline, as in the settings page: after a write, show what the
+  device reports, not what was sent.
+- The E-stop is reachable while a move is running. It maps to `gripper.stop`, and
+  the page shows the latched state until `gripper.reset_stop`.
+- The calibration card always shows provenance: source label, path, both rad
+  endpoints, the derived travel, and the mounting direction. "Nominal template,
+  never measured" must be visible, not implied.
+
+### 6.4 What to reuse from the retired panels
+
+The old end-effector UI is in this repository's history and is the UX baseline.
+Retrieve it with:
+
+```bash
+git show b4ed8ed:src/features/solo/EndEffectorControlPanel.tsx   # gripper/hand switch
+git show b4ed8ed:src/features/solo/GripperPanel.tsx              # the control panel
+git show b4ed8ed:src/features/settings/EndEffectorPanel.tsx      # settings + bus binding
+git show b4ed8ed:src/lib/arm/gripper.ts                          # unit helpers
+```
+
+Reuse: the panel layout (header with status pill, aperture card, open/close pair,
+parameters card), the interaction pattern (slider drives, buttons commit, errors
+as one toast with a stable id), and the i18n key names and strings, which are
+already translated in both locales.
+
+Do not reuse: the device model list and the "Mount & Start" lifecycle. Those were
+a server-side device catalog that no longer exists. There is one known device —
+the gripper on a chosen CAN channel — so the settings section collapses to a
+channel picker, an id pair, a mount choice and the calibration controls.
+
+Two numbers in the old code are wrong for this hardware and must not be carried
+over: `GRIPPER_STROKE_MM = 120` (the measured travel is 85) and
+`GRIPPER_FORCE_MAX_N = 40` (keep 40 N as the ceiling but default to 20 N, the
+recommended working force).
+
+## 7. Testing
+
+**Daemon.** Extend `daemon/tests` with the simulator backend; no CAN interface and
+no hardware. Cover:
+
+- connect / disconnect / reconnect, and interface enumeration parsing.
+- Every `gripper.*` command through the WS, including argument validation.
+- Calibration resolution: each provenance row in §5.3, the channel-mismatch skip,
+  a malformed file, the cross-check mismatch, and the factory acknowledgement.
+- The gate: which commands each provenance allows and refuses.
+- The E-stop: a stop arriving mid-move engages within one tick, latches, and
+  survives until reset; a stop during `gripper.zero` aborts the probe.
+- The tick as keepalive: no tick gap exceeds the drive's 0.4 s window.
+- Shutdown de-energizes; `disconnect` does not.
+
+**Frontend.** Vitest with the existing `FakeWebSocket`: gripper frame routing,
+the new hooks, gate-driven disabling, error kinds, and the page's read-back
+behaviour. i18n assertions for the new namespace in both locales.
+
+## 8. Packaging
+
+- `packaging/build.py` needs `--collect-all litegrip`. The package ships three
+  JSON files and `py.typed`; without the data files `load_template` raises.
+- The SDK is not on PyPI. Install it from a checkout the way `litearm` already is,
+  and pin the revision in the build.
+- Linux only. The import of `litegrip` must sit behind a platform check so the
+  Windows executable still builds and runs with the gripper absent.
+
+## 9. Delivery sequence
+
+| Phase | Deliverable | Acceptance |
+| --- | --- | --- |
+| P1 | `GripperSession` with the simulator backend, frames and commands, no UI | Daemon tests green in `--fake`; the arm's existing tests untouched |
+| P2 | Calibration resolution, provenance, gate, cross-check | The §7 calibration cases pass; a malformed or foreign file never enables motion |
+| P3 | CAN link: enumeration, probe, privileged bring-up | A correctly configured interface produces no dialog; a wrong one produces one actionable message |
+| P4 | Frontend client refactor and the gripper page | `pnpm test` green; the page drives the simulator end to end |
+| P5 | Settings section: channel, mount, import, `zero()` | A `zero()` run against the simulator replaces the template and survives a restart |
+| P6 | Packaging and real hardware | The released Linux artifact drives a real gripper; the Windows artifact builds without it |
+
+## 10. Open items
+
+Three items, each with the check that closes it. None of them blocks P1 or P2.
+
+1. **Which interface is the gripper on?** Confirm the adapter and its interface
+   name on the control machine, and that the daemon's user may use it. Close it by
+   enumerating CAN interfaces on the real machine.
+2. **CAN id overlap with the arm's joints.** The gripper uses ESC `0x08` and MST
+   `0x18`. Close it by capturing a few seconds of the bus while the arm moves and
+   checking the id set, and by checking the bus error counters for headroom.
+3. **Per-unit calibration files.** Confirm with the gripper's SDK owner whether a
+   per-unit file ships with each gripper or whether the templates are the intended
+   factory default. The implementation supports both; only the default differs.
+
+## 11. Do not
+
+- Do not call the SDK's `open`, `close`, `grasp`, `move_at_speed`, `goto` or
+  `home`. They block, cannot be interrupted, and `home` uses a constant rather
+  than the calibrated closed end.
+- Do not call `load_calibration()` with no argument. It falls back to the bundled
+  factory file silently and returns success.
+- Do not copy `calibration_normal.json` or `calibration_reverse.json` into
+  `~/.litegrip/`. Load them by template name; copied in, they pass for a
+  measurement.
+- Do not touch the gripper object from a second thread, including from the WS
+  thread and from a "safety executor". The SDK has no locks; the E-stop is an
+  event the tick reads.
+- Do not let the tick stop while the drive is enabled. The drive drops out of the
+  enabled state after 0.4 s without a frame, and a disabled gripper under load
+  moves.
+- Do not accept a millimetre target while the calibration is nominal. The
+  template's geometry describes a 120 mm unit; every millimetre would be wrong by
+  about 40%.
+- Do not hardcode the travel. It is per unit, it is not in the SDK's schema, and
+  it is the numerator of every millimetre the UI shows.
