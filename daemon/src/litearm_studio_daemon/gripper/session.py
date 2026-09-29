@@ -226,6 +226,14 @@ class GripperSession:
         self._signals = _Signals(self)
         self._loop: Optional[WorkerLoop] = None
         self._thread: Optional[threading.Thread] = None
+        #: Whether the loop object may be (re)started.  A loop whose thread has
+        #: ended is spent — ``WorkerLoop.teardown`` is a one-shot latch — so a
+        #: restart has to build a new one instead of pointing at a dead thread.
+        self._loop_live = False
+        #: Serialises rebuilds.  ``_stop_thread`` joins outside ``self._lock``
+        #: (the tick takes that lock on every frame), so the two windows that can
+        #: rebuild a loop need a lock of their own.
+        self._rebuild_lock = threading.Lock()
         self._build_loop(self._config)
 
         if autostart:
@@ -259,6 +267,7 @@ class GripperSession:
         # travel rather than the SDK's 120 mm nominal.
         loop.submit(cmd.SetTravelMm(float(config.travel_mm)))
         self._loop = loop
+        self._loop_live = True
 
     def _make_backend(self, config: ChannelConfig) -> Any:
         if self._fake:
@@ -301,11 +310,39 @@ class GripperSession:
 
     # ------------------------------------------------------------------ 线程
     def start(self) -> None:
-        """Start the tick thread (idempotent)."""
-        with self._lock:
-            if self._closed or self._thread is not None:
-                return
-        self._start_thread()
+        """Start the tick thread (idempotent, and replaces one that died)."""
+        self._ensure_thread()
+
+    def _ensure_thread(self) -> None:
+        """Start the tick thread unless a live one is running.
+
+        A thread that ended on its own — the fatal-tick path — cannot be started
+        again: its loop has already torn down, and ``teardown`` may only zero
+        torque once.  The loop is replaced instead.  Without this the reference
+        pointed at a dead thread forever and the session became unreachable:
+        ``gripper.connect`` answered ``{"started": true}`` and pushed a command
+        into a queue no tick would ever drain.
+        """
+        with self._rebuild_lock:
+            with self._lock:
+                if self._closed:
+                    return
+                thread = self._thread
+                if thread is not None and thread.is_alive():
+                    return
+                spent = not self._loop_live
+            if spent:
+                self._stop_thread()      # nothing left to join; clears the reference
+                with self._lock:
+                    if self._closed:
+                        return
+                    self._gate = None
+                    self._gate_reason = ""
+                    self._last_frame = None
+                    self._status = "disconnected"
+                    config = self._config
+                self._build_loop(config)
+            self._start_thread()
 
     def _start_thread(self) -> None:
         with self._lock:
@@ -327,6 +364,9 @@ class GripperSession:
         """
         with self._lock:
             thread, loop, self._thread = self._thread, self._loop, None
+            # Asked to stop means spent either way: ``shutdown`` sets the loop's
+            # stop flag, and the next start has to build a fresh one.
+            self._loop_live = False
         if loop is not None:
             loop.shutdown()
         if thread is None:
@@ -339,6 +379,7 @@ class GripperSession:
         loop.run()          # never lets an exception out; tears down in finally
         with self._lock:
             current = self._loop is loop
+            self._loop_live = False
         if current:
             self._on_conn_state(CONN_DISCONNECTED, "已断开")
 
@@ -631,6 +672,10 @@ class GripperSession:
             if self.status == "connected":
                 raise ValueError("请先断开夹爪, 再修改通道/ID")
             self._reconfigure(changes)
+        # A control thread that died on a fatal tick error is replaced here, so
+        # "connect" after one is a real reconnect rather than a command pushed
+        # into a queue nobody drains.
+        self._ensure_thread()
         loop = self.loop
         if self._status == "connected":
             return {"started": False}
@@ -711,18 +756,25 @@ class GripperSession:
         # The old loop owns the old backend, and its thread is the only thing
         # allowed to touch it — so it is stopped and joined before the new one
         # is built, and a new thread is started for it.
-        self._stop_thread()
-        with self._lock:
-            config = self._store.put(record)
-            self._config = config
-            self._gate = None
-            self._gate_reason = ""
-            self._last_frame = None
-        self._build_loop(config)
-        with self._lock:
-            closed = self._closed
-        if not closed:
-            self._start_thread()
+        with self._rebuild_lock:
+            if not self._stop_thread():
+                # The old loop is still inside a backend call.  Building the new
+                # backend now would leave two talkers on one gripper — the one
+                # thing D2/D7 forbid — so refuse rather than race it; the session
+                # is left with no thread, and the next connect builds a fresh loop.
+                raise GripperBusyError(
+                    "夹爪控制线程未能在 5s 内停下（可能正在连接或使能）；请稍后重试")
+            with self._lock:
+                config = self._store.put(record)
+                self._config = config
+                self._gate = None
+                self._gate_reason = ""
+                self._last_frame = None
+            self._build_loop(config)
+            with self._lock:
+                closed = self._closed
+            if not closed:
+                self._start_thread()
 
     def _cmd_disconnect(self, p: dict) -> dict:
         del p

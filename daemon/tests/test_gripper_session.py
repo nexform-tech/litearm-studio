@@ -14,6 +14,7 @@ from typing import Any, List, Optional
 import pytest
 
 from litearm_studio_daemon.errors import (
+    GripperBusyError,
     GripperEstoppedError,
     GripperNotConnectedError,
     UnknownCommandError,
@@ -66,6 +67,16 @@ def make_session(tmp_path: Path, **kwargs: Any) -> GripperSession:
 def connect(session: GripperSession) -> None:
     session.execute("gripper.connect", {})
     assert wait_for(session.connected), f"没连上: {session.conn_info()}"
+
+
+@pytest.fixture(autouse=True)
+def private_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """每条用例一个私有 ``$HOME``。
+
+    仿真后端的 ``save_calibration`` 写到 ``~/.litegrip/litegrip_calibration.sim.json``
+    （见 sim.py）—— 不隔离的话, 一次成功的标定就会写进跑测试那个人的家目录。
+    """
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
 
 
 # ------------------------------------------------------------------ 配置存储
@@ -479,6 +490,61 @@ def test_worker_thread_never_leaks_an_exception(tmp_path: Path) -> None:
         time.sleep(0.1)
         assert session.loop.ticks > 0
         assert threading.current_thread().is_alive()
+    finally:
+        session.close()
+
+
+def test_a_dead_tick_thread_is_replaced_by_the_next_connect(tmp_path: Path) -> None:
+    """tick 线程自己死了之后, 会话必须还能连上, 而不是永远卡在 connecting。
+
+    `run()` 的 finally 会 teardown —— 那是一次性闩锁, 同一个 loop 不能再跑; 线程死掉
+    之后引用却还在, 于是 `start()` 以为"已经有线程"而不做事, `gripper.connect` 把
+    Connect 塞进一个没人抽的队列。对外表现是 `started: true` + 永远 connecting,
+    连急停都没有 tick 去读那个事件。
+    """
+    session = make_session(tmp_path)
+    try:
+        connect(session)
+        assert wait_for(lambda: session.loop.ticks > 0)
+
+        def boom(*_args: Any, **_kwargs: Any) -> None:
+            raise RuntimeError("simulated SDK failure")
+
+        session.loop.backend.poll = boom          # type: ignore[method-assign]
+        assert wait_for(lambda: not session.connected(), timeout=5.0), \
+            "连续 tick 失败之后应当断开"
+
+        assert session.execute("gripper.connect", {}) == {"started": True}
+        assert wait_for(session.connected, timeout=5.0), \
+            f"没有换掉死掉的 tick 线程: {session.conn_info()}"
+    finally:
+        session.close()
+
+
+def test_reconfiguring_while_the_old_loop_is_busy_is_refused(tmp_path: Path) -> None:
+    """旧线程停不下来时不许再建一个 backend —— 一把夹爪只能有一个说话的人。
+
+    真机上 `backend.connect` 会在 CAN bring-up 里阻塞几秒, 而 `_stop_thread` 的 join
+    上限是 5s。以前这里直接丢掉返回值继续建新 loop, 于是两个 LiteGrip 对象同时活着
+    (D2/D7 明确禁止), 旧 loop 的帧还会继续往外发。
+    """
+    session = make_session(tmp_path)
+    try:
+        connect(session)
+        session.execute("gripper.disconnect", {})
+        assert wait_for(lambda: not session.connected())
+
+        def slow_connect() -> None:
+            time.sleep(6.5)
+
+        session.loop.backend.connect = slow_connect   # type: ignore[method-assign]
+        session.execute("gripper.connect", {})
+        time.sleep(0.3)          # 让 tick 线程真的陷进那个阻塞调用里
+
+        with pytest.raises(GripperBusyError):
+            session.execute("gripper.connect", {"channel": "can2"})
+        # 拒绝之后仍然只有一个活的 loop 对象, 而且没有第二个线程。
+        assert session.loop.backend is not None
     finally:
         session.close()
 
