@@ -951,23 +951,27 @@ class GripperSession:
         # produce, so it is recorded before the probe uses it.
         self._persist(travel_mm=travel)
         loop.submit(cmd.SetTravelMm(travel))
+        # ⚠ Wait for *this* probe's terminal outcome, not for the probe object to
+        # disappear.  Every abort path (the heartbeat watchdog, an E-stop, a
+        # disconnect) clears ``probe`` and leaves ``info`` at the previous
+        # calibration, so a waiter that stopped at "no probe is running" answered
+        # with a calibration it had not measured and labelled it ``measured``.
+        before = loop.probe_seq
         loop.submit(cmd.StartGuidedCalibration(
             reversed_mount=(self.config.mount == "reverse")))
-        if not self._wait_until(lambda: self.loop.probe is not None, 5.0):
+        if not self._wait_until(lambda: self.loop.probe_seq > before, 5.0):
             raise GripperCalibrationError("标定未能开始（检查使能、急停与连接状态）")
-        # ⚠ Wait for the *result*, not merely for the probe object to be dropped:
-        # ``_finish_probe`` clears it first and adopts, validates and saves the
-        # calibration afterwards, so a waiter that stopped at the first half
-        # would answer with the in-memory (unsaved) numbers — and the page would
-        # show a result that is not yet on disk.
+        generation = loop.probe_seq
         if not self._wait_until(
-                lambda: self.loop.probe is None
-                and self.loop.info is not None
-                and self.loop.info.provenance != calibration.PROVENANCE_MEMORY,
+                lambda: self._probe_finished(generation),
                 constants.ZERO_PROBE_TIMEOUT_S):
             self.loop.submit(cmd.CancelCalibration())
             raise GripperCalibrationError(
                 f"标定超过 {constants.ZERO_PROBE_TIMEOUT_S:.0f}s 未结束，已取消")
+        outcome = loop.probe_outcome
+        if outcome is None or not outcome[1]:
+            reason = outcome[2] if outcome is not None else ""
+            raise GripperCalibrationError(reason or "标定未产生可用的结果")
         info = self.loop.info
         if info is None or info.limits is None:
             reason = "；".join(info.problems) if info is not None else "没有标定结果"
@@ -1008,6 +1012,17 @@ class GripperSession:
                 return True
             time.sleep(0.01)
         return bool(predicate())
+
+    def _probe_finished(self, generation: int) -> bool:
+        """True once *that* probe (``generation``) has reached a terminal state.
+
+        The id is what makes the answer trustworthy: a probe that never started
+        never moves the counter, and a probe that was aborted records its own
+        outcome rather than leaving the previous calibration to be mistaken for
+        the result.
+        """
+        outcome = self.loop.probe_outcome
+        return outcome is not None and outcome[0] == generation
 
     def _await_calibration(self, predicate: Callable[[Any], bool],
                            failure: str) -> Any:

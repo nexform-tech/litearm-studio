@@ -354,6 +354,15 @@ class WorkerLoop:
         self._allow_factory = False
 
         self._probe: GuidedCalibFSM | TwoPointCalibFSM | None = None
+        #: Id of the probe in flight, and the terminal outcome of the last one as
+        #: ``(id, ok, reason)``.  A waiter that watched ``_probe`` alone could not
+        #: tell "this probe finished" from "this probe was aborted and the
+        #: previous calibration is still in force" — and every abort path
+        #: (watchdog, E-stop, disconnect) leaves ``_info`` at that previous
+        #: calibration.  ``_cmd_zero`` waits on the id, so an aborted probe can
+        #: no longer be answered with the calibration it never measured.
+        self._probe_seq = 0
+        self._probe_outcome: tuple[int, bool, str] | None = None
         self._tele = Telemetry()
         self._last_frame = _idle_frame(self)
 
@@ -442,7 +451,11 @@ class WorkerLoop:
                     f"控制 tick 出错（连续 {self._tick_errors} 次）: {exc!r}",
                 )
                 if fatal:
-                    self._abandon(f"连续 {self._tick_errors} 次 tick 失败，已停止控制")
+                    # No kind: this is not an E-stop and not (yet) a named link
+                    # failure — the text carries the diagnosis, and a wrong label
+                    # is worse than an untranslated one.
+                    self._abandon(f"连续 {self._tick_errors} 次 tick 失败，已停止控制",
+                                  kind=None)
                     break
             deadline += self._dt
             delay = deadline - self._clock()
@@ -1424,6 +1437,8 @@ class WorkerLoop:
             self._alert("error", f"无法开始标定：{probe.note}", kind=KIND_CALIBRATION)
             return
         self._probe = probe
+        self._probe_seq += 1
+        self._probe_outcome = None
         self._probe_pub_t = 0.0
         self._probe_unsent_s = 0.0
         if not guided:
@@ -1567,6 +1582,16 @@ class WorkerLoop:
             self._refresh_calibration()
             self._alert("warn", f"标定未完成：{probe.note}", kind=KIND_CALIBRATION)
             saved = False
+        # The outcome a waiter is allowed to act on.  "The probe ended" is not
+        # the same answer as "the probe produced a calibration": a result that
+        # could not be written is not one either, because the gate it would open
+        # is the in-memory (unsaved) provenance the wire must never call measured.
+        if result is not None and saved:
+            self._probe_outcome = (self._probe_seq, True, "")
+        elif result is None:
+            self._probe_outcome = (self._probe_seq, False, probe.note or "标定未完成")
+        else:
+            self._probe_outcome = (self._probe_seq, False, "标定结果未能写入标定文件")
         self._signals.calib_progress.emit(probe.phase.value, 1.0, probe.note)
         self._hand_back_after_probe(probe, saved=saved)
 
@@ -1644,6 +1669,11 @@ class WorkerLoop:
         """
         if self._probe is not None and self._probe.is_active:
             self._probe.cancel()
+            # This path clears ``_probe`` without going through ``_finish_probe``,
+            # so it is the only place that can record why the probe ended.  A
+            # waiter that saw nothing here would be satisfied by the *previous*
+            # calibration and answer with it.
+            self._probe_outcome = (self._probe_seq, False, f"标定中止：{what}")
             self._log("warn", f"「{what}」中断了正在进行的标定，标定已取消")
 
     # ── shutdown and safety ─────────────────────────────────────────────────
@@ -1689,12 +1719,18 @@ class WorkerLoop:
         self._abandon(f"急停：{self._estop_reason}")
         self._signals.fault.emit(0, "急停已触发", "排除原因后按「复位急停」")
 
-    def _abandon(self, reason: str) -> None:
-        """Drop everything and leave the motor harmless."""
+    def _abandon(self, reason: str, *, kind: str | None = KIND_ESTOPPED) -> None:
+        """Drop everything and leave the motor harmless.
+
+        ``kind`` is the wire error class the operator's browser translates, so it
+        has to name the cause: an E-stop and a control loop that died on its back
+        are not the same event, and reporting the second as ``GripperEstoppedError``
+        told an English console the E-stop had latched when nothing had.
+        """
         self._end_probe_on_interrupt("停止")
         self._probe = None
         self._motion.idle()
-        self._alert("error", reason, kind=KIND_ESTOPPED)
+        self._alert("error", reason, kind=kind)
         self._safe_stop()
 
     def _safe_stop(self) -> None:
@@ -1787,6 +1823,20 @@ class WorkerLoop:
     @property
     def probe(self) -> Any:
         return self._probe
+
+    @property
+    def probe_seq(self) -> int:
+        """Id of the probe in flight (0 before the first one); only moves forward."""
+        return self._probe_seq
+
+    @property
+    def probe_outcome(self) -> tuple[int, bool, str] | None:
+        """``(probe id, ok, reason)`` of the last probe that reached an end.
+
+        ``None`` while one is running or before the first; ``ok`` is false for
+        every way a probe can end without leaving a saved calibration.
+        """
+        return self._probe_outcome
 
     @property
     def stopping(self) -> bool:

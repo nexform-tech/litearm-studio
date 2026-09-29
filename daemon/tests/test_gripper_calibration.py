@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -345,6 +346,25 @@ def _connect(session: GripperSession, **params: Any) -> None:
     assert session.connected()
 
 
+def _heartbeat_in_background(session: GripperSession) -> threading.Event:
+    """Keep the watchdog fed while the calling thread blocks on a long command.
+
+    A real probe takes tens of seconds and the daemon's own heartbeat loop feeds
+    it only while a browser is connected; a test that calls ``zero()`` on the
+    calling thread has to do the same, or the watchdog (§5.1) aborts the probe
+    out from under it.  Set the returned event to stop.
+    """
+    stop = threading.Event()
+
+    def beat() -> None:
+        while not stop.is_set():
+            session.heartbeat()
+            time.sleep(0.2)
+
+    threading.Thread(target=beat, name="test-heartbeat", daemon=True).start()
+    return stop
+
+
 def test_load_template_persists_the_mount_and_reports_provenance(tmp_path: Path) -> None:
     session = _session(tmp_path)
     try:
@@ -448,11 +468,16 @@ def test_set_allow_factory_is_persisted(tmp_path: Path) -> None:
     assert _session(tmp_path).config.allow_factory is True
 
 
-def test_list_calibrations_marks_the_one_in_effect_and_includes_it(tmp_path: Path) -> None:
+def test_list_calibrations_marks_the_one_in_effect_and_includes_it(
+        tmp_path: Path, home: Path) -> None:
     """生效的那一份必须出现在列表里 —— 即使它不是解析顺序里的候选。
 
     仿真后端保存到自己的文件（绝不碰台架那份），所以只有候选列表的页面会在一次成功的
     zero() 之后显示"什么都没测到"。
+
+    ⚠ 探测期间必须一直喂心跳。看门狗 (3s) 会中止没有心跳的探测，而中止的探测现在会
+    **如实报错**（见 ``test_an_aborted_probe_is_never_reported_as_measured``）。心跳一
+    停这条用例就失败 —— 那正是它要钉住的行为：只有真的测完才会得到 ``measured``。
     """
     session = _session(tmp_path)
     try:
@@ -466,8 +491,16 @@ def test_list_calibrations_marks_the_one_in_effect_and_includes_it(tmp_path: Pat
         while time.monotonic() < deadline and not (session.state() and session.state()["enabled"]):
             session.heartbeat()
             time.sleep(0.01)
-        result = session.execute("gripper.zero", {"travelMm": 85.0})
+        beats = _heartbeat_in_background(session)
+        try:
+            result = session.execute("gripper.zero", {"travelMm": 85.0})
+        finally:
+            beats.set()
         assert result["source"] == "measured"
+        # 一次真的实测：结果必须已经落盘，而不是内存里那一份（内存的那份不算数）。
+        info = session.loop.info
+        assert info is not None and info.path is not None
+        assert Path(info.path).is_file(), info.path
 
         after = session.execute("gripper.list_calibrations", {})
         active = [item for item in after if item.get("inUse")]
@@ -477,3 +510,34 @@ def test_list_calibrations_marks_the_one_in_effect_and_includes_it(tmp_path: Pat
         assert active[0]["closedRad"] is not None
     finally:
         session.close()
+
+
+def test_an_aborted_probe_is_never_reported_as_measured(tmp_path: Path, home: Path) -> None:
+    """被中止的探测不能拿"上一份标定"冒充结果。
+
+    中止路径（看门狗 / 急停 / 断开 / 位置帧发不出去）都会清掉 ``probe`` 而把 ``info``
+    留在**上一份**标定上。以前的等待谓词只看"probe 没了、info 还在且不是内存标定"，
+    于是立刻满足，``zero()`` 把那份旧标定当成刚测出来的结果回给页面，还标着
+    ``source: "measured"``，同时一个文件都没写。
+    """
+    session = _session(tmp_path)
+    try:
+        _connect(session)
+        assert session.execute("gripper.enable", {}) == {"enabled": True}
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline and not (session.state() and session.state()["enabled"]):
+            session.heartbeat()
+            time.sleep(0.01)
+
+        # 位置帧发不出去 ⇒ 探测自己在 0.5s 内中止（真机上的同类触发是链路掉了）。
+        session.loop.backend.tx_fail = True
+        with pytest.raises(GripperCalibrationError):
+            session.execute("gripper.zero", {"travelMm": 85.0})
+
+        outcome = session.loop.probe_outcome
+        assert outcome is not None and outcome[1] is False, outcome
+        # 报告失败之后，闸门仍然是关的：没有任何"刚测好的标定"被采用。
+        assert session.loop.backend.calibration_info().provenance != "measured"
+    finally:
+        session.close()
+
