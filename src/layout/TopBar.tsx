@@ -15,7 +15,6 @@ export function TopBar() {
 
   const titleMap: Record<string, string> = {
     '/control': t('nav:controlTitle'),
-    '/gripper': t('nav:gripperTitle'),
     '/log': t('nav:logTitle'),
     '/settings': t('nav:settingsTitle'),
   }

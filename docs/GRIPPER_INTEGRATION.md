@@ -2,7 +2,7 @@
 
 This document specifies how LiteGrip gripper control is added to LiteArm Studio;
 read it if you are implementing or reviewing the daemon-side gripper session, the
-WebSocket contract, or the gripper pages.
+WebSocket contract, or the gripper UI.
 
 ## 1. Scope
 
@@ -14,8 +14,8 @@ WebSocket contract, or the gripper pages.
   contract.
 - Calibration handling: which file is in effect, and what the UI is allowed to do
   with which provenance.
-- A gripper page and a settings section, both reusing the UX of the retired
-  end-effector panels (see §6.4).
+- A gripper panel on the control page and a settings section, both reusing the
+  UX of the retired end-effector panels (see §6.4).
 
 **Out of scope**
 
@@ -92,7 +92,7 @@ than rewritten:
 | New module | Responsibility |
 | --- | --- |
 | `daemon/.../gripper/session.py` | Adapts `WorkerLoop` to the daemon: replaces its signal object with a callback that emits WebSocket frames, adds `gripper.*` command intake, channel enumeration, and the per-channel settings record. |
-| `daemon/.../gripper/config.py` | Per-channel device record (channel, CAN id, mount, calibration path override, travel) persisted next to the daemon's settings. |
+| `daemon/.../gripper/config.py` | Per-channel device record (channel, CAN id, mount, calibration path override, travel) persisted next to the daemon's settings. `mount` is always `normal` or `reverse` and defaults to `normal`: the reference hardware is assembled that way, so a channel with no measured file resolves to the nominal `normal` template (row 5) rather than to the factory fallback or to nothing. |
 | `daemon/.../server.py` (edit) | Route `gripper.*` commands, relay gripper frames to clients, add the gripper to `/api/health`. |
 | `src/lib/arm/gripperClient.ts` (new) | Frontend client half: gripper frame handling and command wrappers. |
 
@@ -108,7 +108,7 @@ Additive. Existing arm frames and commands do not change.
 
 ```jsonc
 {"t":"gripper_conn","status":"disconnected|connecting|connected|error",
- "channel":"can0","canId":8,"mount":"normal|reverse|null",
+ "channel":"can0","canId":8,"mount":"normal|reverse",
  "source":"template|measured|factory|missing|null","path":"/home/u/.litegrip/can0_calibration.json",
  "travelMm":85.0,"error":null}
 
@@ -263,8 +263,8 @@ reads through `gripper.list_calibrations`.
 | 2 | `~/.litegrip/<channel>_calibration.json` | parses and validates | `measured` |
 | 3 | `LITEGRIP_CALIB` | set in the environment | `measured`, flagged as an environment override |
 | 4 | `~/.litegrip/litegrip_calibration.json` | channel field matches or is absent | `measured`, flagged as legacy |
-| 5 | SDK template `normal` / `reverse` | a mount is declared | `template` |
-| 6 | SDK bundled `factory_calibration.json` | an operator has enabled it | `factory` |
+| 5 | SDK template `normal` / `reverse` | always — the record's `mount` defaults to `normal` | `template` |
+| 6 | SDK bundled `factory_calibration.json` | row 5 had no template file to load | `factory` |
 | 7 | nothing | — | `missing` |
 
 **Gate.** Motion is allowed only when the provenance is `measured`, or `template`
@@ -297,6 +297,13 @@ nothing.
 human can choose: nudge the jaws at low torque and see which way the angle moves.
 Read the result back from the SDK and show it; a wrong pick is not silent to the
 software but it is to the operator.
+
+The record's `mount` is never absent — it defaults to `normal`, the reference
+hardware's assembly — so row 5 is the ordinary resting state of a channel with no
+measured file, and the operator changes it from the settings page, which loads the
+chosen template by name. `normal` is a *declaration*, not a measurement: row 5's
+nominal geometry is a 120 mm unit's, which is why the gate still refuses every
+millimetre target until `zero()` replaces it.
 
 ### 5.4 CAN link and channel enumeration
 
@@ -366,31 +373,44 @@ become device-parameterised before any gripper UI can exist.
 
 There are two surfaces, matching the retired product:
 
-- **A gripper page**, `/gripper`, for operating the gripper: connect state,
+- **A panel on the control page**, `src/features/solo/GripperPanel.tsx`, pinned in
+  the right column below the E-stop, for operating the gripper: connect state,
   aperture, open/close/grasp/release, force and speed, live position and
   temperature, fault clearing, E-stop state.
 - **A section in the existing settings page**, for configuring it: CAN channel,
   CAN ids, mount, which calibration file is in effect, import a calibration,
   run `zero()`, and the per-channel travel.
 
-Route, navigation entry, top-bar title and i18n namespace follow the existing
-pattern: lazy export in `src/routes.tsx`, a `<Route>` in `src/main.tsx`, an item
-in `RAIL_ITEMS`, a title in the top bar's map, and `locales/{en,zh}/gripper.json`
-plus the namespace registration and the i18n assertions.
+The panel is a component, not a route. The gripper shares the arm's CAN bus and
+is driven from the same page as the arm, so operating it must not navigate away
+from the arm's own controls — that is the retired product's layout
+(`EndEffectorControlPanel` under the E-stop) and the layout §6.4 retrieves as the
+UX baseline. Do not add a `/gripper` route, a rail item, or a top-bar title for
+it; those were removed deliberately.
 
-### 6.3 Page behaviour
+The i18n namespace is `locales/{en,zh}/gripper.json`, registered in
+`src/i18n/index.ts` and asserted in `src/i18n/__tests__/i18n.test.ts`.
+
+### 6.3 Panel behaviour
 
 - Everything writable is disabled unless the gripper `status` is `connected`, the
   drive is enabled, and the gate allows the command. Show why it is disabled.
 - The aperture slider is `0..travelMm`, commits on release, and is not echoed back
-  from the device while the user is dragging.
+  from the device while the user is dragging. "Dragging" is tracked from the
+  slider's **pointer** events, not from value changes: Radix emits
+  `onValueCommit` *before* `onValueChange` on a keyboard step, so inferring the
+  drag from the value re-opens it and the slider never reconciles again.
 - Read-back discipline, as in the settings page: after a write, show what the
   device reports, not what was sent.
 - The E-stop is reachable while a move is running. It maps to `gripper.stop`, and
-  the page shows the latched state until `gripper.reset_stop`.
+  the panel shows the latched state until `gripper.reset_stop`.
 - The calibration card always shows provenance: source label, path, both rad
   endpoints, the derived travel, and the mounting direction. "Nominal template,
-  never measured" must be visible, not implied.
+  never measured" must be visible, not implied. The endpoints and the path may sit
+  behind a collapsed `<details>` — the panel shares a column with the arm's live
+  charts — but they must be in the DOM and one click away, not summarised away.
+- Only one component may mount `useGripperAlerts()` at a time: each mount is an
+  independent subscription, so two of them raise every alert twice.
 
 ### 6.4 What to reuse from the retired panels
 
@@ -461,7 +481,7 @@ behaviour. i18n assertions for the new namespace in both locales.
 | P1 | `GripperSession` with the simulator backend, frames and commands, no UI | Daemon tests green in `--fake`; the arm's existing tests untouched |
 | P2 | Calibration resolution, provenance, gate, cross-check | The §7 calibration cases pass; a malformed or foreign file never enables motion |
 | P3 | CAN link: enumeration, probe, privileged bring-up | A correctly configured interface produces no dialog; a wrong one produces one actionable message |
-| P4 | Frontend client refactor and the gripper page | `pnpm test` green; the page drives the simulator end to end |
+| P4 | Frontend client refactor, the control-page panel and the settings section | `pnpm test` green; the panel drives the simulator end to end |
 | P5 | Settings section: channel, mount, import, `zero()` | A `zero()` run against the simulator replaces the template and survives a restart |
 | P6 | Packaging and real hardware | The released Linux artifact drives a real gripper; the Windows artifact builds without it |
 

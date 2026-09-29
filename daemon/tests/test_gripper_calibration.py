@@ -136,6 +136,29 @@ def test_row_7_nothing_is_missing_not_factory(home: Path) -> None:
     assert info.problems
 
 
+def test_the_default_mount_is_normal_so_a_fresh_install_lands_on_the_template(
+        home: Path, tmp_path: Path) -> None:
+    """默认装配方向是正装：没有实测文件时落到第 5 行，而不是第 6/7 行。
+
+    这是操作员能感到的差别：正装模板允许张开/闭合，出厂回退和"什么都没有"什么都不
+    允许。第 6/7 行仍然可达 —— 显式把方向写成别的、或模板文件缺失 —— 但默认不再走
+    那里。
+    """
+    store = ChannelStore(tmp_path / "gripper.json")
+    assert store.get(CHANNEL).mount == "normal"
+
+    session = _session(tmp_path)
+    try:
+        _connect(session)
+        info = session.loop.info
+        assert info is not None
+        assert info.provenance == calibration.PROVENANCE_TEMPLATE
+        assert info.template == "normal"
+        assert session.gate() is GateState.TEMPLATE
+    finally:
+        session.close()
+
+
 # ------------------------------------------------------------------ 拒绝的形状
 
 def test_a_file_naming_another_channel_is_never_adopted(home: Path) -> None:

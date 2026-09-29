@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom'
-import { Activity, CircleDot, Grip, Languages, Moon, Settings, Sun } from 'lucide-react'
+import { Activity, CircleDot, Languages, Moon, Settings, Sun } from 'lucide-react'
 import type { ComponentType } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
@@ -7,11 +7,10 @@ import { useTheme } from '@/lib/theme'
 
 const RAIL_ITEMS: {
   to: string
-  navKey: 'control' | 'gripper' | 'log' | 'settings'
+  navKey: 'control' | 'log' | 'settings'
   icon: ComponentType<{ size?: number | string; color?: string }>
 }[] = [
   { to: '/control', navKey: 'control', icon: CircleDot },
-  { to: '/gripper', navKey: 'gripper', icon: Grip },
   { to: '/log', navKey: 'log', icon: Activity },
   { to: '/settings', navKey: 'settings', icon: Settings },
 ]

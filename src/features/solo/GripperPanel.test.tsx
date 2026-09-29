@@ -5,13 +5,17 @@ import '@/i18n'
 // vitest 未开 globals：RTL 的自动 cleanup 不会注册。
 afterEach(cleanup)
 
-// Radix 的 Slider 会量自己的宽度（`use-size`），jsdom 没有 ResizeObserver。
+// Radix 的 Slider 会量自己的宽度（`use-size`），jsdom 没有 ResizeObserver；
+// 指针拖动还会用 Pointer Capture，jsdom 也没有实现。
 beforeAll(() => {
   vi.stubGlobal('ResizeObserver', class {
     observe() {}
     unobserve() {}
     disconnect() {}
   })
+  HTMLElement.prototype.setPointerCapture = () => {}
+  HTMLElement.prototype.releasePointerCapture = () => {}
+  HTMLElement.prototype.hasPointerCapture = () => false
 })
 
 const mocks = vi.hoisted(() => {
@@ -78,7 +82,7 @@ vi.mock('@/lib/arm/useGripper', () => ({
   useGripperAlerts: () => undefined,
 }))
 
-const { GripperPage } = await import('./GripperPage')
+const { GripperPanel } = await import('./GripperPanel')
 
 function connected(overrides: { conn?: Record<string, unknown>; state?: Record<string, unknown> } = {}) {
   mocks.present.current = true
@@ -117,18 +121,21 @@ function connected(overrides: { conn?: Record<string, unknown>; state?: Record<s
   }
 }
 
-describe('GripperPage', () => {
+describe('GripperPanel', () => {
   beforeEach(() => {
     window.localStorage.clear()
     connected()
     vi.clearAllMocks()
-    for (const key of ['open', 'close', 'grasp', 'release', 'stop', 'resetStop', 'clearFault'] as const) {
+    for (const key of [
+      'open', 'close', 'grasp', 'release', 'stop', 'resetStop', 'clearFault', 'moveTo', 'setMotion',
+    ] as const) {
       mocks[key].mockResolvedValue(null)
     }
   })
 
   it('renders the live readings and the calibration provenance', () => {
-    render(<GripperPage />)
+    render(<GripperPanel />)
+    expect(screen.getByTestId('gripper-panel')).toBeTruthy()
     expect(screen.getByTestId('gripper-position').textContent).toContain('41.2')
     expect(screen.getByTestId('gripper-temps').textContent).toContain('MOS 31')
     expect(screen.getByTestId('gripper-source').textContent).toMatch(/Measured|实测/)
@@ -139,7 +146,7 @@ describe('GripperPage', () => {
   })
 
   it('lets the operator drive the gripper when the gate is ready', () => {
-    render(<GripperPage />)
+    render(<GripperPanel />)
     fireEvent.click(screen.getByTestId('gripper-open'))
     fireEvent.click(screen.getByTestId('gripper-close'))
     fireEvent.click(screen.getByTestId('gripper-grasp'))
@@ -155,7 +162,7 @@ describe('GripperPage', () => {
       conn: { gate: 'TEMPLATE', source: 'template', template: 'normal', mount: 'reverse', declaredMount: 'reverse' },
       state: { gate: 'TEMPLATE', gateReason: '标称模板（从未实测）' },
     })
-    render(<GripperPage />)
+    render(<GripperPanel />)
     expect((screen.getByTestId('gripper-grasp') as HTMLButtonElement).disabled).toBe(true)
     expect((screen.getByTestId('gripper-open') as HTMLButtonElement).disabled).toBe(false)
     expect((screen.getByTestId('gripper-close') as HTMLButtonElement).disabled).toBe(false)
@@ -169,7 +176,7 @@ describe('GripperPage', () => {
       conn: { gate: 'BLOCKED', source: 'missing', path: null, closedRad: null, openRad: null },
       state: { gate: 'BLOCKED', gateReason: '未找到任何标定文件' },
     })
-    render(<GripperPage />)
+    render(<GripperPanel />)
     for (const id of ['gripper-open', 'gripper-close', 'gripper-grasp']) {
       expect((screen.getByTestId(id) as HTMLButtonElement).disabled).toBe(true)
     }
@@ -178,33 +185,57 @@ describe('GripperPage', () => {
 
   it('keeps the stop reachable while a move is running, and offers reset once latched', () => {
     connected({ state: { state: 'moving', positionMm: 30 } })
-    const { rerender } = render(<GripperPage />)
+    const { rerender } = render(<GripperPanel />)
     expect((screen.getByTestId('gripper-stop') as HTMLButtonElement).disabled).toBe(false)
     expect((screen.getByTestId('gripper-reset-stop') as HTMLButtonElement).disabled).toBe(true)
     fireEvent.click(screen.getByTestId('gripper-stop'))
     expect(mocks.stop).toHaveBeenCalledTimes(1)
 
     connected({ state: { state: 'stopped', enabled: false } })
-    rerender(<GripperPage />)
+    rerender(<GripperPanel />)
     expect((screen.getByTestId('gripper-reset-stop') as HTMLButtonElement).disabled).toBe(false)
     expect((screen.getByTestId('gripper-open') as HTMLButtonElement).disabled).toBe(true)
     fireEvent.click(screen.getByTestId('gripper-reset-stop'))
     expect(mocks.resetStop).toHaveBeenCalledTimes(1)
   })
 
-  it('says the daemon has no gripper session instead of showing a dead page', () => {
+  it('leaves the panel inert when the daemon has no gripper session', () => {
     mocks.present.current = false
     mocks.conn.current = null
     mocks.status.current = 'disconnected'
     mocks.state.current = null
-    render(<GripperPage />)
+    render(<GripperPanel />)
     expect((screen.getByTestId('gripper-connect') as HTMLButtonElement).disabled).toBe(true)
-    expect(screen.getByText(/no gripper session|没有夹爪会话/)).toBeTruthy()
+    // 状态徽标已经说了"离线"，不再为这个构建形态多写一段解释。
+    expect(screen.getByTestId('gripper-status').textContent).toMatch(/offline|离线/)
+    expect(screen.queryByTestId('gripper-disabled-reason')).toBeNull()
   })
 
   it('shows an unknown position as unknown rather than as zero', () => {
     connected({ state: { positionMm: null, enabled: false, state: 'disabled' } })
-    render(<GripperPage />)
+    render(<GripperPanel />)
     expect(screen.getByTestId('gripper-position').textContent).toContain('--')
+  })
+
+  it('does not echo the device position back into the slider while dragging', () => {
+    const { container, rerender } = render(<GripperPanel />)
+    // aria-label 挂在 Slider.Root 上，aria-valuenow 在它的 Thumb 上。
+    const thumb = () => container.querySelector<HTMLElement>('#gripper-aperture [role="slider"]')!
+    fireEvent.focus(thumb())
+    expect(thumb().getAttribute('aria-valuenow')).toBe('41.2')
+
+    // 按住滑块：拖动开始（指针按下），位置由手指决定。
+    fireEvent.pointerDown(thumb())
+    fireEvent.keyDown(thumb(), { key: 'ArrowRight' })
+    fireEvent.keyUp(thumb(), { key: 'ArrowRight' })
+    // 拖动期间设备报 10，滑块必须停在手指拖到的 42，而不是被拽回去（§6.3）。
+    connected({ state: { positionMm: 10 } })
+    rerender(<GripperPanel />)
+    expect(thumb().getAttribute('aria-valuenow')).toBe('42')
+
+    // 松手之后回读生效：这一刻设备报的是 10，滑块被拉回 10。
+    fireEvent.pointerUp(thumb())
+    rerender(<GripperPanel />)
+    expect(thumb().getAttribute('aria-valuenow')).toBe('10')
   })
 })

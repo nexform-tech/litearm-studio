@@ -11,7 +11,6 @@
     "mount": "装配方向",
     "mountNormal": "正向",
     "mountReverse": "反向",
-    "mountUnknown": "未声明",
     "mountMismatch": "记录声明为{{declared}}，设备实际按{{actual}}在跑 —— 请确认接线",
     "travel": "行程",
     "noSession": "本进程没有夹爪会话（非 Linux，或启动时用了 --no-gripper）",

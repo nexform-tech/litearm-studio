@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { useGripperAlerts, useGripperCalibration, useGripperConnection, useGripperState } from '@/lib/arm/useGripper'
@@ -24,15 +24,17 @@ function readStored(key: string, fallback: number, min: number, max: number): nu
   return Math.min(max, Math.max(min, parsed))
 }
 
-export type GripperPageVm = ReturnType<typeof useGripperPage>
+export type GripperPanelVm = ReturnType<typeof useGripperPanel>
 
 /**
- * 夹爪页的视图模型：一处决定"什么可以按、为什么不可以按"，页面只负责画。
+ * 控制页夹爪组件的视图模型：一处决定"什么可以按、为什么不可以按"，组件只负责画。
  *
  * 读回纪律（§6.3）：写下去之后显示的是**设备报告的**值 —— 速度/夹持力用
  * `set_motion` 的答复（daemon 已经算过钳幅），位置用状态帧，滑条在拖动期间不回灌。
+ *
+ * 配置（通道/ID/装配方向/标定文件/行程）不在这里，在 `useGripperSettings`。
  */
-export function useGripperPage() {
+export function useGripperPanel() {
   const { t } = useTranslation(['common', 'gripper'])
   const { conn, status, present, busy, connect, disconnect } = useGripperConnection()
   const state = useGripperState()
@@ -46,7 +48,9 @@ export function useGripperPage() {
     readStored(FORCE_STORAGE_KEY, FORCE_DEFAULT_N, 0, FORCE_MAX_N),
   )
   const [aperture, setAperture] = useState(0)
-  const draggingRef = useRef(false)
+  // 拖动是**指针**状态，不是值状态：Radix 在键盘步进时先发 onValueCommit 再发
+  // onValueChange，从值变化去推断拖动会把它永远打开，滑块从此不再跟设备对表。
+  const [dragging, setDragging] = useState(false)
 
   const connected = status === 'connected'
   const enabled = state?.enabled === true
@@ -57,11 +61,15 @@ export function useGripperPage() {
     conn?.declaredMount != null && conn.mount != null && conn.declaredMount !== conn.mount
 
   // ── 拖动期间不回声：手指还在滑条上时，设备的位置不该把滑块拽回去（§6.3）。
+  //
+  // `dragging` 必须在依赖里：只在 `positionMm` **变化**时回灌会漏掉松手那一刻 ——
+  // 操作员拖到 42、设备一直报 41.2，松手后 positionMm 没变，effect 不重跑，滑块就停在
+  // 42，而设备根本还没走到那儿。带上 dragging，松手会再对一次表，下一帧到达时也一样。
   useEffect(() => {
-    if (draggingRef.current) return
+    if (dragging) return
     if (state?.positionMm == null) return
     setAperture(Math.min(Math.max(state.positionMm, 0), travelMm))
-  }, [state?.positionMm, travelMm])
+  }, [state?.positionMm, travelMm, dragging])
 
   useEffect(() => {
     window.localStorage.setItem(SPEED_STORAGE_KEY, String(speedMmS))
@@ -87,9 +95,13 @@ export function useGripperPage() {
   const canControl = connected && enabled && !estopped && gateAllows(true)
   const canDirection = connected && enabled && !estopped && gateAllows(false)
 
-  /** 为什么按钮是灰的 —— 页面必须**说出原因**，而不是只灰掉（§6.3）。 */
+  /** 为什么按钮是灰的 —— 组件必须**说出原因**，而不是只灰掉（§6.3）。
+   *
+   * 没有夹爪会话时不解释：那是 daemon 侧没有夹爪的构建（Windows、
+   * `--no-gripper`），状态徽标的"离线"已经说清楚了，控制页不需要为它留一段字。
+   */
   const disabledReason = useMemo(() => {
-    if (!present) return t('gripper:connection.noSession')
+    if (!present) return ''
     if (!connected) return t('common:disconnected')
     if (estopped) return t('common:errors.gripperEstopped')
     if (!enabled) return t('common:errors.notEnabled')
@@ -213,9 +225,7 @@ export function useGripperPage() {
     aperture,
     setAperture,
     commitAperture,
-    setDragging: (dragging: boolean) => {
-      draggingRef.current = dragging
-    },
+    setDragging,
     // 动作
     open,
     close,

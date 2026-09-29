@@ -53,9 +53,13 @@ class ChannelConfig:
     channel: str = constants.CAN_CHANNEL
     can_id: int = 0x08
     mst_id: Optional[int] = None
-    #: ``"normal"`` or ``"reverse"`` (an SDK template name), or ``None`` when no
-    #: mounting direction has been declared yet.
-    mount: Optional[str] = None
+    #: ``"normal"`` or ``"reverse"`` (an SDK template name), always declared.
+    #: The reference hardware is assembled normal, so that is the default: an
+    #: undeclared mount is not a state the operator can be left in.  The
+    #: consequence is deliberate — with no measured file for the channel,
+    #: ``calibration.resolve`` then loads the ``normal`` template, which is a
+    #: direction and a nominal geometry, never a measurement.
+    mount: str = "normal"
     #: A calibration file the operator pinned for this channel.  Takes priority
     #: over the channel's own default path (see ``calibration.resolve``).
     calibration_path: Optional[str] = None
@@ -103,8 +107,15 @@ def _coerce(data: dict, fallback: ChannelConfig, channel: str) -> ChannelConfig:
                 out = replace(out, **{key: cast(data[key])})
             except (TypeError, ValueError):
                 log.warning("夹爪配置字段 %s 无法解析, 已忽略: %r", key, data[key])
-    if "mount" in data and data["mount"] in (None, "normal", "reverse"):
-        out = replace(out, mount=data["mount"])
+    # A record written before the mount had a default may carry ``null``, and a
+    # hand-edited one may carry anything else.  Neither is a direction the
+    # daemon can use; both fall back to the default rather than travelling on as
+    # ``None`` and re-opening the undeclared state.
+    declared_mount = data.get("mount")
+    if declared_mount in ("normal", "reverse"):
+        out = replace(out, mount=declared_mount)
+    elif declared_mount is not None:
+        log.warning("夹爪配置 mount 无效, 按 %s 处理: %r", out.mount, declared_mount)
     if isinstance(data.get("calibration_path"), (str, type(None))):
         out = replace(out, calibration_path=data.get("calibration_path"))
     if data.get("travel_mm") is not None:

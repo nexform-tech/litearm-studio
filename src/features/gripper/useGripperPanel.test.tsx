@@ -66,7 +66,7 @@ vi.mock('@/lib/arm/useGripper', () => ({
   useGripperAlerts: () => undefined,
 }))
 
-const { useGripperPage } = await import('./useGripperPage')
+const { useGripperPanel } = await import('./useGripperPanel')
 
 function ready(overrides: Record<string, unknown> = {}) {
   mocks.present.current = true
@@ -104,7 +104,7 @@ function ready(overrides: Record<string, unknown> = {}) {
   }
 }
 
-describe('useGripperPage', () => {
+describe('useGripperPanel', () => {
   beforeEach(() => {
     window.localStorage.clear()
     ready()
@@ -123,7 +123,7 @@ describe('useGripperPage', () => {
   })
 
   it('allows every motion when the gate is READY and the drive is enabled', () => {
-    const { result } = renderHook(() => useGripperPage())
+    const { result } = renderHook(() => useGripperPanel())
     expect(result.current.canControl).toBe(true)
     expect(result.current.canDirection).toBe(true)
     expect(result.current.disabledReason).toBe('')
@@ -134,7 +134,7 @@ describe('useGripperPage', () => {
     mocks.conn.current = { ...mocks.conn.current, gate: 'TEMPLATE', source: 'template', mount: 'reverse' }
     mocks.state.current = { ...mocks.state.current, gate: 'TEMPLATE', gateReason: '标称模板（从未实测）' }
 
-    const { result } = renderHook(() => useGripperPage())
+    const { result } = renderHook(() => useGripperPanel())
     expect(result.current.canControl).toBe(false)
     expect(result.current.canDirection).toBe(true)
     expect(result.current.gateAllows(true)).toBe(false)
@@ -143,7 +143,7 @@ describe('useGripperPage', () => {
 
   it('explains why the controls are disabled instead of leaving them grey', () => {
     ready({ enabled: false, state: 'disabled' })
-    const { result } = renderHook(() => useGripperPage())
+    const { result } = renderHook(() => useGripperPanel())
     expect(result.current.canControl).toBe(false)
     // 断言的是"说出了原因"，不是某一语言的措辞（i18n 语言由环境决定）。
     expect(result.current.disabledReason).toBe(i18n.t('common:errors.notEnabled'))
@@ -151,14 +151,14 @@ describe('useGripperPage', () => {
 
   it('locks motion behind a latched stop and says so', () => {
     ready({ state: 'stopped', enabled: false })
-    const { result } = renderHook(() => useGripperPage())
+    const { result } = renderHook(() => useGripperPanel())
     expect(result.current.estopped).toBe(true)
     expect(result.current.canControl).toBe(false)
     expect(result.current.disabledReason).toBe(i18n.t('common:errors.gripperEstopped'))
   })
 
   it('follows the device position while the user is not dragging', () => {
-    const { result, rerender } = renderHook(() => useGripperPage())
+    const { result, rerender } = renderHook(() => useGripperPanel())
     expect(result.current.aperture).toBeCloseTo(12.5)
     act(() => {
       mocks.state.current = { ...mocks.state.current, positionMm: 30 }
@@ -168,7 +168,7 @@ describe('useGripperPage', () => {
   })
 
   it('does not echo the device back into the slider while dragging', () => {
-    const { result, rerender } = renderHook(() => useGripperPage())
+    const { result, rerender } = renderHook(() => useGripperPanel())
     act(() => {
       result.current.setDragging(true)
       result.current.setAperture(60)
@@ -179,7 +179,7 @@ describe('useGripperPage', () => {
   })
 
   it('commits an aperture move with the speed currently set', async () => {
-    const { result } = renderHook(() => useGripperPage())
+    const { result } = renderHook(() => useGripperPanel())
     await act(async () => {
       result.current.commitAperture(40)
     })
@@ -188,7 +188,7 @@ describe('useGripperPage', () => {
 
   it('shows what the device reports after a motion-parameter write, not what was sent', async () => {
     mocks.setMotion.mockResolvedValue({ speedMmS: 25, forceN: 20 })
-    const { result } = renderHook(() => useGripperPage())
+    const { result } = renderHook(() => useGripperPanel())
     await act(async () => {
       result.current.commitSpeed(120)
     })
@@ -198,18 +198,20 @@ describe('useGripperPage', () => {
   })
 
   it('starts from the documented defaults (20 N, 50 mm/s) with no stored preference', () => {
-    const { result } = renderHook(() => useGripperPage())
+    const { result } = renderHook(() => useGripperPanel())
     expect(result.current.forceN).toBe(20)
     expect(result.current.speedMmS).toBe(50)
   })
 
-  it('reports no session when the daemon has none', () => {
+  it('stays quiet when the daemon has no gripper session at all', () => {
     mocks.present.current = false
     mocks.conn.current = null
     mocks.status.current = 'disconnected'
     mocks.state.current = null
-    const { result } = renderHook(() => useGripperPage())
+    const { result } = renderHook(() => useGripperPanel())
     expect(result.current.present).toBe(false)
-    expect(result.current.disabledReason).toBe(i18n.t('gripper:connection.noSession'))
+    // 这个构建形态（Windows、--no-gripper）只在控制页留一个离线的徽标，
+    // 不再多写一段解释；设置页仍然说，因为那才是配置的地方。
+    expect(result.current.disabledReason).toBe('')
   })
 })

@@ -12,9 +12,9 @@ export type GripperConnInfo = {
   channel: string
   canId: number
   /** 设备**实际**在跑的方向（从生效的限位读回）。 */
-  mount: 'normal' | 'reverse' | null
+  mount: 'normal' | 'reverse'
   /** 记录里那行声明，与 `mount` 并排显示，好让两者能对比。 */
-  declaredMount: 'normal' | 'reverse' | null
+  declaredMount: 'normal' | 'reverse'
   template: string | null
   source: CalibrationSource | null
   path: string | null
@@ -111,8 +111,9 @@ function str(v: unknown, fallback = ''): string {
   return typeof v === 'string' ? v : fallback
 }
 
-function mount(v: unknown): 'normal' | 'reverse' | null {
-  return v === 'normal' || v === 'reverse' ? v : null
+/** 装配方向没有"未声明"这一态：daemon 永远给一个方向，缺字段时按默认的正装。 */
+function mount(v: unknown): 'normal' | 'reverse' {
+  return v === 'reverse' ? 'reverse' : 'normal'
 }
 
 /** 夹爪状态帧归一化：缺失字段退化为安全默认，`positionMm` 保持 `null` 语义。 */

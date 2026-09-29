@@ -70,14 +70,18 @@ def connect(session: GripperSession) -> None:
     assert wait_for(session.connected), f"没连上: {session.conn_info()}"
 
 
+# 每条用例一个私有 ``$HOME``, 里面放着一份 **实测** 标定(``conftest.measured_home``)。
+#
+# 两件事都需要它。一, 仿真后端的 ``save_calibration`` 写到 ``~/.litegrip/`` (见 sim.py),
+# 不隔离就会写进跑测试那个人的家目录。二, 装配方向现在默认 ``normal``, 所以"没有实测
+# 文件"的通道会落到标称模板上, 而模板的门**故意**拒绝每一个毫米目标(§5.3) —— 凡是动
+# 毫米的用例, 实测标定就是它的前提, 必须由夹具给, 不能指望跑测试那台机器的 ``$HOME``。
 @pytest.fixture(autouse=True)
-def private_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """每条用例一个私有 ``$HOME``。
+def private_home(measured_home: Path) -> None:
+    """私有 ``$HOME`` + 一份实测标定；见上面的说明。"""
+    del measured_home
 
-    仿真后端的 ``save_calibration`` 写到 ``~/.litegrip/litegrip_calibration.sim.json``
-    （见 sim.py）—— 不隔离的话, 一次成功的标定就会写进跑测试那个人的家目录。
-    """
-    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
 
 
 # ------------------------------------------------------------------ 配置存储
@@ -120,7 +124,7 @@ def test_store_drops_a_foreign_field_without_losing_the_record(tmp_path: Path) -
     }}}), encoding="utf-8")
     record = ChannelStore(path).get("can0")
     assert record.travel_mm == 85.0          # fell back to the default
-    assert record.mount is None              # an unknown mount is not a declaration
+    assert record.mount == "normal"          # an unknown mount falls back to the default
     assert record.can_id == 8                # the rest of the record survives
 
 
@@ -595,8 +599,9 @@ def test_channel_config_is_a_frozen_record() -> None:
     record = ChannelConfig(channel="can0")
     with pytest.raises(Exception):
         record.travel_mm = 10.0            # type: ignore[misc]
-    assert record.mounted is False
-    assert ChannelConfig(channel="can0", mount="normal").mounted is True
+    # 方向永远是声明过的：参考硬件是正装，所以默认就是它。
+    assert record.mounted is True
+    assert ChannelConfig(channel="can0", mount="reverse").mounted is True
     assert ChannelConfig(channel="can0").to_wire()["canId"] == 8
 
 # ------------------------------------------------------------------ 告警的 kind
