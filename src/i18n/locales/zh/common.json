@@ -100,6 +100,12 @@
     "notEnabled": "机械臂未使能 —— 请先使能再操作",
     "cartUnsupported": "当前固件未编译笛卡尔规划：movel 与笛卡尔点动不可用，请改用关节空间",
     "jointLimitsFallback": "未能从控制器读取关节软限位，滑条已退回内置默认量程",
-    "unknownError": "操作失败：{{message}}"
+    "unknownError": "操作失败：{{message}}",
+    "gripperNotConnected": "夹爪未连接：请先在夹爪页连接",
+    "gripperLinkError": "夹爪的 CAN 接口不可用：{{message}}",
+    "gripperFaultActive": "夹爪驱动报故障：{{message}}，请排除原因后清除故障",
+    "gripperCalibration": "夹爪标定不允许这个动作：{{message}}",
+    "gripperEstopped": "夹爪急停已锁存：请排除原因后按「复位急停」",
+    "gripperBusy": "夹爪正在执行另一项长操作（标定），请等它结束"
   }
 }

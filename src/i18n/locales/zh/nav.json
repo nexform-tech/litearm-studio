@@ -9,5 +9,7 @@
   "themeToDark": "切换为深色配色",
   "themeToLight": "切换为浅色配色",
   "themeDarkLabel": "深色",
-  "themeLightLabel": "浅色"
+  "themeLightLabel": "浅色",
+  "gripper": "夹爪",
+  "gripperTitle": "LiteGrip 夹爪"
 }

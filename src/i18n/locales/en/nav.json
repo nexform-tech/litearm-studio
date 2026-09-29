@@ -9,5 +9,7 @@
   "themeToDark": "Switch to dark theme",
   "themeToLight": "Switch to light theme",
   "themeDarkLabel": "Dark",
-  "themeLightLabel": "Light"
+  "themeLightLabel": "Light",
+  "gripper": "Gripper",
+  "gripperTitle": "LiteGrip Gripper"
 }

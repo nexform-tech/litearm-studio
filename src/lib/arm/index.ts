@@ -7,3 +7,17 @@ export { useArmConnection } from './useArmConnection'
 export { useArmState } from './useArmState'
 export { useArmMetrics } from './useArmMetrics'
 export type { SeriesSample, MetricSeries, MetricChip, MetricType, ArmMetricsReturn, UseArmMetricsOptions } from './useArmMetrics'
+export { GripperClient, gripperClient, normalizeGripperState } from './gripperClient'
+export type {
+  CalibrationCandidate,
+  CalibrationSource,
+  GripperAlert,
+  GripperBusy,
+  GripperCalibProgress,
+  GripperConnInfo,
+  GripperState,
+  MotionSettings,
+} from './gripperClient'
+export { DaemonSocket } from './socket'
+export type { CommandError, SocketLifecycle } from './socket'
+export { gripperFail, useGripperAlerts, useGripperCalibration, useGripperConnection, useGripperState } from './useGripper'

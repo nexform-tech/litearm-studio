@@ -410,6 +410,11 @@ class GripperSession:
             "source": _wire_source(info),
             "path": getattr(info, "path", None) if info is not None else None,
             "travelMm": float(config.travel_mm),
+            # 两个端点角度与文件自带的系数：标定卡片要把它们**显示出来**，
+            # 而不是只显示一个来源标签 (§6.3)。
+            "closedRad": None if limits is None else limits.closed_rad,
+            "openRad": None if limits is None else limits.open_rad,
+            "fileRadToMm": None if info is None else calibration.file_scale(info.raw),
             "error": error,
             "gate": gate.value if gate is not None else None,
             "gateReason": reason,

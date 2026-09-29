@@ -18,6 +18,17 @@ describe('i18n Internationalization', () => {
     expect(i18n.t('nav:settings')).toBe('设置')
     expect(i18n.t('settings:payload.title')).toBe('末端负载')
     expect(i18n.t('settings:tabs.joints')).toBe('增益与限位')
+    // 夹爪命名空间（§6.2）：导航、动作、闸门与新增的错误种类都要在两种语言里存在。
+    expect(i18n.t('nav:gripper')).toBe('夹爪')
+    expect(i18n.t('nav:gripperTitle')).toBe('LiteGrip 夹爪')
+    expect(i18n.t('gripper:actions.open')).toBe('张开')
+    expect(i18n.t('gripper:actions.resetStop')).toBe('复位急停')
+    expect(i18n.t('gripper:source.template')).toBe('标称模板（从未实测）')
+    expect(i18n.t('gripper:gate.TEMPLATE')).toBe('标称模板')
+    expect(i18n.t('gripper:state.grasping')).toBe('夹持中')
+    expect(i18n.t('gripper:zero.start')).toBe('开始标定')
+    expect(i18n.t('gripper:settings.allowFactory')).toBe('允许出厂标定（已确认风险）')
+    expect(i18n.t('common:errors.gripperCalibration')).toContain('标定')
   })
 
   it('switches to English (en) and returns corresponding keys', async () => {
@@ -34,6 +45,16 @@ describe('i18n Internationalization', () => {
     expect(i18n.t('settings:header.title')).toBe('Controller Parameters & Calibration')
     expect(i18n.t('settings:tabs.diagnostics')).toBe('Diagnostics')
     expect(i18n.t('settings:joints.factory')).toBe('Restore factory')
+    expect(i18n.t('nav:gripper')).toBe('Gripper')
+    expect(i18n.t('nav:gripperTitle')).toBe('LiteGrip Gripper')
+    expect(i18n.t('gripper:actions.open')).toBe('Open')
+    expect(i18n.t('gripper:actions.resetStop')).toBe('Reset stop')
+    expect(i18n.t('gripper:source.template')).toBe('Nominal template (never measured)')
+    expect(i18n.t('gripper:gate.BLOCKED')).toBe('Blocked')
+    expect(i18n.t('gripper:state.grasping')).toBe('Grasping')
+    expect(i18n.t('gripper:zero.start')).toBe('Start calibration')
+    expect(i18n.t('gripper:settings.allowFactory')).toContain('factory')
+    expect(i18n.t('common:errors.gripperNotConnected')).toContain('not connected')
   })
 
   it('updates document.documentElement.lang on language change', async () => {

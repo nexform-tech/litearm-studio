@@ -5,3 +5,4 @@ import { lazy } from 'react'
 export const SoloConsole = lazy(() => import('./features/solo/SoloConsole').then((m) => ({ default: m.SoloConsole })))
 export const TelemetryLogsPage = lazy(() => import('./features/telemetry/TelemetryLogsPage').then((m) => ({ default: m.TelemetryLogsPage })))
 export const SettingsPage = lazy(() => import('./features/settings/SettingsPage').then((m) => ({ default: m.SettingsPage })))
+export const GripperPage = lazy(() => import('./features/gripper/GripperPage').then((m) => ({ default: m.GripperPage })))
