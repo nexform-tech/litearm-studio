@@ -299,6 +299,11 @@ software but it is to the operator.
   correctly configured bus never produces a password dialog.
 - `--no-can-setup` exists for machines where the interface is managed by the
   operator or by systemd, and for tests.
+- `gripper.connect` refuses a channel the kernel did not enumerate, and lists the
+  ones it did, when at least one CAN interface was found. An empty enumeration
+  means the enumeration itself is unavailable (`/sys` absent, a container, a
+  non-Linux CI), and treating that as "the interface does not exist" would refuse
+  to connect on a machine whose bus is fine.
 
 ### 5.5 Simulation
 

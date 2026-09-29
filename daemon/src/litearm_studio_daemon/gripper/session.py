@@ -40,6 +40,7 @@ from ..errors import (
     GripperBusyError,
     GripperCalibrationError,
     GripperEstoppedError,
+    GripperLinkError,
     GripperNotConnectedError,
     UnknownCommandError,
 )
@@ -617,12 +618,38 @@ class GripperSession:
             return {"started": False}
         if self._status == "connecting":
             return {"started": False}
+        self._require_known_channel()
         with self._lock:
             self._status = "connecting"
             self._last_error = None
         self._broadcast({"t": "gripper_conn", **self.conn_info()})
         loop.submit(cmd.Connect())
         return {"started": True}
+
+    def _require_known_channel(self) -> None:
+        """Refuse a channel this machine does not have, and list the ones it does.
+
+        §5.4: enumeration comes from ``/sys/class/net/*/type``, never from a
+        hardcoded ``can0..can2``.  The refusal is deliberately conditional — it
+        fires only when the kernel *did* name at least one CAN interface and the
+        configured one is not among them.  An empty list means the enumeration
+        itself is unavailable (no ``/sys``, a container, a non-Linux CI), and
+        treating that as "this interface does not exist" would refuse to connect
+        on a machine where the bus is fine.
+
+        The simulator is exempt: it has no interfaces and needs none.
+        """
+        if self._fake:
+            return
+        from .can_link import list_channels
+
+        available = list_channels()
+        channel = self.config.channel
+        if available and channel not in available:
+            raise GripperLinkError(
+                f"本机没有 CAN 接口 {channel!r}；枚举到的接口是 "
+                f"{', '.join(available)}。用 --can-channel 指定，"
+                "或在设置页里选一个存在的接口")
 
     def _identity_changes(self, p: dict) -> Dict[str, Any]:
         changes: Dict[str, Any] = {}
