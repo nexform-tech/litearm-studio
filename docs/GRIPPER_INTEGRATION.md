@@ -273,6 +273,11 @@ Every millimetre target (`gripper.move_to`, `gripper.grasp`) requires `measured`
 `factory` requires an explicit, persisted operator acknowledgement
 (`gripper.set_allow_factory`). `missing` allows nothing but `zero`.
 
+`zero` has a precondition of its own: the axis must have reported a position since
+it was last enabled. The probe is seeded from that reading and drives ungated, so a
+probe started while the SDK is still serving its `0.0 rad` placeholder is refused
+rather than run.
+
 The gate is evaluated twice on purpose: the tick asks "may the axis be driven at
 all" (a template says yes, under its own nominal limits), and each command asks
 "may this one name a millimetre" (a template says no). The second question lives

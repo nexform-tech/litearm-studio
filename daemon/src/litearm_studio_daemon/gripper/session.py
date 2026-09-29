@@ -998,6 +998,15 @@ class GripperSession:
             # needs a motor that answers.  Said here rather than left to the
             # tick, because a probe refused on the tick looks like nothing.
             raise ValueError("标定需要电机使能；请先使能再运行零位标定")
+        if loop.measured_rad() is None:
+            # Enabled, but no status frame has been counted since this
+            # energisation: the SDK still serves its ``0.0`` rad placeholder, and
+            # a probe seeded from that would drive to a pose the jaws have never
+            # been in.  Refused here rather than on the tick, so the operator gets
+            # a structured reason instead of a five-second wait and a generic
+            # "could not start".
+            raise GripperCalibrationError(
+                "还没有读到位置：请先使能，并等到夹爪上报状态帧之后再开始标定")
 
         # The travel is the numerator of every millimetre the calibration will
         # produce, so it is recorded before the probe uses it.

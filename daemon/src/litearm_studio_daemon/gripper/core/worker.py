@@ -1430,10 +1430,24 @@ class WorkerLoop:
         else:
             probe = TwoPointCalibFSM(stroke)
 
+        # Where the jaws are, before anything is commanded from it.  The raw
+        # telemetry is not a reading: the SDK serves ``0.0`` rad until a status
+        # frame has arrived, and ``0.0`` is *inside* the travel, so it converts
+        # to a plausible millimetre value of a place the jaws have never been.
+        # Every other command path refuses on :meth:`_measured_rad`; a probe is
+        # the worst one to skip it, because it seeds its reference from this
+        # number and then drives ungated at ``kp=60`` for a whole step interval.
+        entry_rad = self._measured_rad()
+        if entry_rad is None:
+            self._alert(
+                "error", "还没有读到位置，无法开始标定；请先使能并等状态帧到达",
+                kind=KIND_CALIBRATION,
+            )
+            return
         # The probe owns the axis from here: the motion FSM must not be holding a
         # position at the same time, or the two would send frames alternately.
         self._motion.idle()
-        if not probe.start(self._tele.position_rad):
+        if not probe.start(entry_rad):
             self._alert("error", f"无法开始标定：{probe.note}", kind=KIND_CALIBRATION)
             return
         self._probe = probe
@@ -1819,6 +1833,15 @@ class WorkerLoop:
     @property
     def telemetry(self) -> Telemetry:
         return self._tele
+
+    def measured_rad(self) -> float | None:
+        """The last measured angle, or ``None`` when none has been counted.
+
+        Public twin of :meth:`_measured_rad`, for the session: it refuses a probe
+        before queueing it, instead of leaving the operator with a five-second
+        wait and a generic "could not start" after the tick refused it.
+        """
+        return self._measured_rad()
 
     @property
     def probe(self) -> Any:

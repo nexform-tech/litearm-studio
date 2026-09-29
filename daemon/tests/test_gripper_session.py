@@ -15,6 +15,7 @@ import pytest
 
 from litearm_studio_daemon.errors import (
     GripperBusyError,
+    GripperCalibrationError,
     GripperEstoppedError,
     GripperNotConnectedError,
     UnknownCommandError,
@@ -336,13 +337,23 @@ def test_probe_can_be_aborted_by_an_estop(tmp_path: Path) -> None:
     """§7: 标定探测跑到一半撞上急停, 探测必须被丢掉。"""
     from litearm_studio_daemon.gripper.backend.sim import SimBackend
 
-    backend = SimBackend(clock=lambda: 0.0)
-    loop = WorkerLoop(backend, Recorder(), clock=lambda: 0.0, sleep=lambda _s: None,
+    # 时钟必须往前走: 仿真的状态帧按 dt 累积, 而冻结的时钟等于"电机不回帧" ——
+    # 那种状态下探测现在会被拒绝, 见
+    # test_zero_is_refused_before_a_position_has_been_read。
+    now = [0.0]
+
+    def clock() -> float:
+        now[0] += 0.005
+        return now[0]
+
+    backend = SimBackend(clock=clock)
+    loop = WorkerLoop(backend, Recorder(), clock=clock, sleep=lambda _s: None,
                       watchdog_s=None)
     loop.submit(cmd.Connect())
     loop.tick_once(0.005)
     loop.submit(cmd.Enable())
     loop.tick_once(0.005)
+    assert loop._have_position, "使能之后应当已经收到状态帧, 否则探测会被拒绝"
     loop.submit(cmd.StartGuidedCalibration(reversed_mount=False))
     for _ in range(20):
         loop.tick_once(0.005)
@@ -545,6 +556,37 @@ def test_reconfiguring_while_the_old_loop_is_busy_is_refused(tmp_path: Path) -> 
             session.execute("gripper.connect", {"channel": "can2"})
         # 拒绝之后仍然只有一个活的 loop 对象, 而且没有第二个线程。
         assert session.loop.backend is not None
+    finally:
+        session.close()
+
+
+def test_zero_is_refused_before_a_position_has_been_read(tmp_path: Path) -> None:
+    """使能了但还没有位置帧时不许开探测 —— `0.0 rad` 是占位符, 不是读数。
+
+    SDK 在第一帧状态到达之前一直返回 `0.0 rad`, 而 `0.0` 落在行程**里面**: 换算出来
+    是个看得过去的毫米数, 所以它不会因为"离谱"被拦下。探测却把它当参考起点
+    (`_ref_rad = entry + step`)、以 kp=60 和 `ungated=True` 发帧, 直到下一个步进点
+    才重新锚定 —— 也就是真机上"使能后立刻标定"或"链路连着但电机不回帧"的那一拍。
+    """
+    session = make_session(tmp_path)
+    try:
+        connect(session)
+        # 链路"连着"但电机不回答: 真机上的 RX 断线 / CAN ID 不匹配。
+        session.loop.backend.no_frames = True
+        assert session.execute("gripper.enable", {}) == {"enabled": True}
+        assert wait_for(lambda: session.loop.enabled)
+        assert not session.loop._have_position, "这条用例需要'还没读到位置'的状态"
+
+        before = session.loop.probe_seq
+        with pytest.raises(GripperCalibrationError, match="位置"):
+            session.execute("gripper.zero", {"travelMm": 85.0})
+        assert session.loop.probe_seq == before, "被拒绝的标定不该开探测"
+        assert session.loop.measured_rad() is None
+
+        # worker 那道门是权威, 直接钉住它: 会话那道只是把理由提前说清楚。
+        session.loop._start_probe(guided=True)
+        assert session.loop.probe is None
+        assert session.loop.probe_seq == before
     finally:
         session.close()
 
