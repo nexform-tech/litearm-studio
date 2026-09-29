@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Chart as ChartJS,
@@ -14,16 +14,19 @@ import {
 import { Line } from 'react-chartjs-2'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { SegmentedControl, type SegItem } from '@/components/SegmentedControl'
 import { buildMetricDatasets } from '@/components/metricDatasets'
-import { chartCountFor } from '@/components/metricChartCount'
-import type { SeriesSample, MetricSeries, MetricChip } from '@/lib/arm'
+import type { SeriesSample, MetricSeries, MetricChip, MetricType } from '@/lib/arm'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip)
 ChartJS.defaults.font.family = "'JetBrains Mono', ui-monospace, monospace"
 
 export type MetricsPanelProps = {
-  /** 按优先级排列的指标；高度不够时从后往前少画。 */
+  /** 可切换的指标，顺序即标签顺序。 */
   metrics: MetricSeries[]
+  /** 当前展示的指标（由选择记忆决定，见 `lib/arm/metricSelection`）。 */
+  activeMetric: MetricType
+  selectMetric: (id: MetricType) => void
   pauseLabel: string
   togglePause: () => void
   series: SeriesSample[]
@@ -37,6 +40,8 @@ export type MetricsPanelProps = {
 
 export function MetricsPanel({
   metrics,
+  activeMetric,
+  selectMetric,
   pauseLabel,
   togglePause,
   series,
@@ -48,26 +53,22 @@ export function MetricsPanel({
   selectNone,
 }: MetricsPanelProps) {
   const { t, i18n } = useTranslation(['common'])
-  const chartsRef = useRef<HTMLDivElement | null>(null)
-  // 先按 1 张渲染，挂载后立刻按真实高度重算；量不到高度时停在 1。
-  const [count, setCount] = useState(1)
 
-  useEffect(() => {
-    const el = chartsRef.current
-    if (!el) return
-    const measure = () => {
-      const rootPx = parseFloat(getComputedStyle(document.documentElement).fontSize)
-      setCount(chartCountFor(el.clientHeight, rootPx, metrics.length))
-    }
-    measure()
-    // jsdom 没有 ResizeObserver —— 那里量不到高度，停在 1 张即可，不影响渲染断言。
-    if (typeof ResizeObserver === 'undefined') return
-    const ro = new ResizeObserver(measure)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [metrics.length])
+  // 一次只画一张：右列高度只够一张能读的图，其余指标靠上面的标签切换，而不是挤在一起。
+  const active = metrics.find((m) => m.id === activeMetric) ?? metrics[0]
 
-  // 标签对所有图一致：同一个 10s 滚动窗口。
+  const tabs: SegItem[] = useMemo(
+    () =>
+      metrics.map((m) => ({
+        key: m.id,
+        label: m.name,
+        active: m.id === active?.id,
+        onClick: () => selectMetric(m.id),
+      })),
+    [metrics, active?.id, selectMetric],
+  )
+
+  // 标签对所有指标一致：同一个 10s 滚动窗口。
   const labels = useMemo(
     () =>
       series.map((s) =>
@@ -77,9 +78,6 @@ export function MetricsPanel({
       ),
     [series, i18n.language],
   )
-
-  // 每张图一条曲线/关节 —— 条数跟着 chips（= daemon 报告的轴数）走，不固定 7（issue #37）。
-  const charts = useMemo(() => metrics.slice(0, count), [metrics, count])
 
   const dataFor = (m: MetricSeries): ChartData<'line'> => ({
     labels,
@@ -110,13 +108,14 @@ export function MetricsPanel({
       x: {
         grid: { display: false },
         border: { color: 'rgba(128,138,150,0.3)' },
-        ticks: { color: '#9aa6b6', font: { size: 10 }, maxTicksLimit: 4, maxRotation: 0 },
+        // 整块面板现在只有一张图，横轴放得下比原来多一倍的时间刻度。
+        ticks: { color: '#9aa6b6', font: { size: 10 }, maxTicksLimit: 6, maxRotation: 0 },
       },
       y: {
         suggestedMin: m.id === 'temp' ? 0 : undefined,
         grid: { color: 'rgba(128,138,150,0.16)' },
         border: { display: false },
-        ticks: { color: '#9aa6b6', font: { size: 10 }, maxTicksLimit: 3 },
+        ticks: { color: '#9aa6b6', font: { size: 10 }, maxTicksLimit: 5 },
       },
     },
   })
@@ -169,48 +168,76 @@ export function MetricsPanel({
         </Button>
       </div>
 
-      <div ref={chartsRef} className="flex min-h-0 flex-1 flex-col gap-2">
-        {charts.map((m) => (
-          <div
-            key={m.id}
-            className="flex min-h-0 flex-1 flex-col rounded-[0.625rem] border bg-muted/30 px-2 py-1.5"
-          >
-            <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
-              <div className="flex items-baseline gap-1.5">
-                <span className="text-[0.78125rem] font-semibold text-foreground">{m.name}</span>
-                <span className="font-mono text-[0.625rem] text-muted-foreground">{m.unit}</span>
-                <span className="font-mono text-[0.5625rem] text-muted-foreground/70">{m.axis}</span>
-              </div>
-              {/* 每个关节在这个指标下的当前读数；被关掉的曲线压暗但仍然显示数值。 */}
-              <div className="flex flex-wrap items-baseline gap-x-2">
-                {chips.map((c, i) => (
-                  <span
-                    key={c.key}
-                    className="font-mono text-[0.625rem] whitespace-nowrap"
-                    style={{ color: c.on ? 'var(--ink-muted)' : 'var(--line-strong)' }}
-                  >
-                    {c.k} {m.live?.[i] ?? '—'}
-                  </span>
-                ))}
-              </div>
+      {/* 指标切换：高度不足时不再从后往前丢图，而是让用户自己选看哪一个。 */}
+      <SegmentedControl
+        items={tabs}
+        ariaLabel={t('common:metrics.selectMetric')}
+        containerStyle={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: '0.1875rem',
+          background: 'var(--line-soft)',
+          borderRadius: '0.5625rem',
+          padding: '0.1875rem',
+        }}
+        itemStyle={{
+          padding: '0.3125rem 0.5rem',
+          borderRadius: '0.4375rem',
+          fontSize: '0.71875rem',
+          color: 'var(--ink-subtle)',
+          fontWeight: 500,
+          whiteSpace: 'nowrap',
+        }}
+        activeItemStyle={{
+          background: 'var(--seg-active)',
+          color: 'var(--ink)',
+          fontWeight: 650,
+          boxShadow: '0 0.0625rem 0.125rem rgba(16,24,40,.1)',
+        }}
+      />
+
+      {active ? (
+        <div
+          data-testid="metric-chart"
+          className="flex min-h-0 flex-1 flex-col rounded-[0.625rem] border bg-muted/30 px-2 py-1.5"
+        >
+          <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-[0.78125rem] font-semibold text-foreground">{active.name}</span>
+              <span className="font-mono text-[0.625rem] text-muted-foreground">{active.unit}</span>
+              <span className="font-mono text-[0.5625rem] text-muted-foreground/70">
+                {active.axis}
+              </span>
             </div>
-            <div className="relative min-h-0 flex-1">
-              {(!liveData || m.noData) && (
-                <div className="absolute inset-0 z-10 flex items-center justify-center px-2 text-center font-mono text-[0.6875rem] text-muted-foreground/80">
-                  {m.noData
-                    ? t('common:metrics.errUnavailable')
-                    : simMode
-                      ? t('common:metrics.simData')
-                      : t('common:metrics.noLiveData')}
-                </div>
-              )}
-              <div className="absolute inset-0 px-1 pt-1 pb-0.5">
-                <Line data={dataFor(m)} options={optionsFor(m)} />
-              </div>
+            {/* 每个关节在当前指标下的读数；被关掉的曲线压暗但仍然显示数值。 */}
+            <div className="flex flex-wrap items-baseline gap-x-2">
+              {chips.map((c, i) => (
+                <span
+                  key={c.key}
+                  className="font-mono text-[0.625rem] whitespace-nowrap"
+                  style={{ color: c.on ? 'var(--ink-muted)' : 'var(--line-strong)' }}
+                >
+                  {c.k} {active.live?.[i] ?? '—'}
+                </span>
+              ))}
             </div>
           </div>
-        ))}
-      </div>
+          <div className="relative min-h-0 flex-1">
+            {(!liveData || active.noData) && (
+              <div className="absolute inset-0 z-10 flex items-center justify-center px-2 text-center font-mono text-[0.6875rem] text-muted-foreground/80">
+                {active.noData
+                  ? t('common:metrics.errUnavailable')
+                  : simMode
+                    ? t('common:metrics.simData')
+                    : t('common:metrics.noLiveData')}
+              </div>
+            )}
+            <div className="absolute inset-0 px-1 pt-1 pb-0.5">
+              <Line data={dataFor(active)} options={optionsFor(active)} />
+            </div>
+          </div>
+        </div>
+      ) : null}
     </Card>
   )
 }

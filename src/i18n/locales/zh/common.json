@@ -56,6 +56,7 @@
   "langSystem": "跟随系统",
   "metrics": {
     "title": "实时曲线",
+    "selectMetric": "选择要显示的指标",
     "temp": "温度",
     "dq": "速度",
     "tau": "力矩",

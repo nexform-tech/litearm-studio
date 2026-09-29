@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { jointColor } from '../colors'
 import { DEFAULT_JOINT_COUNT, jointIndexes, useJointCount } from './axes'
+import { readStoredMetric, storeMetric } from './metricSelection'
 import { useArmConnection } from './useArmConnection'
 import { useArmState } from './useArmState'
 
@@ -18,8 +19,7 @@ export type MetricType = 'temp' | 'dq' | 'tau' | 'err'
 /**
  * 一张图对应一个指标：名称/单位/轴标签，外加**该指标下逐关节的当前读数**。
  *
- * ⚠ 读数按指标分开，不再只留"当前指标"那一份：面板会同时画好几张图（数量随高度自适应），
- * 每张图要显示自己的读数。
+ * ⚠ 读数按指标分开，不再只留"当前指标"那一份：面板切换指标时每张图都要显示自己的读数。
  */
 export type MetricSeries = {
   id: MetricType
@@ -45,7 +45,7 @@ export type MetricChip = {
   toggle: () => void
 }
 
-/** 图的堆叠顺序即优先级：高度不够时**从后往前丢**（跟踪误差最先让位）。 */
+/** 图的堆叠顺序即面板里的切换顺序，第一项是默认指标（温度）。 */
 export const METRIC_DEFS = [
   { id: 'temp', name: '温度', unit: '°C', axis: 'T (°C)', amp: 0.35 },
   { id: 'dq', name: '速度', unit: 'rad/s', axis: 'dq (rad/s)', amp: 1.0 },
@@ -92,6 +92,8 @@ export function useArmMetrics(options: UseArmMetricsOptions = {}) {
 
   const [shown, setShown] = useState<number[]>(() => jointIndexes(DEFAULT_JOINT_COUNT))
   const [paused, setPaused] = useState(false)
+  // 右列高度只够一张图，所以指标由用户切换；选择记在 localStorage 里跨刷新保留。
+  const [activeMetric, setActiveMetric] = useState<MetricType>(() => readStoredMetric())
 
   const armStateRef = useRef(armState)
   armStateRef.current = armState
@@ -208,9 +210,15 @@ export function useArmMetrics(options: UseArmMetricsOptions = {}) {
   const selectAll = useCallback(() => setShown(jointIndexes(jointCount)), [jointCount])
   const selectNone = useCallback(() => setShown([]), [])
   const togglePause = useCallback(() => setPaused((p) => !p), [])
+  const selectMetric = useCallback((id: MetricType) => {
+    setActiveMetric(id)
+    storeMetric(id)
+  }, [])
 
   return {
     metricSeries,
+    activeMetric,
+    selectMetric,
     pauseLabel: paused ? t('common:metrics.resume') : t('common:metrics.pause'),
     togglePause,
     selectAll,

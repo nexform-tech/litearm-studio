@@ -30,6 +30,7 @@ const armWith = (count: number) => ({
 
 describe('useArmMetrics axis count', () => {
   beforeEach(() => {
+    window.localStorage.clear()
     mocks.status = 'connected'
     mocks.conn = conn(7)
     mocks.armState = armWith(7)
@@ -58,10 +59,10 @@ describe('useArmMetrics axis count', () => {
     expect(result.current.shown).toEqual([0, 1, 2, 3, 4, 5, 6])
   })
 
-  it('exposes the four metrics in priority order', () => {
+  it('exposes the four metrics in panel order', () => {
     const { result } = renderHook(() => useArmMetrics({ real: true }))
 
-    // 顺序即优先级：右列放不下时从后往前丢（跟踪误差最先让位）。
+    // 顺序即面板里的标签顺序，第一项是默认指标；满不满由用户切换决定，不再按高度丢弃。
     expect(result.current.metricSeries.map((m) => m.id)).toEqual(['temp', 'dq', 'tau', 'err'])
     expect(result.current.metricSeries.map((m) => m.unit)).toEqual(['°C', 'rad/s', 'Nm', 'rad'])
   })
@@ -97,5 +98,17 @@ describe('useArmMetrics axis count', () => {
 
     expect(result.current.chips).toHaveLength(7)
     expect(result.current.simMode).toBe(true)
+  })
+
+  it('starts on temperature and remembers the metric the operator switched to', () => {
+    // 右列只画得下选中的那一张图，所以“选中哪个指标”是必须跨刷新保留的用户选择。
+    const first = renderHook(() => useArmMetrics({ real: true }))
+    expect(first.result.current.activeMetric).toBe('temp')
+
+    act(() => first.result.current.selectMetric('tau'))
+    expect(first.result.current.activeMetric).toBe('tau')
+
+    const reopened = renderHook(() => useArmMetrics({ real: true }))
+    expect(reopened.result.current.activeMetric).toBe('tau')
   })
 })
