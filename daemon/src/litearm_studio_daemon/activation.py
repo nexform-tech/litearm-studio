@@ -33,9 +33,9 @@ ACTIVATION_PATH = "/api/v1/license"
 #: 不能猜着解析: 猜错的结果是把一台机器写成"已激活"或写坏授权记录。
 LICENSE_FORMAT = 1
 
-#: 同意文案的版本号。⚠ 用户同意的是**某一版文案**, 将来文案改了, 靠这个字段区分
-#: "他当时同意的是哪一版"。占位值是刻意的 —— 文案待法务定稿。
-CONSENT_TEXT_VERSION = "draft-1"
+#: 同意书的版本号。⚠ 用户同意的是**某一版文案**, 将来文案改了, 靠这个字段区分
+#: "他当时同意的是哪一版"。`draft-N` 是刻意的 —— 文案待法务定稿。
+CONSENT_TEXT_VERSION = "draft-2"
 
 #: 一次请求的上限与超时。激活是**人等着**的动作, 超时要短到操作员不会以为界面卡死。
 REQUEST_TIMEOUT_S = 10.0
@@ -143,19 +143,18 @@ def parse_license(raw: Any, *, expected_uid: Optional[str] = None) -> Dict[str, 
 
 # --------------------------------------------------------------------------- 服务请求
 
-#: 联系人字段的字符上限。服务端还会再判一次; 这里只是不让一次手误的粘贴把几 MB
-#: 塞进请求里。`phone` 允许留空, 其余三个是必填 —— "联系方式"至少要有一个能找到人的。
-CONTACT_REQUIRED = ("name", "organization", "email")
-CONTACT_OPTIONAL = ("phone",)
+#: 联系人字段 —— **四个都是必填**。电话也要: 现场排障时它比邮箱快得多, 而"联系不上人"
+#: 是这套注册流程最没意义的失败。
+CONTACT_FIELDS = ("name", "organization", "email", "phone")
+
+#: 单个字段的字符上限。服务端还会再判一次; 这里只是不让一次手误的粘贴把几 MB 塞进请求里。
 _CONTACT_MAX = 200
 
 
-def _contact_text(contact: dict, key: str, *, required: bool) -> str:
+def _contact_text(contact: dict, key: str) -> str:
     raw = contact.get(key)
     if raw is None or (isinstance(raw, str) and not raw.strip()):
-        if required:
-            raise ActivationError("missing_contact", f"缺少联系人字段 {key}")
-        return ""
+        raise ActivationError("missing_contact", f"缺少联系人字段 {key}")
     if not isinstance(raw, str):
         raise ActivationError("missing_contact", f"联系人字段 {key} 必须是文本")
     text = raw.strip()
@@ -178,31 +177,32 @@ def build_request(payload: dict) -> dict:
         raise ActivationError("bad_uid", "设备 UID 需为 24 位十六进制")
 
     consent = payload.get("consent")
-    if not isinstance(consent, dict) or consent.get("required") is not True:
-        raise ActivationError("consent_required", "未同意发送注册信息 —— 请先勾选同意")
+    if not isinstance(consent, dict) or consent.get("granted") is not True:
+        raise ActivationError("consent_required", "未同意信息收集说明 —— 请先阅读并同意")
 
     contact = payload.get("contact")
     if not isinstance(contact, dict):
         raise ActivationError("missing_contact", "缺少联系人信息")
 
+    diag = payload.get("diagnostics")
+    diag = diag if isinstance(diag, dict) else {}
+
     request: Dict[str, Any] = {
         "uid": uid.strip().lower(),
-        "contact": {key: _contact_text(contact, key, required=key in CONTACT_REQUIRED)
-                    for key in CONTACT_REQUIRED + CONTACT_OPTIONAL},
+        "contact": {key: _contact_text(contact, key) for key in CONTACT_FIELDS},
         "consent": {
-            "required": True,
-            "diagnostics": consent.get("diagnostics") is True,
-            # ⚠ 记的是**文案版本**: 将来同意文案改了, 靠它区分"他当时同意的是哪一版"。
+            # ⚠ 只有**一份**同意: 它覆盖下面列出的每一项, 包括 diagnostics。
+            #   所以这里没有"逐项同意"的开关 —— 要么整份同意, 要么不发。
+            "granted": True,
+            # ⚠ 记的是**文案版本**: 将来同意书改了, 靠它区分"他当时同意的是哪一版"。
             "text_version": CONSENT_TEXT_VERSION,
         },
-    }
-    if request["consent"]["diagnostics"]:
-        # 只有勾了才带上。内容是版本号这类环境信息 —— 内网地址/主机名**刻意不采集**。
-        diag = payload.get("diagnostics")
-        diag = diag if isinstance(diag, dict) else {}
-        request["diagnostics"] = {
+        # 版本号这类环境信息, 与联系人字段同在**同一份同意书**里逐项列出。
+        # 内容是版本号 —— 内网地址/主机名**刻意不采集**。
+        "diagnostics": {
             key: str(diag.get(key) or "")[:64] for key in ("studio", "sdk", "firmware")
-        }
+        },
+    }
     code = payload.get("code")
     if isinstance(code, str) and code.strip():
         # 预留: 订单号/激活码那一层如果启用, 站点直接读这个字段。今天界面上没有它。

@@ -996,8 +996,8 @@ def _payload(**over):
     doc = {
         "uid": LICENSE_DOC["uid"],
         "contact": {"name": "张三", "organization": "某大学",
-                    "email": "z@example.com", "phone": ""},
-        "consent": {"required": True, "diagnostics": False},
+                    "email": "z@example.com", "phone": "13800000000"},
+        "consent": {"granted": True},
     }
     doc.update(over)
     return doc
@@ -1047,7 +1047,7 @@ def test_activate_posts_the_consented_request_then_writes_the_credential(
     rec = fake_session.execute("activate", _payload())
 
     assert seen["url"] == activation.DEFAULT_ACTIVATION_URL
-    assert seen["request"]["consent"]["required"] is True
+    assert seen["request"]["consent"]["granted"] is True
     assert seen["request"]["contact"]["organization"] == "某大学"
     # 期望 UID 取自**设备**, 不是客户端填的那个。
     assert seen["uid"] == LICENSE_DOC["uid"]

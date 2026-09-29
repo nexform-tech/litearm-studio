@@ -138,24 +138,28 @@ believe". The file name carries that information instead
     "name": "Zhang San",
     "organization": "Example University",
     "email": "z@example.com",
-    "phone": ""
+    "phone": "13800000000"
   },
-  "consent": { "required": true, "diagnostics": false, "text_version": "draft-1" },
+  "consent": { "granted": true, "text_version": "draft-2" },
   "diagnostics": { "studio": "0.1.0", "sdk": "2.1.0", "firmware": "Litearm1.8.0-7J" },
   "code": ""
 }
 ```
 
-- `contact`: `name`, `organization` and `email` are required; `phone` may be empty.
-  Every value is trimmed and capped at 200 characters.
-- `consent.required: false` is **rejected** by the daemon before any request is
-  sent. The panel disables the button, but the daemon is the gate — a client that
-  talks to the WebSocket directly must not be able to send personal data without
-  consent.
-- `consent.text_version` records **which wording** the operator agreed to.
-- `diagnostics` is present **only** when the operator ticked the optional box. It
-  carries versions, nothing else: LAN addresses and host names are deliberately not
-  collected. The service records the source IP itself.
+- `contact`: `name`, `organization`, `email` and `phone` are **all required**. Every
+  value is trimmed and capped at 200 characters.
+- `consent` is **one document**, not a set of per-item switches: the operator reads
+  an Information Collection Consent that lists every collected item, then agrees to
+  all of it. `consent.granted: false` is **rejected** by the daemon before any
+  request is sent. The panel disables the button, but the daemon is the gate — a
+  client that talks to the WebSocket directly must not be able to send personal data
+  without consent.
+- `consent.text_version` records **which wording** the operator agreed to. It changes
+  whenever the listed items or their purpose change.
+- `diagnostics` always travels with the request, because it is one of the items
+  listed in that same consent. It carries versions, nothing else: LAN addresses and
+  host names are deliberately not collected. The service records the source IP
+  itself.
 - `code` is reserved for an order/activation code. Studio sends it when non-empty;
   no input for it exists yet. **Decide this before the service goes live**: the UID
   is printed on the board and readable by anyone with the machine, so without a
@@ -179,9 +183,10 @@ Anything else is reported as a plain server error.
 
 - The service **stores** credentials; it does not sign them. The signing key stays
   on the vendor's offline machine, exactly as the mechanism requires.
-- The panel shows the operator **the complete request body** before sending it, and
-  the body it shows is the object it sends (pinned by a test). Do not add a field
-  that the panel does not display.
+- The consent document is the **only** disclosure: it lists every collected item,
+  one by one, and the request carries nothing else. Adding a field means adding an
+  item to that document in the same change - the key set of the built request is
+  pinned by a test, so a hidden field fails the suite.
 - The credential is not a secret: it is bound to one board's UID and the firmware
   rejects it anywhere else. Sending it over plain HTTPS without an account is fine.
 - The operator needs a path that works with no internet. `import_license` is that

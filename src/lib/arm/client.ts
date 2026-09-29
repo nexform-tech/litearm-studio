@@ -99,13 +99,13 @@ export type ActivationRequest = {
   uid: string
   contact: ActivationContact
   /**
-   * `required: false` 的请求会被本地程序**当场拒**（`consent_required`）—— 同意是硬门禁，
-   * 判在守护进程那一层，界面上的按钮禁用只是方便。所以这里刻意不写成字面量 `true`：
-   * 预览要能如实显示"没勾选时的内容长什么样"。
+   * 只有**一份**同意（信息收集同意书），它覆盖请求里的每一项 —— 所以这里没有逐项开关。
+   * `granted: false` 的请求会被本地程序当场拒（`consent_required`）：同意是硬门禁，判在
+   * 守护进程那一层，界面上的按钮禁用只是方便。
    */
-  consent: { required: boolean; diagnostics: boolean }
-  /** 只在勾了"诊断信息"时才带 —— 版本号这类环境信息。 */
-  diagnostics?: { studio: string; sdk: string; firmware: string }
+  consent: { granted: boolean }
+  /** 版本号这类环境信息，与联系人字段在同一份同意书里逐项列出。 */
+  diagnostics: { studio: string; sdk: string; firmware: string }
   /** 预留：订单号/激活码那一层。今天界面上没有这个输入框。 */
   code?: string
 }

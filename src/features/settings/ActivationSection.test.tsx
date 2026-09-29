@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import '@/i18n'
 
@@ -71,12 +71,17 @@ function setClipboard(writeText: unknown) {
   Object.defineProperty(navigator, 'clipboard', { value: writeText, configurable: true })
 }
 
-/** 填满必填项并勾选同意 —— 让提交按钮变得可用。 */
-function fillForm() {
+/** 填满必填项并勾选同意 —— 让提交按钮变得可用。⚠ 电话也是必填。 */
+function fillContact() {
   fireEvent.change(screen.getByTestId('activation-name'), { target: { value: '张三' } })
   fireEvent.change(screen.getByTestId('activation-organization'), { target: { value: '某大学' } })
   fireEvent.change(screen.getByTestId('activation-email'), { target: { value: 'z@example.com' } })
-  fireEvent.click(screen.getByTestId('activation-consent-required'))
+  fireEvent.change(screen.getByTestId('activation-phone'), { target: { value: '13800000000' } })
+}
+
+function fillForm() {
+  fillContact()
+  fireEvent.click(screen.getByTestId('activation-consent'))
 }
 
 const submitButton = () => screen.getByTestId('activation-submit') as HTMLButtonElement
@@ -161,7 +166,7 @@ describe('ActivationSection', () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalled())
   })
 
-  it('keeps submit disabled until consent is ticked and the required fields are filled', () => {
+  it('keeps submit disabled until consent is ticked and all four fields are filled', () => {
     mocks.snapshot.current = LOCKED
     render(<ActivationSection />)
 
@@ -170,44 +175,76 @@ describe('ActivationSection', () => {
     fireEvent.change(screen.getByTestId('activation-name'), { target: { value: '张三' } })
     fireEvent.change(screen.getByTestId('activation-organization'), { target: { value: '某大学' } })
     fireEvent.change(screen.getByTestId('activation-email'), { target: { value: 'z@example.com' } })
+    // ⚠ 电话是必填：少它一个就不能提交。
+    expect((screen.getByTestId('activation-phone') as HTMLInputElement).required).toBe(false)
+    expect(submitButton().disabled).toBe(true)
+
+    fireEvent.change(screen.getByTestId('activation-phone'), { target: { value: '13800000000' } })
     // 必填都填了，但**没同意** -> 仍然不能提交（同意是硬门禁，界面只是提前拦住）。
     expect(submitButton().disabled).toBe(true)
 
-    fireEvent.click(screen.getByTestId('activation-consent-required'))
+    fireEvent.click(screen.getByTestId('activation-consent'))
     expect(submitButton().disabled).toBe(false)
   })
 
-  it('submits exactly the body the operator was shown', () => {
+  it('submits the consented body and shows no raw request preview', () => {
     mocks.snapshot.current = LOCKED
     render(<ActivationSection />)
     fillForm()
 
-    const preview = JSON.parse(screen.getByTestId('activation-preview').textContent ?? '{}')
-    expect(preview.uid).toBe(UID)
-    expect(preview.contact).toEqual({
-      name: '张三',
-      organization: '某大学',
-      email: 'z@example.com',
-      phone: '',
-    })
-    // 隐私政策要能点开，且指向服务站点。
-    expect(
-      screen.getByRole('link', { name: /隐私政策|Privacy policy/ }).getAttribute('href'),
-    ).toBe('https://act.nexform.tech/privacy')
+    // 「将要发送的内容」按需求去掉了 —— 采集内容改由同意书逐项列出。
+    expect(screen.queryByTestId('activation-preview')).toBeNull()
 
     fireEvent.click(submitButton())
-    // ⚠ 逐字相同：预览里显示的字段 == 发出去的字段。暗字段在这条用例下无处可藏。
-    expect(mocks.submit).toHaveBeenCalledWith(preview)
+    expect(mocks.submit).toHaveBeenCalledWith({
+      uid: UID,
+      contact: {
+        name: '张三',
+        organization: '某大学',
+        email: 'z@example.com',
+        phone: '13800000000',
+      },
+      consent: { granted: true },
+      // 版本信息与联系人字段在**同一份**同意书里，所以一起发。
+      diagnostics: { studio: '0.1.0', sdk: '2.1.0', firmware: 'Litearm1.8.0-7J' },
+    })
   })
 
-  it('adds the version block to the preview only when diagnostics are agreed to', () => {
+  it('spells out every collected item inside the consent document', () => {
     mocks.snapshot.current = LOCKED
     render(<ActivationSection />)
-    fillForm()
 
-    expect(screen.getByTestId('activation-preview').textContent).not.toContain('firmware')
-    fireEvent.click(screen.getByTestId('activation-consent-diagnostics'))
-    expect(screen.getByTestId('activation-preview').textContent).toContain('Litearm1.8.0-7J')
+    // 同意书默认关着，点开才看。
+    expect(screen.queryByTestId('activation-consent-dialog')).toBeNull()
+    fireEvent.click(screen.getByTestId('activation-consent-open'))
+
+    const dialog = screen.getByTestId('activation-consent-dialog')
+    const items = within(dialog).getAllByRole('listitem')
+    // 逐项列出：联系人、设备 UID、版本、来源 IP。
+    expect(items).toHaveLength(4)
+    expect(dialog.textContent).toMatch(/姓名|Name/)
+    expect(dialog.textContent).toMatch(/设备 UID|Device UID/)
+    expect(dialog.textContent).toMatch(/版本|versions/)
+    expect(dialog.textContent).toMatch(/来源 IP|Source IP/)
+    // 隐私政策要能点开，且指向服务站点。
+    expect(
+      within(dialog).getByRole('link', { name: /隐私政策|Privacy policy/ }).getAttribute('href'),
+    ).toBe('https://act.nexform.tech/privacy')
+  })
+
+  it('ticks the box from inside the consent document', () => {
+    mocks.snapshot.current = LOCKED
+    render(<ActivationSection />)
+    fillContact()
+
+    expect(submitButton().disabled).toBe(true)
+    fireEvent.click(screen.getByTestId('activation-consent-open'))
+    fireEvent.click(screen.getByTestId('activation-consent-agree'))
+
+    // 「同意」既勾上复选框又关掉弹窗；于是按钮变亮。
+    expect((screen.getByTestId('activation-consent') as HTMLInputElement).checked).toBe(true)
+    expect(screen.queryByTestId('activation-consent-dialog')).toBeNull()
+    expect(submitButton().disabled).toBe(false)
   })
 
   it('refuses to write while the arm is enabled, and says why', () => {

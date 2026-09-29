@@ -59,11 +59,12 @@ class FakeWebSocket {
 
 const { ArmClient } = await import('./client')
 
-/** 激活请求体 —— 前端**逐字**展示给用户看，所以这里也逐字比对。 */
+/** 激活请求体 —— 字段就是同意书里逐项列出的那些，这里逐字比对。 */
 const ACTIVATION_REQUEST = {
   uid: '101112131415161718191a1b',
-  contact: { name: '张三', organization: '某大学', email: 'z@example.com', phone: '' },
-  consent: { required: true, diagnostics: false },
+  contact: { name: '张三', organization: '某大学', email: 'z@example.com', phone: '13800000000' },
+  consent: { granted: true },
+  diagnostics: { studio: '0.1.0', sdk: '2.1.0', firmware: 'Litearm1.8.0-7J' },
 }
 
 /** 建一个已通过 WS 握手、daemon 报 connected 的客户端。 */
@@ -290,7 +291,7 @@ describe('ArmClient (daemon WebSocket)', () => {
     const { client, ws } = connectedClient()
     const promise = client.activate(ACTIVATION_REQUEST)
     const frame = ws.lastFrame('cmd')!
-    // ⚠ `p` 就是界面展示给用户看的那个对象，**一个字段都不许多**。
+    // ⚠ `p` 的字段集与同意书逐项列出的内容一致，**一个字段都不许多**。
     expect(frame).toEqual({ t: 'cmd', id: frame.id, m: 'activate', p: ACTIVATION_REQUEST })
 
     ws.receive({

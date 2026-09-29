@@ -9,11 +9,9 @@ import {
   buildActivationRequest,
   canSubmitActivation,
   missingContactFields,
-  previewJson,
 } from './activationPayload'
+import { ActivationConsentDialog } from './ActivationConsent'
 import type { ActivationState } from './useActivation'
-
-const PRIVACY_URL = 'https://act.nexform.tech/privacy'
 
 type Props = {
   vm: ActivationState
@@ -43,44 +41,17 @@ function Field({
   )
 }
 
-function Check({
-  id,
-  checked,
-  onChange,
-  children,
-}: {
-  id: string
-  checked: boolean
-  onChange: (v: boolean) => void
-  children: React.ReactNode
-}) {
-  return (
-    <label htmlFor={id} className="flex items-start gap-2 text-[0.71875rem] leading-relaxed">
-      <input
-        id={id}
-        data-testid={id}
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        className="mt-0.5 size-3.5 flex-none accent-primary"
-      />
-      <span className="text-muted-foreground">{children}</span>
-    </label>
-  )
-}
-
 /**
  * 注册信息表单 + 两条激活路径（在线领凭据 / 导入凭据文件）。
  *
- * ⚠ **"将要发送的内容"必须与真正发出去的对象是同一个东西**：它由 `buildActivationRequest`
- * 生成、由 `previewJson` 渲染，提交时把这个对象原样交给 `vm.submit()`。想加字段就得同时
- * 出现在预览里 —— 这条约束是有意的（激活会把个人信息发到公网，不许有暗字段）。
+ * ⚠ **只有一份同意**（信息收集同意书，弹窗里逐项列出采集内容）。它覆盖请求里的每一项，
+ * 所以没有"某一项可以不勾"的开关；未勾选时按钮是灰的，而真正的门禁在守护进程那一层。
  */
 export function ActivationForm({ vm, uid, firmware, disarmed }: Props) {
   const { t } = useTranslation(['common', 'settings'])
   const [contact, setContact] = useState<ActivationContact>(EMPTY_CONTACT)
-  const [consentRequired, setConsentRequired] = useState(false)
-  const [consentDiagnostics, setConsentDiagnostics] = useState(false)
+  const [consentGranted, setConsentGranted] = useState(false)
+  const [consentOpen, setConsentOpen] = useState(false)
   const [fileError, setFileError] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -88,15 +59,13 @@ export function ActivationForm({ vm, uid, firmware, disarmed }: Props) {
   const draft = {
     uid,
     contact,
-    consentRequired,
-    consentDiagnostics,
+    consentGranted,
     diagnostics: {
       studio: versions?.daemon ?? '',
       sdk: versions?.sdk ?? '',
       firmware,
     },
   }
-  const request = buildActivationRequest(draft)
   const ready = canSubmitActivation(draft) && disarmed && !vm.submitting
   const missing = missingContactFields(contact)
 
@@ -146,7 +115,7 @@ export function ActivationForm({ vm, uid, firmware, disarmed }: Props) {
             onChange={(e) => setField('email', e.target.value)}
           />
         </Field>
-        <Field label={t('settings:activation.phone')}>
+        <Field label={t('settings:activation.phone')} required>
           <Input
             data-testid="activation-phone"
             value={contact.phone}
@@ -158,44 +127,36 @@ export function ActivationForm({ vm, uid, firmware, disarmed }: Props) {
         {t('settings:activation.contactRequired')}
       </p>
 
-      <div className="flex flex-col gap-2">
-        <Check id="activation-consent-required" checked={consentRequired} onChange={setConsentRequired}>
-          {t('settings:activation.consentRequired')}
-        </Check>
-        <Check
-          id="activation-consent-diagnostics"
-          checked={consentDiagnostics}
-          onChange={setConsentDiagnostics}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <label htmlFor="activation-consent" className="flex items-start gap-2 text-[0.71875rem] leading-relaxed">
+          <input
+            id="activation-consent"
+            data-testid="activation-consent"
+            type="checkbox"
+            checked={consentGranted}
+            onChange={(e) => setConsentGranted(e.target.checked)}
+            className="mt-0.5 size-3.5 flex-none accent-primary"
+          />
+          <span className="text-muted-foreground">{t('settings:activation.consentAgreeLabel')}</span>
+        </label>
+        <button
+          type="button"
+          data-testid="activation-consent-open"
+          onClick={() => setConsentOpen(true)}
+          className="text-[0.71875rem] font-medium text-primary underline-offset-4 hover:underline"
         >
-          {t('settings:activation.consentDiagnostics')}
-        </Check>
-        <p className="text-[0.6875rem] text-muted-foreground">
-          {t('settings:activation.consentNote')}{' '}
-          <a
-            href={PRIVACY_URL}
-            target="_blank"
-            rel="noreferrer"
-            className="text-primary underline-offset-4 hover:underline"
-          >
-            {t('settings:activation.privacy')}
-          </a>
-        </p>
+          {t('settings:activation.consentDocName')}
+        </button>
       </div>
 
-      <details open className="rounded-lg border border-line bg-muted/30 p-3">
-        <summary className="cursor-pointer text-[0.71875rem] font-semibold text-foreground">
-          {t('settings:activation.preview')}
-        </summary>
-        <p className="mt-1 text-[0.6875rem] text-muted-foreground">
-          {t('settings:activation.previewHint')}
-        </p>
-        <pre
-          data-testid="activation-preview"
-          className="mt-2 max-h-56 overflow-auto rounded bg-background/60 p-2 font-mono text-[0.6875rem] leading-relaxed text-foreground"
-        >
-          {previewJson(request)}
-        </pre>
-      </details>
+      <ActivationConsentDialog
+        open={consentOpen}
+        onOpenChange={setConsentOpen}
+        onAgree={() => {
+          setConsentGranted(true)
+          setConsentOpen(false)
+        }}
+      />
 
       {!disarmed ? (
         <p className="rounded-lg border border-danger-line bg-danger-soft px-3 py-2 text-[0.71875rem] text-danger">
@@ -203,16 +164,14 @@ export function ActivationForm({ vm, uid, firmware, disarmed }: Props) {
         </p>
       ) : null}
 
-      {fileError ? (
-        <p className="text-[0.71875rem] text-danger">{fileError}</p>
-      ) : null}
+      {fileError ? <p className="text-[0.71875rem] text-danger">{fileError}</p> : null}
 
       <div className="flex flex-wrap items-center gap-2">
         <Button
           data-testid="activation-submit"
           size="sm"
           disabled={!ready}
-          onClick={() => void vm.submit(request)}
+          onClick={() => void vm.submit(buildActivationRequest(draft))}
         >
           <Send className="size-3.5" />
           {vm.submitting ? t('settings:activation.submitting') : t('settings:activation.submit')}

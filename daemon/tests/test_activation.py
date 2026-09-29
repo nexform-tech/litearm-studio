@@ -34,8 +34,8 @@ def payload(**over):
     doc = {
         "uid": UID,
         "contact": {"name": "张三", "organization": "某大学", "email": "z@example.com",
-                    "phone": ""},
-        "consent": {"required": True, "diagnostics": False},
+                    "phone": "13800000000"},
+        "consent": {"granted": True},
     }
     doc.update(over)
     return doc
@@ -91,26 +91,26 @@ def test_parse_license_lets_a_valid_credential_for_this_machine_through() -> Non
 
 def test_build_request_keeps_only_the_agreed_fields() -> None:
     req = build_request(payload())
+    # 请求的键集就是**同意书里逐项列出的那些** —— 多一个都算暗字段。
+    assert set(req) == {"uid", "contact", "consent", "diagnostics"}
     assert req["uid"] == UID
     assert req["contact"] == {"name": "张三", "organization": "某大学",
-                              "email": "z@example.com", "phone": ""}
-    assert req["consent"] == {"required": True, "diagnostics": False,
-                              "text_version": CONSENT_TEXT_VERSION}
-    # 没勾诊断就不带 —— 不采集的东西不出现在请求里。
-    assert "diagnostics" not in req
+                              "email": "z@example.com", "phone": "13800000000"}
+    # 只有一份同意: 它覆盖全部字段, 所以没有逐项开关。
+    assert req["consent"] == {"granted": True, "text_version": CONSENT_TEXT_VERSION}
     # 订单号那一层还没启用: 空值不许作为空字段发出去。
     assert "code" not in req
 
 
 def test_build_request_refuses_without_consent() -> None:
     """**同意是硬门禁, 判在守护进程这一层** —— 界面禁用按钮挡不住直连 WS 的客户端。"""
-    for consent in ({}, {"required": False}, None):
+    for consent in ({}, {"granted": False}, None):
         with pytest.raises(ActivationError) as ei:
             build_request(payload(consent=consent))
         assert ei.value.reason == "consent_required"
 
 
-@pytest.mark.parametrize("field", ["name", "organization", "email"])
+@pytest.mark.parametrize("field", ["name", "organization", "email", "phone"])
 def test_build_request_requires_the_contact_fields(field: str) -> None:
     contact = dict(payload()["contact"])
     contact.pop(field)
@@ -127,15 +127,13 @@ def test_build_request_rejects_a_bad_uid() -> None:
         assert ei.value.reason == "bad_uid"
 
 
-def test_build_request_sends_diagnostics_only_when_consented() -> None:
+def test_build_request_carries_the_versions_in_the_same_consent() -> None:
+    """版本信息与联系人字段在**同一份同意书**里 —— 没有单独的开关。"""
     diag = {"studio": "0.1.0", "sdk": "2.1.0", "firmware": "Litearm1.8.0-7J"}
-    req = build_request(payload(consent={"required": True, "diagnostics": True},
-                                diagnostics=diag))
-    assert req["diagnostics"] == diag
+    assert build_request(payload(diagnostics=diag))["diagnostics"] == diag
 
-    # 勾了同意但界面没给内容 -> 空串, 不是崩溃。
-    req = build_request(payload(consent={"required": True, "diagnostics": True}))
-    assert req["diagnostics"] == {"studio": "", "sdk": "", "firmware": ""}
+    # 界面没给内容 -> 空串, 不是崩溃, 也不是缺字段。
+    assert build_request(payload())["diagnostics"] == {"studio": "", "sdk": "", "firmware": ""}
 
 
 def test_build_request_passes_an_order_code_through_when_present() -> None:
