@@ -125,6 +125,15 @@ describe('GripperSection', () => {
     expect((screen.getByTestId('gripper-zero') as HTMLButtonElement).disabled).toBe(true)
   })
 
+  it('explains the undeclared mounting direction instead of leaving it a mystery', async () => {
+    mocks.conn.current = { ...mocks.conn.current, mount: null, declaredMount: null }
+    render(<GripperSection />)
+    await waitFor(() => expect(mocks.listCalibrations).toHaveBeenCalled())
+    const hint = screen.getByTestId('gripper-mount-undeclared')
+    expect(hint.textContent).toMatch(/zero calibration|零位标定/)
+    expect(hint.textContent).toMatch(/nominal template|标称模板/)
+  })
+
   it('persists the factory acknowledgement through the toggle', async () => {
     mocks.setAllowFactory.mockResolvedValue({ allowFactory: true })
     render(<GripperSection />)

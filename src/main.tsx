@@ -4,7 +4,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import './styles/index.css'
 import './i18n'
 import { AppShell } from './layout/AppShell'
-import { GripperPage, SettingsPage, SoloConsole, TelemetryLogsPage } from './routes'
+import { SettingsPage, SoloConsole, TelemetryLogsPage } from './routes'
 import { telemetryRecorder } from './features/telemetry/telemetryRecorder'
 import { armClient } from './lib/arm/client'
 import { ErrorBoundary } from './components/ErrorBoundary'
@@ -45,7 +45,6 @@ createRoot(document.getElementById('root')!).render(
               <Route path="/control" element={<SoloConsole />} />
               {/* 旧路径兼容重定向 */}
               <Route path="/solo" element={<Navigate to="/control" replace />} />
-              <Route path="/gripper" element={<GripperPage />} />
               <Route path="/log" element={<TelemetryLogsPage />} />
               <Route path="/telemetry" element={<Navigate to="/log" replace />} />
               <Route path="/settings" element={<SettingsPage />} />

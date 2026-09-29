@@ -2,7 +2,7 @@
 
 This document specifies how LiteGrip gripper control is added to LiteArm Studio;
 read it if you are implementing or reviewing the daemon-side gripper session, the
-WebSocket contract, or the gripper pages.
+WebSocket contract, or the gripper UI.
 
 ## 1. Scope
 
@@ -14,8 +14,8 @@ WebSocket contract, or the gripper pages.
   contract.
 - Calibration handling: which file is in effect, and what the UI is allowed to do
   with which provenance.
-- A gripper page and a settings section, both reusing the UX of the retired
-  end-effector panels (see §6.4).
+- A gripper panel on the control page and a settings section, both reusing the
+  UX of the retired end-effector panels (see §6.4).
 
 **Out of scope**
 
@@ -366,31 +366,44 @@ become device-parameterised before any gripper UI can exist.
 
 There are two surfaces, matching the retired product:
 
-- **A gripper page**, `/gripper`, for operating the gripper: connect state,
+- **A panel on the control page**, `src/features/solo/GripperPanel.tsx`, pinned in
+  the right column below the E-stop, for operating the gripper: connect state,
   aperture, open/close/grasp/release, force and speed, live position and
   temperature, fault clearing, E-stop state.
 - **A section in the existing settings page**, for configuring it: CAN channel,
   CAN ids, mount, which calibration file is in effect, import a calibration,
   run `zero()`, and the per-channel travel.
 
-Route, navigation entry, top-bar title and i18n namespace follow the existing
-pattern: lazy export in `src/routes.tsx`, a `<Route>` in `src/main.tsx`, an item
-in `RAIL_ITEMS`, a title in the top bar's map, and `locales/{en,zh}/gripper.json`
-plus the namespace registration and the i18n assertions.
+The panel is a component, not a route. The gripper shares the arm's CAN bus and
+is driven from the same page as the arm, so operating it must not navigate away
+from the arm's own controls — that is the retired product's layout
+(`EndEffectorControlPanel` under the E-stop) and the layout §6.4 retrieves as the
+UX baseline. Do not add a `/gripper` route, a rail item, or a top-bar title for
+it; those were removed deliberately.
 
-### 6.3 Page behaviour
+The i18n namespace is `locales/{en,zh}/gripper.json`, registered in
+`src/i18n/index.ts` and asserted in `src/i18n/__tests__/i18n.test.ts`.
+
+### 6.3 Panel behaviour
 
 - Everything writable is disabled unless the gripper `status` is `connected`, the
   drive is enabled, and the gate allows the command. Show why it is disabled.
 - The aperture slider is `0..travelMm`, commits on release, and is not echoed back
-  from the device while the user is dragging.
+  from the device while the user is dragging. "Dragging" is tracked from the
+  slider's **pointer** events, not from value changes: Radix emits
+  `onValueCommit` *before* `onValueChange` on a keyboard step, so inferring the
+  drag from the value re-opens it and the slider never reconciles again.
 - Read-back discipline, as in the settings page: after a write, show what the
   device reports, not what was sent.
 - The E-stop is reachable while a move is running. It maps to `gripper.stop`, and
-  the page shows the latched state until `gripper.reset_stop`.
+  the panel shows the latched state until `gripper.reset_stop`.
 - The calibration card always shows provenance: source label, path, both rad
   endpoints, the derived travel, and the mounting direction. "Nominal template,
-  never measured" must be visible, not implied.
+  never measured" must be visible, not implied. The endpoints and the path may sit
+  behind a collapsed `<details>` — the panel shares a column with the arm's live
+  charts — but they must be in the DOM and one click away, not summarised away.
+- Only one component may mount `useGripperAlerts()` at a time: each mount is an
+  independent subscription, so two of them raise every alert twice.
 
 ### 6.4 What to reuse from the retired panels
 
@@ -461,7 +474,7 @@ behaviour. i18n assertions for the new namespace in both locales.
 | P1 | `GripperSession` with the simulator backend, frames and commands, no UI | Daemon tests green in `--fake`; the arm's existing tests untouched |
 | P2 | Calibration resolution, provenance, gate, cross-check | The §7 calibration cases pass; a malformed or foreign file never enables motion |
 | P3 | CAN link: enumeration, probe, privileged bring-up | A correctly configured interface produces no dialog; a wrong one produces one actionable message |
-| P4 | Frontend client refactor and the gripper page | `pnpm test` green; the page drives the simulator end to end |
+| P4 | Frontend client refactor, the control-page panel and the settings section | `pnpm test` green; the panel drives the simulator end to end |
 | P5 | Settings section: channel, mount, import, `zero()` | A `zero()` run against the simulator replaces the template and survives a restart |
 | P6 | Packaging and real hardware | The released Linux artifact drives a real gripper; the Windows artifact builds without it |
 

@@ -139,6 +139,7 @@
     "noTravel": "The travel must be positive",
     "applied": "Applied and reconnected",
     "declareMount": "Load this mounting",
-    "effectiveMount": "The device is running {{mount}}"
+    "effectiveMount": "The device is running {{mount}}",
+    "mountUndeclared": "Not declared = load no nominal template for a direction. With no measured calibration file, picking a direction loads the SDK's nominal template by name, which declares a direction and has never been measured on this unit. Which direction the device actually runs is decided by the calibration's two endpoint angles, not by this choice — run the zero calibration if unsure."
   }
 }

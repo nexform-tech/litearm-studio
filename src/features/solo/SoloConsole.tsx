@@ -6,6 +6,7 @@ import { MetricsPanel } from './MetricsPanel'
 import { ControlBar } from './ControlBar'
 import { JointSpacePanel } from './JointSpacePanel'
 import { CartesianPanel } from './CartesianPanel'
+import { GripperPanel } from './GripperPanel'
 import { StopButton } from '../../components/StopButton'
 import { ROW_OVERFLOW, SCROLL_COLUMN, SIDE_COL_WIDE } from '../../lib/responsive'
 
@@ -88,6 +89,9 @@ export function SoloConsole() {
           selectAll={vm.selectAll}
           selectNone={vm.selectNone}
         />
+        {/* 夹爪组件常驻在控制页右下角（老版本 EndEffectorControlPanel 的位置）：
+            夹爪和机械臂共用一条总线，操作它不该离开这一页。 */}
+        <GripperPanel />
       </div>
     </div>
   )

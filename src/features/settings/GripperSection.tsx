@@ -153,6 +153,18 @@ export function GripperSection() {
             </span>
           ) : null}
         </div>
+
+        {/* 「未声明」是默认值，也是最容易被误读的一个：它不是"忘了填"，而是一次选择。
+            操作员看不到理由就会随手选一个方向，然后按 SDK 的标称模板去运动。 */}
+        {vm.mount == null ? (
+          <p
+            id="gripper-mount-undeclared"
+            data-testid="gripper-mount-undeclared"
+            className="text-[0.6875rem] leading-relaxed text-muted-foreground"
+          >
+            {t('gripper:settings.mountUndeclared')}
+          </p>
+        ) : null}
       </Card>
 
       <Card className="flex flex-col gap-3 rounded-[0.875rem] p-5">
