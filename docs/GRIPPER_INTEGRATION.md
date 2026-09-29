@@ -429,12 +429,19 @@ behaviour. i18n assertions for the new namespace in both locales.
 
 ## 8. Packaging
 
-- `packaging/build.py` needs `--collect-all litegrip`. The package ships three
-  JSON files and `py.typed`; without the data files `load_template` raises.
+- `packaging/build.py` collects the SDK with `--collect-all litegrip` **on Linux**.
+  The package ships three JSON files and `py.typed`; without the data files
+  `load_template` raises. On a Linux build the SDK is required and a missing one
+  fails the build: an artifact that silently ships without the gripper is worse
+  than a build that stops.
 - The SDK is not on PyPI. Install it from a checkout the way `litearm` already is,
-  and pin the revision in the build.
-- Linux only. The import of `litegrip` must sit behind a platform check so the
-  Windows executable still builds and runs with the gripper absent.
+  and pin the revision: `v0.4.0` in both workflows, the release that introduced
+  named templates and per-channel calibration paths.
+- Linux only. `litegrip` needs `fcntl` and `PF_CAN`, so it is never imported at
+  module scope: `gripper/backend/real.py` is imported inside `_make_backend`, the
+  daemon's session import is guarded, and `__main__` builds no gripper session off
+  Linux. `daemon/tests/test_gripper_platform.py` runs the whole startup path in a
+  subprocess with `litegrip` blocked and asserts the simulator still works.
 
 ## 9. Delivery sequence
 
@@ -460,6 +467,8 @@ Three items, each with the check that closes it. None of them blocks P1 or P2.
 3. **Per-unit calibration files.** Confirm with the gripper's SDK owner whether a
    per-unit file ships with each gripper or whether the templates are the intended
    factory default. The implementation supports both; only the default differs.
+   The SDK revision is pinned at `v0.4.0`; if a per-unit file becomes the default,
+   the resolution order in §5.3 does not change — only the file that ships.
 
 ## 11. Do not
 

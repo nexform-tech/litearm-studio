@@ -62,6 +62,17 @@ jobs:
           repository: nexform-tech/litearm-python
           path: litearm-python
 
+      # 夹爪 SDK 只在 Linux 上安装: 它 import 时需要 fcntl / PF_CAN, Windows 上装了
+      # 也没用。钉在 v0.4.0 —— 与 ci.yml 同一个版本, 打包时按名字载入标定模板这一
+      # 能力就是它引入的。Windows 产物因此**不含**夹爪 (D10: 缺席, 不是禁用)。
+      - name: Checkout the LiteGrip SDK
+        if: runner.os == 'Linux'
+        uses: actions/checkout@v4
+        with:
+          repository: nexform-tech/litegrip-python
+          ref: v0.4.0
+          path: litegrip-python
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -86,9 +97,13 @@ jobs:
 
       - name: Install the SDK, the daemon and PyInstaller
         working-directory: litearm-studio
+        shell: bash # 两条分支都要能在两个平台上写成同一段
         run: |
           python -m pip install --upgrade pip
           pip install -e ../litearm-python
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            pip install ../litegrip-python
+          fi
           pip install -e "daemon[test]" pyinstaller
 
       - name: Package (one-file executable)

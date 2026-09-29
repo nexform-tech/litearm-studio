@@ -75,11 +75,22 @@ jobs:
           repository: nexform-tech/litearm-python
           path: litearm-python
 
-      - name: Install the SDK and the daemon
+      # 夹爪 SDK 同样不在 PyPI 上, 而且只在 Linux 上能用 (需要 PF_CAN)。版本钉在
+      # v0.4.0: 它是"按名字载入标定模板 + 每通道标定文件"落地的那个版本, 也就是
+      # docs/GRIPPER_INTEGRATION.md 描述的接口。
+      - name: Checkout the LiteGrip SDK
+        uses: actions/checkout@v4
+        with:
+          repository: nexform-tech/litegrip-python
+          ref: v0.4.0
+          path: litegrip-python
+
+      - name: Install the SDKs and the daemon
         working-directory: litearm-studio
         run: |
           python -m pip install --upgrade pip
           pip install -e ../litearm-python
+          pip install ../litegrip-python
           pip install -e "daemon[test]"
 
       - name: Daemon unit tests (pytest)

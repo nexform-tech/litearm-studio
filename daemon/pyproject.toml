@@ -22,6 +22,11 @@ license = { text = "Apache-2.0" }
 # dependencies: 写进去会让 `pip install` 在这里 404。它必须从本地 checkout 安装
 # (`pip install -e ../litearm-python`), 见 README 的「依赖」一节。
 # `pyserial` 由 `litearm` 自己带入, 这里不重复声明。
+#
+# ⚠ `litegrip` (仓库 nexform-tech/litegrip-python) **同样不在 PyPI 上**, 也**不能**
+# 写进 dependencies —— 同上会 404。它还必须从 checkout 装 (`pip install ../litegrip-python`),
+# 而且只在 Linux 上有意义 (import 需要 fcntl / PF_CAN, Windows 上会抛)。见 README 的
+# 「夹爪」与「打包」两节, 以及 packaging/build.py 里按平台收 SDK 的判据。
 dependencies = [
     "fastapi",
     "uvicorn[standard]",

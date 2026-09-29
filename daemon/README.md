@@ -137,11 +137,17 @@ pnpm build                     # 先构建界面：打包脚本会拒绝在没�
 python packaging/build.py      # 产物：packaging/dist/litearm-studio-daemon[.exe]
 ```
 
-`packaging/build.py` 做三件事：
+`packaging/build.py` 做四件事：
 
 - **把界面打进包**：`dist/` 以 `--add-data` 放到 `_MEIPASS/dist`，`server.resolve_ui_dir()`
   认识这个冻结路径，所以打包后不需要手工传 `--ui-dir`。
 - **把 SDK 打进包**：`litearm` 不在 PyPI 上，连同 `pyserial` 一起内嵌。
+- **夹爪 SDK 按平台收**：Linux 上必须装 `litegrip`（`pip install ../litegrip-python`），
+  脚本会 `--collect-all litegrip` 把三份 JSON 与 `py.typed` 一起收进去；缺了它会**直接
+  判失败**——一个"忘了装 SDK"的 Linux 产物会静默地没有夹爪。Windows 上不装、也不收：
+  那个平台没有 `PF_CAN`，夹爪是**缺席**的（不是禁用）。版本钉在 `v0.4.0`
+  （见 `.github/workflows/release.yml`），也就是"按名字载入标定模板 + 每通道标定文件"
+  的那个版本。
 - **版本单一来源**：`LITEARM_STUDIO_VERSION`（CI 传 git tag）> `git describe --tags` >
   `0.0.0+dev`，写进构建时生成的 `_build_version.py`（不入库）。于是 `hello` 帧报的版本
   就是发出去的那个 tag，而不是 `pyproject.toml` 里的占位符。
