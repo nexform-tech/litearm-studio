@@ -194,11 +194,6 @@ class Daemon:
             if self.clients:
                 self.stamp_gripper_heartbeat()
 
-    # ------------------------------------------------------------ 会话事件 → WS
-    def _on_session_event(self, event: dict) -> None:
-        """会话监听器 —— **可能在任何线程上被调用**, 故只做线程安全的投递。"""
-        self.broadcast_threadsafe(event)
-
     def broadcast_threadsafe(self, message: dict) -> None:
         loop = self.loop
         if loop is None or loop.is_closed():
