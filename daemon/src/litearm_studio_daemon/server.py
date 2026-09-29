@@ -39,6 +39,11 @@ from .errors import error_to_dict
 from .statemap import jsonable
 from .session import ENERGY_DOWN_COMMANDS, Session
 
+try:  # 夹爪在非 Linux 上不存在 (D10) —— 这条 import 不该让守护进程起不来
+    from .gripper.session import GripperSession
+except Exception:  # noqa: BLE001 - 缺 SDK/平台不支持都走这里
+    GripperSession = None  # type: ignore[assignment]
+
 log = logging.getLogger("litearm_studio_daemon.server")
 
 #: `run()` 允许绑定的地址白名单 —— 只监听本机 (计划 2 节架构: "Studio 本地程序,
@@ -49,6 +54,10 @@ LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 #: (那样后续所有命令都会陪等)。取 60s: `home`/`movej` 在真机上最坏十几秒
 #: (`move_timeout` 默认 15s), `enable` 的重试上界约 3.3s。
 COMMAND_TIMEOUT_S = 60.0
+
+#: `gripper.zero` 的等待上限 (秒) —— 它按定义要跑几十秒 (顶两次机械限位),
+#: 所以不能套用 60s 那条兜底。客户端同样不能给它设 60s 超时 (§4.2)。
+GRIPPER_ZERO_TIMEOUT_S = 300.0
 
 
 @dataclass
@@ -72,13 +81,19 @@ def _is_energy_down_frame(raw: str) -> bool:
 
     ⚠ 解析失败 / 形状不对一律当**普通帧** —— 交给 `_on_upstream` 回 BadMessage,
     坏 JSON 没必要走旁路。这里只偷看 `t`/`m` 两个字段, 真正的校验仍在 `_on_upstream`。
+
+    ⚠ 夹爪的 `gripper.stop` 也在这条旁路上 (§4.2): 它同样"永远可达" —— 排在一条
+    3 秒的闭合命令后面就不是急停了。夹爪的 `gripper.disable` **不走**旁路: 文档
+    明确要求它是普通排队命令。
     """
     try:
         msg = json.loads(raw)
     except (ValueError, TypeError):
         return False
-    return (isinstance(msg, dict) and msg.get("t") == "cmd"
-            and msg.get("m") in ENERGY_DOWN_COMMANDS)
+    if not isinstance(msg, dict) or msg.get("t") != "cmd":
+        return False
+    method = msg.get("m")
+    return method in ENERGY_DOWN_COMMANDS or method == "gripper.stop"
 
 
 def pick_free_http_port(host: str = "127.0.0.1", start: int = 8765,
@@ -137,15 +152,52 @@ class Daemon:
     单独成类是为了让 HTTP/WS 之外的东西 (广播、批量发送) 能被单测直接调, 不必起服务。
     """
 
-    def __init__(self, session: Session, *, version: str = __version__,
+    def __init__(self, session: Session, *, gripper: Optional[Any] = None,
+                 version: str = __version__,
                  ui_dir: Optional[Path] = None) -> None:
         self.session = session
+        #: 夹爪会话 (§3) —— 与臂会话并列, 各推各的帧、各走各的命令白名单。
+        #: `None` = 本进程没有夹爪 (非 Linux, 或 `--no-gripper`)。
+        self.gripper = gripper
         self.version = version
         self.ui_dir = ui_dir
         self.clients: List[_Client] = []
         self.loop: Optional[asyncio.AbstractEventLoop] = None
+        #: 夹爪看门狗的心跳任务 (见 `_gripper_heartbeat_loop`)。
+        self.heartbeat_task: Optional[asyncio.Task] = None
         # 会话事件 (可能来自轮询线程/执行器线程) → 事件循环的桥
         session.add_listener(self._on_session_event)
+        if gripper is not None:
+            gripper.add_listener(self._on_gripper_event)
+
+    # ------------------------------------------------------------ 会话事件 → WS
+    def _on_session_event(self, event: dict) -> None:
+        """会话监听器 —— **可能在任何线程上被调用**, 故只做线程安全的投递。"""
+        self.broadcast_threadsafe(event)
+
+    def _on_gripper_event(self, event: dict) -> None:
+        """夹爪会话监听器 —— 同样只做线程安全的投递。"""
+        self.broadcast_threadsafe(event)
+
+    # ------------------------------------------------------------ 夹爪心跳
+    def stamp_gripper_heartbeat(self) -> None:
+        """告诉夹爪会话"还有客户端在"。"""
+        if self.gripper is not None:
+            self.gripper.heartbeat()
+
+    async def _gripper_heartbeat_loop(self,
+                                      interval: float = 0.5) -> None:  # pragma: no cover
+        """只要有客户端连着就一直喂心跳。
+
+        ⚠ 这正是"关掉的标签页不能继续夹着东西"在守护进程侧的落点: 浏览器与守护进程
+        之间没有别的心跳通道, 而**连接本身**就是"操作员还在"的证据。客户端全走光之后
+        夹爪会在 `GUI_WATCHDOG_S` 内降能量, 但它**不会**因此结束会话 —— 刷新页面回来
+        还能继续用 (臂那边"客户端断开不杀会话"是同一条纪律)。
+        """
+        while True:
+            await asyncio.sleep(interval)
+            if self.clients:
+                self.stamp_gripper_heartbeat()
 
     # ------------------------------------------------------------ 会话事件 → WS
     def _on_session_event(self, event: dict) -> None:
@@ -207,6 +259,13 @@ class Daemon:
                 "t": "hello", "daemon": self.version, "sdk": self.session.sdk_version,
             })
             await self._send_direct(ws, client, {"t": "conn", **self.session.arm_info()})
+            if self.gripper is not None:
+                # 夹爪的握手帧与臂同构: `gripper_conn` 是它连接态的唯一真相 (§4.1)。
+                await self._send_direct(ws, client, {
+                    "t": "gripper_conn", **self.gripper.conn_info(),
+                })
+                # 有人连上了 ⇒ 夹爪看门狗不该在这个窗口里把电放掉。
+                self.stamp_gripper_heartbeat()
             if self.session.connected:
                 # 已连接时补一条当前状态 —— 新开的窗口不该等到下一拍才画出 3D。
                 st = self.session.state()
@@ -214,12 +273,21 @@ class Daemon:
                     await self._send_direct(ws, client, {
                         "t": "state", "stamp": 0.0, "state": st,
                     })
+            if self.gripper is not None:
+                # 同理: 已连接的夹爪补一条状态, 否则新窗口要等 20ms 才画出读数。
+                gs = self.gripper.state()
+                if self.gripper.connected() and gs is not None:
+                    await self._send_direct(ws, client, {
+                        "t": "gripper_state", "stamp": 0.0, "state": gs,
+                    })
             self.clients.append(client)
             registered = True
             pump = asyncio.create_task(self._pump(ws, client))
             worker = asyncio.create_task(self._drain(ws, client, queue))
             while True:
                 raw = await ws.receive_text()
+                # 上行帧是最强的"操作员还在"证据, 连上之后立刻补一次 (连接本身也算)。
+                self.stamp_gripper_heartbeat()
                 if _is_energy_down_frame(raw):
                     task = asyncio.create_task(self._on_upstream(ws, client, raw))
                     bypass.add(task)
@@ -319,6 +387,12 @@ class Daemon:
             })
             return
 
+        # 夹爪与臂共用同一个命令 id 空间, 但**不共用**命令表 (§4.2): `gripper.`
+        # 前缀是唯一的分流判据, 于是臂的白名单一个字节没变。
+        if method.startswith("gripper."):
+            await self._run_gripper_command(ws, client, mid, method, params)
+            return
+
         # `Session.execute` 是**阻塞**的 (它在单线程执行器上等 SDK 调用), 所以这里
         # 必须丢到线程里, 否则整个事件循环 (含状态推送/急停) 会被一条 movej 憋住。
         # `Session.execute` 内部先做准入判定 (白名单/运动互斥/连接态), 那几步在提交
@@ -333,6 +407,46 @@ class Daemon:
                 "t": "res", "id": mid, "ok": False,
                 "err": {"kind": "CommandTimeoutError",
                         "msg": f"{method} 超过 {COMMAND_TIMEOUT_S:.0f}s 未返回",
+                        "method": method},
+            })
+            return
+        except Exception as e:  # noqa: BLE001 - 任何失败都回一条结构化 err
+            await self._send_direct(ws, client, {
+                "t": "res", "id": mid, "ok": False,
+                "err": error_to_dict(e, method=method),
+            })
+            return
+        await self._send_direct(ws, client, {
+            "t": "res", "id": mid, "ok": True, "v": jsonable(value),
+        })
+
+    async def _run_gripper_command(self, ws: WebSocket, client: _Client, mid: Any,
+                                   method: str, params: dict) -> None:
+        """`gripper.*` → `GripperSession.execute` → `res` 帧。
+
+        ⚠ 与臂那条路的区别是**超时**: 夹爪命令不阻塞 (它们入队就返回), 唯一例外的
+        `gripper.zero` 要顶两次机械限位, 几十秒是正常的 —— 所以它有自己的上限,
+        而客户端也被要求不要给它设 60s 超时 (§4.2)。
+        """
+        if self.gripper is None:
+            await self._send_direct(ws, client, {
+                "t": "res", "id": mid, "ok": False,
+                "err": {"kind": "GripperNotConnectedError",
+                        "msg": "本进程没有夹爪会话 (非 Linux 平台或 --no-gripper)",
+                        "method": method},
+            })
+            return
+        timeout = (GRIPPER_ZERO_TIMEOUT_S if method == "gripper.zero"
+                   else COMMAND_TIMEOUT_S)
+        try:
+            value = await asyncio.wait_for(
+                asyncio.to_thread(self.gripper.execute, method, params),
+                timeout=timeout)
+        except asyncio.TimeoutError:
+            await self._send_direct(ws, client, {
+                "t": "res", "id": mid, "ok": False,
+                "err": {"kind": "CommandTimeoutError",
+                        "msg": f"{method} 超过 {timeout:.0f}s 未返回",
                         "method": method},
             })
             return
@@ -382,7 +496,8 @@ class _SpaStaticFiles(StaticFiles):
             return await super().get_response("index.html", scope)
 
 
-def create_app(session: Session, *, version: str = __version__,
+def create_app(session: Session, *, gripper: Optional[Any] = None,
+               version: str = __version__,
                ui_dir: Optional[str] = None,
                repo_dist: Optional[Path] = None) -> FastAPI:
     """建 FastAPI 应用 (不含绑定/启动 —— 那是 `run()` 的事)。
@@ -391,7 +506,7 @@ def create_app(session: Session, *, version: str = __version__,
     (没有就跳过, 不报错)。
     """
     resolved = resolve_ui_dir(ui_dir, repo_dist=repo_dist)
-    daemon = Daemon(session, version=version, ui_dir=resolved)
+    daemon = Daemon(session, gripper=gripper, version=version, ui_dir=resolved)
     app = FastAPI(title="LiteArm Studio Daemon", version=version, docs_url=None,
                   redoc_url=None, openapi_url=None)
     # 让 `handle_ws` 拿得到事件循环 (会话事件要从别的线程投递进来)。
@@ -407,6 +522,15 @@ def create_app(session: Session, *, version: str = __version__,
     @app.on_event("startup")
     async def _remember_loop() -> None:        # pragma: no cover - 生命周期钩子
         daemon.loop = asyncio.get_running_loop()
+        if daemon.gripper is not None:
+            daemon.heartbeat_task = asyncio.create_task(daemon._gripper_heartbeat_loop())
+
+    @app.on_event("shutdown")
+    async def _stop_heartbeat() -> None:       # pragma: no cover - 生命周期钩子
+        task = daemon.heartbeat_task
+        if task is not None:
+            task.cancel()
+            daemon.heartbeat_task = None
 
     if resolved is not None:
         # ⚠ 挂在**最后**: 路由 (含 `/ws`) 优先于静态目录的兜底匹配。
@@ -419,7 +543,7 @@ def create_app(session: Session, *, version: str = __version__,
 
 def _health(daemon: Daemon) -> dict:
     info = daemon.session.arm_info()
-    return {
+    out = {
         "ok": True,
         "daemon": daemon.version,
         "sdk": daemon.session.sdk_version,
@@ -430,6 +554,13 @@ def _health(daemon: Daemon) -> dict:
         # 连接细节 (与 `conn` 帧同源, 前端不必为"看端口"单开一条 WS)
         "conn": info,
     }
+    # 夹爪与臂并列上报, 判据是"本进程有没有夹爪会话" —— 没有就如实说没有,
+    # 而不是编一个 disconnected 出来 (那会让前端以为接上就能用)。
+    if daemon.gripper is not None:
+        out["gripper"] = daemon.gripper.conn_info()
+    else:
+        out["gripper"] = None
+    return out
 
 
 def _open_browser(url: str) -> None:
@@ -463,7 +594,8 @@ def _open_browser(url: str) -> None:
         log.warning("无法自动打开浏览器, 请手动访问 %s", url)
 
 
-async def serve(session: Session, *, host: str = "127.0.0.1", http_port: int = 8765,
+async def serve(session: Session, *, gripper: Optional[Any] = None,
+                host: str = "127.0.0.1", http_port: int = 8765,
                 ui_dir: Optional[str] = None, open_browser: bool = True,
                 version: str = __version__) -> None:
     """起 uvicorn (前台阻塞到退出)。
@@ -479,7 +611,7 @@ async def serve(session: Session, *, host: str = "127.0.0.1", http_port: int = 8
     port = pick_free_http_port(host, http_port)
     if port != http_port:
         print(f"[litearm-studio-daemon] 端口 {http_port} 被占用, 改用 {port}")
-    app = create_app(session, version=version, ui_dir=ui_dir)
+    app = create_app(session, gripper=gripper, version=version, ui_dir=ui_dir)
     config = uvicorn.Config(app, host=host, port=port, log_level="info",
                             ws_ping_interval=20.0, ws_ping_timeout=20.0)
     server = uvicorn.Server(config)
@@ -497,4 +629,11 @@ async def serve(session: Session, *, host: str = "127.0.0.1", http_port: int = 8
         await server.serve()
     finally:
         # 客户端全断之后才走到这里 (Ctrl-C / 窗口关闭触发的退出) ⇒ 会话在这时收尾。
+        # ⚠ 夹爪**总是**失能退出: `--keep-enabled` 只对臂有效 (§5.1 第 5 条) ——
+        # 一个还夹着东西的夹爪不该因为"保存使能"而留在原地。
+        if gripper is not None:
+            try:
+                gripper.close()
+            except Exception:  # noqa: BLE001 - 收尾失败不该盖住真正的退出原因
+                log.warning("关闭夹爪会话时出错 (已忽略)", exc_info=True)
         session.close()

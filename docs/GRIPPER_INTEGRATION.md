@@ -116,10 +116,14 @@ Additive. Existing arm frames and commands do not change.
   "positionMm":41.2,"forceN":0.0,"torqueNm":0.0,
   "enabled":true,"state":"ready|moving|grasping|holding|fault|disabled|stopped",
   "errorCode":1,"temps":{"mosTemp":31,"coilTemp":34},
-  "fresh":true}}
+  "fresh":true,"gate":"READY|FACTORY|BLOCKED","gateReason":"…"}}
 
 {"t":"gripper_calib","probe":"zero","phase":"close|open|done|failed",
  "step":12,"total":80,"detail":"寻找闭合限位"}
+
+{"t":"gripper_alert","level":"info|warn|error|fatal","text":"…"}
+
+{"t":"gripper_busy","busy":true,"what":"正在连接夹爪…"}
 ```
 
 `gripper_conn` is the single source of truth for the gripper's connection, the
@@ -127,7 +131,16 @@ same way `conn` is for the arm. `status:"error"` with `channel:""` means the
 interface or the device went away.
 
 `gripper_state` is pushed at 50 Hz, and immediately whenever `state`, `enabled`,
-`errorCode` or `mount` changes.
+`errorCode` or `mount` changes. Its `gate`/`gateReason` fields say why the
+page's controls are disabled (§6.3), and `positionMm` is `null` until a status
+frame has been received since the drive was energised — render that as unknown,
+never as zero, because zero is the closed stop.
+
+`gripper_alert` carries the asynchronous half of the error surface: a refusal or
+a fault that happens on the tick thread has no `res` frame to answer, and an
+operator who is not told why a button did nothing will press it again.
+`gripper_busy` says a blocking call (connect, enable, clear-fault) is in
+progress, so the page can say why it is waiting.
 
 ### 4.2 Uplink (browser to daemon)
 
@@ -279,9 +292,16 @@ end-to-end coverage without hardware.
 Per-channel record, next to the daemon's existing settings:
 
 ```jsonc
-{"channel":"can0","canId":8,"mstId":null,"mount":"normal",
- "calibrationPath":null,"travelMm":85.0,"allowFactory":false}
+{"channels": {
+  "can0": {"channel":"can0","can_id":8,"mst_id":null,"mount":"normal",
+           "calibration_path":null,"travel_mm":85.0,"allow_factory":false}},
+ "lastChannel":"can0"}
 ```
+
+It is `$XDG_CONFIG_HOME/litearm-studio/gripper.json` (`~/.config/...` by
+default), overridable with `LITEARM_STUDIO_GRIPPER_CONFIG`. The write is atomic
+and the read is lenient: a field that cannot be parsed costs that field, not the
+record, and a file that is not JSON at all reads back as no records.
 
 `travelMm` is per channel because two grippers on one machine can differ, and it
 must survive a restart: the SDK does not store it, and the next `zero()` would
