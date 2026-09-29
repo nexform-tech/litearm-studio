@@ -74,6 +74,7 @@ from .. import constants
 from ..calibration import (
     PROVENANCE_FACTORY,
     PROVENANCE_MEMORY,
+    PROVENANCE_TEMPLATE,
     PROVENANCE_USER,
     CalibrationInfo,
 )
@@ -93,24 +94,43 @@ log = logging.getLogger(__name__)
 class GateState(str, Enum):
     """Whether the axis may be commanded, and if not, why not.
 
-    Three states rather than two because the factory case is not the same kind of
-    thing as an uncalibrated one.  It is *surmountable*: the numbers are
-    self-consistent, they simply may belong to a different unit, and the operator
-    is the only one who can know.  A reversed, missing, or wrong-frame
-    calibration is never surmountable — no acknowledgement makes those numbers
-    describe this gripper.
+    Four states, because the three ways a calibration can fall short are not the
+    same kind of thing.  ``TEMPLATE`` is the one the daemon added: the SDK's
+    nominal template declares a *direction* and a nominal geometry, so it is
+    enough to open and close the jaws — commands that drive to the ends of the
+    travel and do not depend on a measured span — and not enough to name a
+    millimetre target, which would be wrong by about 40 % (the template's
+    geometry is a 120 mm unit's).
+
+    ``FACTORY`` is *surmountable*: the numbers are self-consistent, they simply
+    may belong to a different unit, and the operator is the only one who can
+    know.  Reversed, missing or wrong-frame calibrations are never surmountable —
+    no acknowledgement makes those numbers describe this gripper.
     """
 
     READY = "READY"
+    TEMPLATE = "TEMPLATE"
     FACTORY = "FACTORY"
     BLOCKED = "BLOCKED"
 
 
 GATE_LABELS = {
     GateState.READY: "就绪",
+    GateState.TEMPLATE: "标称模板（未实测）",
     GateState.FACTORY: "出厂标定（待确认）",
     GateState.BLOCKED: "已阻断",
 }
+
+#: The gate states whose limits may be used to *name a pose* in millimetres:
+#: a measured calibration, or a template's nominal geometry (the pose a hold
+#: freezes is the one the encoder just reported, so the span only has to be
+#: self-consistent — which a template's is).
+GATE_POSE = frozenset({GateState.READY, GateState.TEMPLATE})
+
+#: The gate states that allow a *millimetre target* — only a calibration whose
+#: numbers describe this unit.  A template's nominal geometry does not, and an
+#: unacknowledged factory file's may belong to another gripper.
+GATE_GEOMETRY = frozenset({GateState.READY})
 
 
 def evaluate_gate(
@@ -143,6 +163,17 @@ def evaluate_gate(
 
     if info.provenance == PROVENANCE_USER:
         return GateState.READY, f"{info.label}：{info.path}"
+
+    if info.provenance == PROVENANCE_TEMPLATE:
+        # Surmountable for direction-only commands and for nothing else: the
+        # gate itself answers with the subset it allows, and the caller decides
+        # what its command needs (see ``WorkerLoop._refusal``).
+        return (
+            GateState.TEMPLATE,
+            f"{info.label}：模板只声明装配方向与标称几何（120 mm 规格），"
+            "从未在本机实测 —— 只允许张开/闭合/零重力，"
+            "任何毫米目标都会错约 40 %；请先运行标定",
+        )
 
     if info.provenance == PROVENANCE_FACTORY:
         if allow_factory:
@@ -470,7 +501,7 @@ class WorkerLoop:
                 # rather than a millimetre nobody has vetted.
                 self._awaiting_position = False
                 self._hold_measured("使能后尚未读到位置")
-                if self._gate is GateState.READY:
+                if self._gate in GATE_POSE:
                     self._log("info", f"已读到位置 {measured:.1f} mm，在此保持")
 
         self._evaluate_gate()
@@ -481,7 +512,13 @@ class WorkerLoop:
         elif self._probe is not None:
             out = self._tick_probe(tele, dt)
         elif self._enabled:
-            refusal = self._refusal()
+            # ``geometry=False``: this is the question "may the axis be driven at
+            # all", and a nominal template answers yes — it allows 张开/闭合 and a
+            # hold under its own limits.  The stricter question ("may this command
+            # name a millimetre") is asked where a command enters, in
+            # ``_require_motion``, because the FSM cannot tell an in-flight 闭合
+            # from an in-flight 移动.
+            refusal = self._refusal(geometry=False)
             out = self._motion.tick(
                 self.backend,
                 tele,
@@ -670,7 +707,7 @@ class WorkerLoop:
         if self._measured_rad() is None:
             self._motion.release(release_reason)
             return
-        if self._gate is GateState.READY:
+        if self._gate in GATE_POSE:
             self._motion.hold(self._measured_mm())
             return
         measured_rad = self._measured_rad()
@@ -680,8 +717,16 @@ class WorkerLoop:
             f"标定不可用：已在 {measured_rad:.6f} rad 驻留（按实测角度，不经过毫米换算）",
         )
 
-    def _refusal(self) -> str:
-        """Why motion is refused right now, or ``""`` when it is allowed."""
+    def _refusal(self, geometry: bool = True) -> str:
+        """Why motion is refused right now, or ``""`` when it is allowed.
+
+        ``geometry`` says whether the command needs a measured span or only a
+        direction.  A nominal template answers the second and not the first, so
+        the difference is the whole reason the gate has a state of its own for
+        it: 张开 and 闭合 drive to the ends of the travel and are meaningful
+        whatever the span is, while a millimetre target computed from nominal
+        geometry is wrong by the ratio between this unit and a 120 mm one.
+        """
         if self._estop.is_set():
             return f"急停已触发（{self._estop_reason}）；请先复位"
         if not self._connected:
@@ -689,7 +734,10 @@ class WorkerLoop:
         if not self._enabled:
             return "电机未使能"
         if self._gate is not GateState.READY:
-            return self._gate_reason or "标定未就绪"
+            if self._gate is GateState.TEMPLATE and not geometry:
+                pass
+            else:
+                return self._gate_reason or "标定未就绪"
         if self._link_dead():
             return f"链路已断：{self._stale_ms():.0f} ms 未收到状态帧"
         # Last, and deliberately: no measurement is *why* nothing can be
@@ -718,16 +766,20 @@ class WorkerLoop:
         self._gate_reason = reason
         self._signals.gate_state.emit(state.value, reason)
 
-        if state is not GateState.READY:
+        if state is not GateState.TEMPLATE and state not in GATE_GEOMETRY:
             # The gate closing is the one moment a *position* command must be
             # withdrawn rather than merely refused: the FSM stops sending frames,
             # and the motor would otherwise go on executing the last one, which
             # was derived from the very limits that are now in doubt.
-            if previous is GateState.READY and self._enabled:
+            if previous in GATE_GEOMETRY and self._enabled:
                 self._zero_torque_quietly("闸门关闭，已撤销位置指令")
                 self._zeroed_for_gate = True
             return
 
+        # ⚠ A nominal template is deliberately *not* treated as a closed gate
+        # here: it carries limits of its own (nominal ones), 张开/闭合 are
+        # allowed under it, and an enabled motor with no frame sent to it is not
+        # a safe resting state — so it holds like any other usable calibration.
         self._zeroed_for_gate = False
         # ``HOLD_RAD`` is in this list because the gate opening is what retires
         # it: an angle hold was the only hold there was while no travel could be
@@ -769,7 +821,7 @@ class WorkerLoop:
         # file made a real axis set off for the far end of its new travel.
         self._tele = self.backend.read()
         self._evaluate_gate()
-        if self._enabled and self._gate is GateState.READY:
+        if self._enabled and self._gate in GATE_POSE:
             self._hold_measured("标定已更新，已重新驻留在当前位置")
 
     # ── faults ──────────────────────────────────────────────────────────────
@@ -880,7 +932,12 @@ class WorkerLoop:
         # ── motion ──────────────────────────────────────────────────────────
         elif isinstance(command, (cmd.MoveToMm, cmd.Open, cmd.Close, cmd.Grasp)):
             self._end_probe_on_interrupt(command.describe())
-            if not self._require_motion(command.describe()):
+            # 张开/闭合 drive to the ends of the travel and are the one pair a
+            # nominal template can answer (§5.3's gate): they depend on the
+            # direction, not on the span.  A millimetre target does depend on the
+            # span, so it needs a calibration that describes this unit.
+            geometry = not isinstance(command, (cmd.Open, cmd.Close))
+            if not self._require_motion(command.describe(), geometry=geometry):
                 return
             if isinstance(command, cmd.MoveToMm):
                 self._motion.move_to_mm(command.target_mm, command.source)
@@ -916,7 +973,7 @@ class WorkerLoop:
             # reaches for when something is wrong, and it is the one motion whose
             # whole purpose is to stop rather than to go anywhere.  It holds at
             # the measured angle when the gate is shut, which needs no limits.
-            if self._gate is GateState.READY:
+            if self._gate in GATE_POSE:
                 self._hold_measured("已停止，但尚未读到位置，先零重力")
             else:
                 self._motion.idle()
@@ -937,6 +994,8 @@ class WorkerLoop:
             self._motion.set_speed(command.speed_mm_s)
         elif isinstance(command, cmd.SetForce):
             self._motion.set_force(command.force_n)
+        elif isinstance(command, cmd.SetMount):
+            self.backend.set_mount(command.mount)
         elif isinstance(command, cmd.SetTravelMm):
             self.backend.set_travel_mm(command.travel_mm)
             if self._connected:
@@ -944,11 +1003,21 @@ class WorkerLoop:
                 # force describes the old one.  A connected backend is asked to
                 # resolve its calibration again — the same path a load takes,
                 # which is what re-derives the scale and re-anchors the axis.
-                self._load_calibration(None)
+                #
+                # ⚠ A template is reloaded *by name*: re-resolving with no
+                # argument would fall back to the channel's file or the factory
+                # data, silently changing the declared direction at the moment
+                # the operator changed the travel.
+                template = self._info.template if self._info is not None else None
+                self._load_calibration(None, template=template)
 
         # ── calibration ─────────────────────────────────────────────────────
         elif isinstance(command, cmd.LoadCalibration):
             self._load_calibration(command.path)
+        elif isinstance(command, cmd.SetCalibrationPath):
+            self.backend.set_calibration_path(command.path)
+        elif isinstance(command, cmd.LoadTemplate):
+            self._load_calibration(None, template=command.name)
         elif isinstance(command, cmd.SaveCalibration):
             self._save_calibration(command.path)
         elif isinstance(command, cmd.StartGuidedCalibration):
@@ -1099,7 +1168,7 @@ class WorkerLoop:
         self._enabled = True
         self._reported_error = 0
         self._last_rx_t = self._clock()
-        if state is not GateState.READY:
+        if state not in GATE_POSE:
             # Said plainly, because the alternative is an operator who believes
             # a gripper that will not move is a broken one.  It is a gripper
             # whose calibration nobody has vetted, and the way out is a probe.
@@ -1122,7 +1191,7 @@ class WorkerLoop:
         else:
             self._awaiting_position = False
             self._hold_measured("使能后尚未读到位置")
-            if state is GateState.READY:
+            if state in GATE_POSE:
                 self._log("info", f"电机已使能，保持当前位置 {measured:.1f} mm")
 
     def _clear_fault(self) -> None:
@@ -1139,7 +1208,7 @@ class WorkerLoop:
             self._signals.busy.emit(False, "")
         self._reported_error = -1  # force a re-read on the next tick
         self._log("info", "故障已清除")
-        if self._enabled and self._gate is GateState.READY:
+        if self._enabled and self._gate in GATE_POSE:
             self._hold_measured("故障已清除，但尚未读到位置")
 
     def _reset_estop(self) -> None:
@@ -1150,7 +1219,7 @@ class WorkerLoop:
         # latch released on a gripper with no usable calibration would undo the
         # reason it latched.
         state, reason = evaluate_gate(self._info, self._allow_factory)
-        if state is not GateState.READY:
+        if state not in GATE_POSE:
             self._alert("warn", f"无法复位急停：{reason}")
             return
         self._estop.clear()
@@ -1160,8 +1229,8 @@ class WorkerLoop:
         self._log("warn", "急停已复位；电机仍处于失能状态")
 
     # ── motion ──────────────────────────────────────────────────────────────
-    def _require_motion(self, what: str) -> bool:
-        refusal = self._refusal()
+    def _require_motion(self, what: str, *, geometry: bool = True) -> bool:
+        refusal = self._refusal(geometry=geometry)
         if refusal:
             self._alert("warn", f"「{what}」被拒绝：{refusal}")
             return False
@@ -1183,8 +1252,14 @@ class WorkerLoop:
         except Exception:  # noqa: BLE001 - a backend without limits is not fatal here
             return float(constants.DEFAULT_TRAVEL_MM)
 
-    def _load_calibration(self, path: str | None) -> None:
-        ok = bool(self.backend.load_calibration(path))
+    def _load_calibration(self, path: str | None, template: str | None = None) -> None:
+        """Apply a calibration and publish its provenance.
+
+        ``template`` names an SDK template (``"normal"`` / ``"reverse"``) and is
+        passed through *as a name*; ``path`` is the explicit file; neither means
+        "let the backend resolve the §5.3 order for this channel".
+        """
+        ok = bool(self.backend.load_calibration(path, template))
         self._refresh_calibration()
         info = self._info
         if ok and info is not None:
@@ -1493,7 +1568,7 @@ class WorkerLoop:
             # Sending the hold a second time would repeat the same frame, so the
             # hand-back is over before it starts.
             return
-        elif self._gate is GateState.READY:
+        elif self._gate in GATE_POSE:
             self._hold_measured("标定结束，但尚未读到位置，先零重力")
         else:
             # Behind a shut gate there is no vetted travel to name a millimetre

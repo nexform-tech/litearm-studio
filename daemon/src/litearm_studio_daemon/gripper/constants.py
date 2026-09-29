@@ -431,6 +431,18 @@ UV_DEGRADED_SPEED_MM_S = 25.0  # auto speed cap once the supply looks unstable
 # fast-forward the physics and teleport the jaws across their travel.
 SIM_MAX_STEP_S = 0.05
 
+#: How long ``zero()`` waits for a guided probe to finish before giving up.
+#: The probe's own bounds are 40 steps of 0.3 s plus two backoffs, so a healthy
+#: run is well inside 20 s; this is the timeout for a run that has stopped making
+#: progress, and it is deliberately generous because aborting a probe costs the
+#: operator the whole procedure.
+ZERO_PROBE_TIMEOUT_S = 120.0
+
+#: How long ``load_template``/``import_calibration`` wait for the tick to report
+#: the load they asked for.  One tick is 5 ms plus one backend call, so this is a
+#: backstop against a command that never landed, not a service level.
+CALIBRATION_LOAD_TIMEOUT_S = 5.0
+
 COMMAND_QUEUE_MAX = 256
 GUI_WATCHDOG_S = 3.0
 # Ceiling on the interval one control tick will integrate.  A process that was

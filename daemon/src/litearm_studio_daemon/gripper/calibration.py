@@ -44,7 +44,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -53,18 +53,39 @@ from .units import Limits, derive_scale
 
 # ── provenance ──────────────────────────────────────────────────────────────
 PROVENANCE_USER = "user_file"
+PROVENANCE_TEMPLATE = "template"
 PROVENANCE_FACTORY = "factory_fallback"
 PROVENANCE_INVALID = "invalid_user_file"
 PROVENANCE_MISSING = "missing"
 PROVENANCE_MEMORY = "in_memory_unsaved"
 
 PROVENANCE_LABELS = {
-    PROVENANCE_USER: "用户标定",
+    PROVENANCE_USER: "实测标定",
+    PROVENANCE_TEMPLATE: "标称模板（从未实测）",
     PROVENANCE_FACTORY: "出厂标定（回退）",
     PROVENANCE_INVALID: "标定无效",
     PROVENANCE_MISSING: "未标定",
     PROVENANCE_MEMORY: "内存标定（未保存）",
 }
+
+#: Provenance → the wire's ``source`` field (``docs/GRIPPER_INTEGRATION.md``
+#: §4.1).  The daemon's names are finer-grained than the wire's, and the mapping
+#: lives here rather than in the session so the two cannot drift apart.
+WIRE_SOURCES = {
+    PROVENANCE_USER: "measured",
+    PROVENANCE_MEMORY: "measured",
+    PROVENANCE_TEMPLATE: "template",
+    PROVENANCE_FACTORY: "factory",
+    PROVENANCE_INVALID: "missing",
+    PROVENANCE_MISSING: "missing",
+}
+
+#: Template names, in declaration order.  Mirrors the SDK's ``CALIB_TEMPLATES``
+#: so the pure layer can list and validate a name without importing the SDK.
+TEMPLATE_NAMES = ("normal", "reverse")
+
+#: Environment override for the calibration file, same variable the SDK reads.
+CALIB_ENV = "LITEGRIP_CALIB"
 
 # The three keys the SDK requires; it indexes them unguarded (gripper.py:745),
 # so a file missing one raises KeyError from inside the SDK rather than a
@@ -89,20 +110,64 @@ _SAVED_KEYS = (
 )
 
 
-def default_user_path() -> Path:
-    """Mirrors the SDK's ``DEFAULT_CALIB`` (gripper.py:39)."""
-    env = os.environ.get("LITEGRIP_CALIB")
+def default_user_path(channel: str = "can0") -> Path:
+    """This channel's own calibration file (``~/.litegrip/<channel>_calibration.json``).
+
+    Mirrors the SDK's ``default_calib_path``: one gripper per channel, one file
+    per channel, so two units on one machine cannot overwrite each other's
+    direction and travel.  ``LITEGRIP_CALIB`` overrides it with one explicit
+    path for every channel.
+    """
+    env = os.environ.get(CALIB_ENV)
     if env:
         return Path(env).expanduser()
+    return Path.home() / ".litegrip" / f"{channel}_calibration.json"
+
+
+def legacy_user_path() -> Path:
+    """The pre-per-channel location, still read so old files keep working.
+
+    Deliberately *not* ``default_user_path()``: the legacy file is a row of its
+    own in the resolution order (§5.3), and naming it here keeps the two apart
+    even when ``LITEGRIP_CALIB`` is set.
+    """
     return Path.home() / ".litegrip" / "litegrip_calibration.json"
+
+
+def template_path(name: str) -> Path:
+    """The file behind a template name.
+
+    Resolved through the SDK's own ``CALIB_TEMPLATES`` when the SDK is
+    importable, so the two cannot disagree about which file ``"reverse"`` is;
+    falls back to the package directory (which is where the SDK keeps them) when
+    it is not.  An unknown name is a ``ValueError`` — the caller is a command
+    handler, not a file resolver.
+    """
+    if name not in TEMPLATE_NAMES:
+        raise ValueError(f"未知的标定模板 {name!r}；可用的是 "
+                         f"{', '.join(repr(n) for n in TEMPLATE_NAMES)}")
+    try:
+        import litegrip
+
+        table = getattr(litegrip, "CALIB_TEMPLATES", None)
+        if isinstance(table, dict) and name in table:
+            return Path(str(table[name])).expanduser()
+        base = Path(litegrip.__file__).resolve().parent
+    except Exception:  # noqa: BLE001 - only without the SDK installed
+        base = Path(__file__).resolve().parent
+    return base / f"calibration_{name}.json"
+
+
+def list_templates() -> list[str]:
+    return list(TEMPLATE_NAMES)
 
 
 def factory_path() -> Path:
     """The SDK's bundled, read-only factory calibration (gripper.py:33).
 
     Resolved through ``litegrip.__file__`` so it is correct inside a PyInstaller
-    bundle (``sys._MEIPASS``), which is why the build must pass
-    ``--collect-data litegrip``.
+    bundle (``sys._MEIPASS``), which is why the build must collect the package
+    data.
     """
     env = os.environ.get("LITEGRIP_FACTORY_CALIB")
     if env:
@@ -165,10 +230,21 @@ class CalibrationInfo:
     problems: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
     max_stroke_mm: float = constants.DEFAULT_TRAVEL_MM
+    #: The template name, when the calibration in effect is a named template.
+    #: The SDK is loaded with ``template=`` in that case, never with a path: a
+    #: template copied into the user directory would pass for a measurement.
+    template: str | None = None
+    #: The channel the record belongs to, when it is known.
+    channel: str | None = None
 
     @property
     def label(self) -> str:
         return PROVENANCE_LABELS.get(self.provenance, self.provenance)
+
+    @property
+    def wire_source(self) -> str:
+        """The ``source`` this calibration reports on the wire (§4.1)."""
+        return WIRE_SOURCES.get(self.provenance, "missing")
 
     @property
     def usable(self) -> bool:
@@ -177,7 +253,7 @@ class CalibrationInfo:
 
     @property
     def motion_allowed(self) -> bool:
-        """True when the gate and the backend should let the motor be driven.
+        """True when the backend should let the motor be *driven* at all.
 
         Strictly narrower than :attr:`usable`, and the difference is the point:
         an in-memory probe result is *usable* — its numbers are self-consistent
@@ -186,11 +262,14 @@ class CalibrationInfo:
         A cross-check failure is narrower still: the numbers are unusable because
         the hardware is not running on them.
 
-        The factory case is allowed here and gated by the worker, which requires
-        the operator to acknowledge the risk first.  Keeping that decision in the
-        UI-facing layer means this property stays a statement about the file.
+        The template case is allowed here and narrowed by the *gate*, which
+        permits only the commands that do not depend on geometry (open, close,
+        release).  Keeping that split means this property stays a statement
+        about the file, and the gate stays the statement about what may move.
         """
-        return self.usable and self.provenance in (PROVENANCE_USER, PROVENANCE_FACTORY)
+        return self.usable and self.provenance in (
+            PROVENANCE_USER, PROVENANCE_TEMPLATE, PROVENANCE_FACTORY,
+        )
 
     @property
     def is_user(self) -> bool:
@@ -456,96 +535,318 @@ def validate_limits(
     return problems, warnings
 
 
-def resolve(
-    path: str | os.PathLike[str] | None = None,
+def inspect_file(
+    path: str | os.PathLike[str],
     max_stroke_mm: float = constants.DEFAULT_TRAVEL_MM,
+    *,
+    provenance: str = PROVENANCE_USER,
+    template: str | None = None,
+    channel: str | None = None,
+) -> CalibrationInfo:
+    """Read and validate one calibration file, without applying it.
+
+    The single place a file becomes a :class:`CalibrationInfo`, so every row of
+    the resolution order below is validated identically: the three required keys
+    must be present and numeric, the travel must be positive, and the derived
+    millimetres per rad must fall inside the plausible band.  The SDK validates
+    nothing (it indexes the keys unguarded), so a malformed file must never reach
+    it.
+    """
+    target = Path(path).expanduser()
+    try:
+        text = target.read_text(encoding="utf-8")
+    except OSError as exc:
+        return CalibrationInfo(
+            provenance=PROVENANCE_INVALID, limits=None, path=str(target),
+            channel=channel, template=template, problems=(f"无法读取: {exc}",),
+            max_stroke_mm=max_stroke_mm,
+        )
+
+    raw, problems = parse_calibration_json(text)
+    if problems or raw is None:
+        return CalibrationInfo(
+            provenance=PROVENANCE_INVALID, limits=None, path=str(target),
+            raw=raw or {}, channel=channel, template=template,
+            problems=tuple(problems), max_stroke_mm=max_stroke_mm,
+        )
+
+    limits = limits_from_raw(raw, max_stroke_mm)
+    hard, soft = validate_limits(limits, max_stroke_mm, file_scale(raw))
+    return CalibrationInfo(
+        provenance=provenance if not hard else PROVENANCE_INVALID,
+        limits=limits if not hard else None,
+        path=str(target),
+        raw=raw,
+        channel=channel,
+        template=template,
+        problems=tuple(hard),
+        warnings=tuple(soft),
+        max_stroke_mm=max_stroke_mm,
+    )
+
+
+def file_channel(raw: Mapping[str, Any]) -> str | None:
+    """The ``channel`` a calibration file declares, or ``None`` when it omits it."""
+    value = raw.get("channel")
+    return str(value) if value else None
+
+
+def template_for_path(path: str | os.PathLike[str]) -> str | None:
+    """Which template this path *is*, or ``None``.
+
+    A file that happens to be the SDK's nominal template must be labelled a
+    template wherever it came from.  Copying one into the user calibration
+    directory and calling it a measurement is the failure §D4 exists to prevent,
+    and a pinned path pointing straight at the shipped file is the same file.
+    """
+    target = Path(path).expanduser()
+    for name in TEMPLATE_NAMES:
+        try:
+            if target.resolve() == template_path(name).resolve():
+                return name
+        except OSError:  # pragma: no cover - unresolvable path
+            continue
+    return None
+
+
+def resolve(
+    channel: str = "can0",
+    *,
+    path: str | os.PathLike[str] | None = None,
+    mount: str | None = None,
+    travel_mm: float = constants.DEFAULT_TRAVEL_MM,
+    template: str | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> CalibrationInfo:
     """Determine which calibration is in effect, and whether it is safe.
 
-    This is the only entry point the UI and the gate should use.  It never asks
-    the SDK what it loaded — it decides from the filesystem, because the SDK
-    cannot tell the two sources apart.
+    The order is ``docs/GRIPPER_INTEGRATION.md`` §5.3, first hit wins, and the
+    result carries its provenance:
+
+    =====  ===============================================  ================
+    #      Source                                             provenance
+    =====  ===============================================  ================
+    1      ``path`` (the per-channel record's pinned file)    measured
+    2      ``~/.litegrip/<channel>_calibration.json``          measured
+    3      ``LITEGRIP_CALIB``                                 measured, flagged
+    4      ``~/.litegrip/litegrip_calibration.json``          measured, legacy
+    5      SDK template named by ``mount``                    template
+    6      SDK bundled ``factory_calibration.json``           factory
+    7      nothing                                            missing
+    =====  ===============================================  ================
+
+    ``template`` (an explicit choice) short-circuits the whole table: the
+    operator asked for that direction by name, and answering with a file instead
+    is the silent substitution the name exists to prevent.
+
+    The daemon never asks the SDK what it loaded.  The SDK cannot tell its own
+    fallback from a real file — both return ``True`` — so the decision is made
+    here, from the filesystem, and the SDK is then told explicitly which file or
+    which template to apply.
     """
-    user_path = Path(path).expanduser() if path else default_user_path()
+    environment = os.environ if env is None else env
+    stroke = float(travel_mm)
 
-    if user_path.is_file():
-        try:
-            text = user_path.read_text(encoding="utf-8")
-        except OSError as exc:
-            return CalibrationInfo(
-                provenance=PROVENANCE_INVALID,
-                limits=None,
-                path=str(user_path),
-                problems=(f"无法读取: {exc}",),
-                max_stroke_mm=max_stroke_mm,
-            )
-
-        raw, problems = parse_calibration_json(text)
-        if problems or raw is None:
-            return CalibrationInfo(
-                provenance=PROVENANCE_INVALID,
-                limits=None,
-                path=str(user_path),
-                raw=raw or {},
-                problems=tuple(problems),
-                max_stroke_mm=max_stroke_mm,
-            )
-
-        limits = limits_from_raw(raw, max_stroke_mm)
-        hard, soft = validate_limits(limits, max_stroke_mm, file_scale(raw))
-        return CalibrationInfo(
-            provenance=PROVENANCE_USER if not hard else PROVENANCE_INVALID,
-            limits=limits if not hard else None,
-            path=str(user_path),
-            raw=raw,
-            problems=tuple(hard),
-            warnings=tuple(soft),
-            max_stroke_mm=max_stroke_mm,
+    if template is not None:
+        candidate = template_path(template)
+        info = inspect_file(candidate, stroke, provenance=PROVENANCE_TEMPLATE,
+                            template=template, channel=channel)
+        return _with_warning(
+            info,
+            f"这是 SDK 自带的标称模板（{template}），从未在本机实测："
+            "它只声明装配方向与标称几何，毫米读数仅供对方向，不能用于定位",
         )
 
-    # No user calibration.  The SDK would now silently load the factory file, so
-    # we load it deliberately and say so out loud.
+    # 1 — the file this channel's record pins.
+    if path:
+        target = Path(path).expanduser()
+        if not target.is_file():
+            # A pinned path that has gone away is a fact the operator must see,
+            # not a reason to quietly adopt whichever file is next in the list.
+            return CalibrationInfo(
+                provenance=PROVENANCE_MISSING, limits=None, path=str(target),
+                channel=channel, problems=(f"指定的标定文件不存在: {target}",),
+                max_stroke_mm=stroke,
+            )
+        name = template_for_path(target)
+        info = inspect_file(
+            target, stroke,
+            provenance=PROVENANCE_TEMPLATE if name else PROVENANCE_USER,
+            template=name, channel=channel,
+        )
+        return _channel_checked(info, channel, stroke)
+
+    # 2 — this channel's own file.
+    own = Path.home() / ".litegrip" / f"{channel}_calibration.json"
+    if own.is_file():
+        return _channel_checked(
+            inspect_file(own, stroke, provenance=PROVENANCE_USER, channel=channel),
+            channel, stroke)
+
+    # 3 — the environment override.
+    override = environment.get(CALIB_ENV)
+    if override:
+        env_path = Path(override).expanduser()
+        if env_path.is_file():
+            name = template_for_path(env_path)
+            info = inspect_file(
+                env_path, stroke,
+                provenance=PROVENANCE_TEMPLATE if name else PROVENANCE_USER,
+                template=name, channel=channel,
+            )
+            return _channel_checked(
+                _with_warning(info, f"标定文件来自环境变量 {CALIB_ENV}={override}"), channel, stroke)
+
+    # 4 — the pre-per-channel location.
+    legacy = legacy_user_path()
+    if legacy.is_file():
+        name = template_for_path(legacy)
+        info = inspect_file(
+            legacy, stroke,
+            provenance=PROVENANCE_TEMPLATE if name else PROVENANCE_USER,
+            template=name, channel=channel,
+        )
+        info = _with_warning(
+            info, f"正在使用旧版单文件标定 {legacy}（建议迁移到 "
+                  f"{own}，两台夹爪共用一份时通道是唯一身份键）")
+        return _channel_checked(info, channel, stroke)
+
+    # 5 — a named template, when the operator has declared a mount.
+    if mount in TEMPLATE_NAMES:
+        return resolve(channel, mount=mount, travel_mm=stroke, template=mount)
+
+    # 6 — the SDK's bundled factory file.
     fact = factory_path()
     if fact.is_file():
-        try:
-            raw, problems = parse_calibration_json(fact.read_text(encoding="utf-8"))
-        except OSError as exc:
-            raw, problems = None, [f"无法读取出厂标定: {exc}"]
-        if raw is not None and not problems:
-            limits = limits_from_raw(raw, max_stroke_mm)
-            hard, soft = validate_limits(limits, max_stroke_mm, file_scale(raw))
-            warn = [
-                f"未找到用户标定文件 {user_path}",
-                "正在使用 SDK 内置的出厂数据；若与本机夹爪不是同一台，"
-                "所有 mm 与力的读数都会是错的",
-            ] + list(soft)
-            return CalibrationInfo(
-                provenance=PROVENANCE_FACTORY if not hard else PROVENANCE_INVALID,
-                limits=limits if not hard else None,
-                path=str(fact),
-                raw=raw,
-                problems=tuple(hard),
-                warnings=tuple(warn),
-                max_stroke_mm=max_stroke_mm,
-            )
-        return CalibrationInfo(
-            provenance=PROVENANCE_INVALID,
-            limits=None,
-            path=str(fact),
-            problems=tuple(problems or ["出厂标定无效"]),
-            max_stroke_mm=max_stroke_mm,
+        info = inspect_file(fact, stroke, provenance=PROVENANCE_FACTORY,
+                            channel=channel)
+        return _with_warning(
+            info,
+            "未找到任何实测标定，正在使用 SDK 内置的出厂数据："
+            "若与本机夹爪不是同一台，所有 mm 与力的读数都会是错的",
         )
 
+    # 7 — nothing.
     return CalibrationInfo(
-        provenance=PROVENANCE_MISSING,
-        limits=None,
-        path=None,
+        provenance=PROVENANCE_MISSING, limits=None, path=None, channel=channel,
         problems=(
-            f"未找到任何标定文件（已尝试 {user_path} 与 {fact}）",
-            "请先执行标定；未标定时运动指令会被拒绝",
+            f"未找到任何标定文件（已尝试 {own} 与 {fact}）",
+            "请先运行 zero() 实测，或声明装配方向以载入标称模板",
         ),
-        max_stroke_mm=max_stroke_mm,
+        max_stroke_mm=stroke,
     )
+
+
+def _with_warning(info: CalibrationInfo, warning: str) -> CalibrationInfo:
+    return replace(info, warnings=tuple(info.warnings) + (warning,))
+
+
+def _channel_checked(info: CalibrationInfo, channel: str,
+                     travel_mm: float) -> CalibrationInfo:
+    """Refuse to adopt a file whose own ``channel`` names another interface.
+
+    The channel is the only thing that tells two grippers apart when both sit at
+    CAN ID 0x08 (§5.3's "channel field matches, or is absent").  A mismatch is
+    reported as a problem rather than a warning, because motion planned on
+    another unit's geometry is wrong by a constant nobody can see.
+    """
+    if not channel:
+        return info
+    declared = file_channel(info.raw)
+    if declared and declared != channel:
+        return replace(
+            info,
+            provenance=PROVENANCE_INVALID,
+            limits=None,
+            problems=info.problems + (
+                f"标定文件声明的 channel={declared} 与本通道 {channel} 不一致 —— "
+                "同一台机器上两台夹爪共用 CAN ID 时通道是唯一身份键，"
+                "拒绝把它用在本次会话上",
+            ),
+        )
+    return info
+
+
+def list_candidates(
+    channel: str = "can0",
+    *,
+    pinned: str | None = None,
+    mount: str | None = None,
+    travel_mm: float = constants.DEFAULT_TRAVEL_MM,
+    env: Mapping[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    """Every calibration the operator could choose, whether or not it exists.
+
+    Backs ``gripper.list_calibrations``: the settings page shows the whole list
+    with its provenance and validity, so "which file is in effect" is answered
+    by looking at all of them rather than by trusting the one that happened to
+    load.
+    """
+    environment = os.environ if env is None else env
+    stroke = float(travel_mm)
+    out: list[dict[str, Any]] = []
+
+    def add(path: Path, provenance: str, template: str | None = None,
+            note: str | None = None) -> None:
+        if not path.is_file():
+            return
+        info = inspect_file(path, stroke, provenance=provenance, template=template,
+                            channel=channel)
+        if note:
+            info = _with_warning(info, note)
+        out.append(_candidate_dict(info, channel))
+
+    if pinned:
+        add(Path(pinned).expanduser(),
+            PROVENANCE_TEMPLATE if template_for_path(pinned) else PROVENANCE_USER)
+    add(Path.home() / ".litegrip" / f"{channel}_calibration.json", PROVENANCE_USER)
+    override = environment.get(CALIB_ENV)
+    if override:
+        add(Path(override).expanduser(), PROVENANCE_USER,
+            note=f"来自环境变量 {CALIB_ENV}")
+    add(legacy_user_path(), PROVENANCE_USER, note="旧版单文件位置")
+    for name in TEMPLATE_NAMES:
+        add(template_path(name), PROVENANCE_TEMPLATE, template=name)
+    add(factory_path(), PROVENANCE_FACTORY)
+    if mount in TEMPLATE_NAMES:
+        for item in out:
+            if item["template"] == mount:
+                item["selected"] = True
+    return out
+
+
+def _candidate_dict(info: CalibrationInfo, channel: str) -> dict[str, Any]:
+    limits = info.limits
+    return {
+        "path": info.path,
+        "source": info.wire_source,
+        "provenance": info.provenance,
+        "template": info.template,
+        "channel": channel,
+        "valid": info.usable,
+        "problems": list(info.problems),
+        "warnings": list(info.warnings),
+        "closedRad": None if limits is None else limits.closed_rad,
+        "openRad": None if limits is None else limits.open_rad,
+        "fileRadToMm": file_scale(info.raw),
+        "mount": None if limits is None else (
+            "reverse" if limits.reversed_mount else "normal"),
+    }
+
+
+def sdk_source(info: CalibrationInfo) -> tuple[str, str] | None:
+    """How to tell the SDK which calibration to apply: ``("template", name)``.
+
+    Returns ``None`` — load nothing — for every provenance motion must not
+    proceed on.  The SDK's no-argument call is never used: it falls back to the
+    bundled factory file and returns success either way, so the caller could not
+    tell which file moved the jaws.
+    """
+    if info.provenance == PROVENANCE_TEMPLATE and info.template:
+        return ("template", info.template)
+    if info.provenance in (PROVENANCE_USER, PROVENANCE_FACTORY) and info.path:
+        return ("path", info.path)
+    return None
 
 
 def in_memory(
@@ -591,19 +892,6 @@ def in_memory(
         warnings=tuple(warnings),
         max_stroke_mm=max_stroke_mm,
     )
-
-
-def sdk_load_path(info: CalibrationInfo) -> str | None:
-    """The explicit path to hand the SDK's ``load_calibration``.
-
-    Returns a path that we have already confirmed is readable for every usable
-    provenance, and ``None`` only when motion must not proceed.  Passing a
-    concrete path for the factory case too means the SDK's silent fallback
-    branch never executes.
-    """
-    if info.provenance in (PROVENANCE_USER, PROVENANCE_FACTORY) and info.path:
-        return info.path
-    return None
 
 
 def cross_check(

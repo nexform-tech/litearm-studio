@@ -297,9 +297,9 @@ def test_estop_is_engaged_within_one_tick(tmp_path: Path) -> None:
     """§4.2: 急停不排队, tick 在**一个周期内**就要读到它。"""
     from litearm_studio_daemon.gripper.backend.sim import SimBackend
 
-    backend = SimBackend()
-    signals = Recorder()
     now = [0.0]
+    backend = SimBackend(clock=lambda: now[0])
+    signals = Recorder()
     loop = WorkerLoop(backend, signals, clock=lambda: now[0],
                       sleep=lambda _s: None, watchdog_s=None)
     loop.set_allow_factory(True)
@@ -325,7 +325,7 @@ def test_probe_can_be_aborted_by_an_estop(tmp_path: Path) -> None:
     """§7: 标定探测跑到一半撞上急停, 探测必须被丢掉。"""
     from litearm_studio_daemon.gripper.backend.sim import SimBackend
 
-    backend = SimBackend()
+    backend = SimBackend(clock=lambda: 0.0)
     loop = WorkerLoop(backend, Recorder(), clock=lambda: 0.0, sleep=lambda _s: None,
                       watchdog_s=None)
     loop.submit(cmd.Connect())
@@ -407,9 +407,9 @@ def test_the_watchdog_stops_a_client_that_went_away(tmp_path: Path) -> None:
     from litearm_studio_daemon.gripper import constants
     from litearm_studio_daemon.gripper.backend.sim import SimBackend
 
-    backend = SimBackend()
-    signals = Recorder()
     now = [0.0]
+    backend = SimBackend(clock=lambda: now[0])
+    signals = Recorder()
     loop = WorkerLoop(backend, signals, clock=lambda: now[0],
                       sleep=lambda _s: None, watchdog_s=0.05)
     loop.submit(cmd.Connect())

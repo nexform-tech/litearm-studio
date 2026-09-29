@@ -178,12 +178,17 @@ class GripperBackend(ABC):
 
     # ── calibration plumbing ────────────────────────────────────────────────
     @abstractmethod
-    def load_calibration(self, path: str | None = None) -> bool:
-        """Apply a calibration.  ``path`` should be explicit (see calibration.py).
+    def load_calibration(self, path: str | None = None,
+                         template: str | None = None) -> bool:
+        """Apply a calibration.  At most one of ``path`` and ``template``.
 
-        With no path, the backend resolves the default itself and reports the
-        provenance it found — it must never leave the choice to the SDK, whose
-        fallback is silent.
+        With neither, the backend resolves the default itself — the §5.3 order
+        for the real backend — and reports the provenance it found.  It must
+        never leave the choice to the SDK, whose fallback is silent.
+
+        ``template`` is a name from the SDK's ``CALIB_TEMPLATES`` and is applied
+        *by name*: a template copied into the user directory would pass for a
+        measurement.
         """
 
     @abstractmethod
@@ -224,6 +229,19 @@ class GripperBackend(ABC):
         restart.
         """
         raise Unsupported("this backend cannot adopt an unsaved calibration")
+
+    def set_calibration_path(self, path: str | None) -> None:
+        """Pin the calibration file this channel resolves to (§5.3 row 1)."""
+        raise Unsupported("this backend cannot pin a calibration file")
+
+    def set_mount(self, mount: str | None) -> None:
+        """Record the declared mounting direction, for calibration resolution.
+
+        A declaration, not a reading: it names which SDK template the resolution
+        order falls back to when the channel has no measured file of its own
+        (§5.3 row 5).
+        """
+        raise Unsupported("this backend has no mount to declare")
 
     def set_travel_mm(self, max_stroke_mm: float) -> None:
         """Record the measured travel of this gripper, in millimetres.

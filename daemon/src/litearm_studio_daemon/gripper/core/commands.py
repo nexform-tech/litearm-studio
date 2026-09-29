@@ -207,6 +207,21 @@ class SetForce(Command):
 
 
 @dataclass(frozen=True)
+class SetMount(Command):
+    """Record the declared mounting direction (``"normal"`` / ``"reverse"``).
+
+    The declaration is the *input* to the calibration resolution (§5.3 row 5), so
+    it has to reach the backend before a load — the same reason ``SetTravelMm``
+    is a command: the backend is only ever touched on the tick thread.
+    """
+
+    mount: str | None
+
+    def describe(self) -> str:
+        return f"装配方向设为 {self.mount or '（未声明）'}"
+
+
+@dataclass(frozen=True)
 class SetTravelMm(Command):
     """Record the measured travel of this unit.
 
@@ -234,6 +249,38 @@ class LoadCalibration(Command):
 
     def describe(self) -> str:
         return f"载入标定 {self.path or '（默认路径）'}"
+
+
+@dataclass(frozen=True)
+class SetCalibrationPath(Command):
+    """Pin a calibration file for this channel (§5.3 row 1).
+
+    The record holds it so it survives a restart, and the backend needs it too:
+    the next "resolve this channel's calibration" must answer with the pinned
+    file rather than with whatever the channel's default location happens to
+    contain.
+    """
+
+    path: str | None
+
+    def describe(self) -> str:
+        return f"固定标定文件为 {self.path or '（无）'}"
+
+
+@dataclass(frozen=True)
+class LoadTemplate(Command):
+    """Declare the mounting direction by loading an SDK template *by name*.
+
+    By name and never by copying the file: the templates carry nominal 120 mm
+    geometry whose only job is to declare which way the jaws open, and a copy in
+    the user calibration directory would pass for a measurement
+    (``docs/GRIPPER_INTEGRATION.md`` D4).
+    """
+
+    name: str
+
+    def describe(self) -> str:
+        return f"载入标称模板 {self.name}"
 
 
 @dataclass(frozen=True)
@@ -378,9 +425,12 @@ AnyCommand = Union[
     SetZeroGravity,
     SetSpeed,
     SetForce,
+    SetMount,
     SetTravelMm,
     LoadCalibration,
     SaveCalibration,
+    SetCalibrationPath,
+    LoadTemplate,
     StartGuidedCalibration,
     ConfirmProbeLimit,
     StartManualCalibration,

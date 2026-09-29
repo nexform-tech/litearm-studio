@@ -33,6 +33,7 @@ import logging
 import threading
 import time
 from dataclasses import replace
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from ..errors import (
@@ -42,14 +43,7 @@ from ..errors import (
     GripperNotConnectedError,
     UnknownCommandError,
 )
-from . import constants
-from .calibration import (
-    PROVENANCE_FACTORY,
-    PROVENANCE_INVALID,
-    PROVENANCE_MEMORY,
-    PROVENANCE_MISSING,
-    PROVENANCE_USER,
-)
+from . import calibration, constants
 from .config import ChannelConfig, ChannelStore
 from .core import commands as cmd
 from .core.motion import MotionState
@@ -84,13 +78,21 @@ GRIPPER_COMMANDS: Dict[str, str] = {
     "gripper.stop": "急停 (不排队, 立即生效) → null",
     "gripper.reset_stop": "复位急停 → null",
     "gripper.set_motion": "改速度/夹持力 → 生效中的设置",
+    "gripper.load_template": "声明装配方向 (normal|reverse), 按名载入模板 → {mount, source}",
+    "gripper.list_calibrations": "列出本通道可用的标定及其来源/校验 → [ … ]",
+    "gripper.import_calibration": "载入指定标定文件并记住它 → {path, source}",
+    "gripper.zero": "引导式实测 (travelMm) → {closedRad, openRad, radToMm}",
+    "gripper.set_allow_factory": "确认/撤销「允许出厂标定」(持久化) → {allowFactory}",
 }
 
-#: Commands that only make sense with a live session.
+#: Commands that need a connected session.  ``gripper.list_calibrations`` is
+#: deliberately absent: listing files is a filesystem question, and the settings
+#: page asks it before it connects.
 _NEEDS_CONNECTION = frozenset({
     "gripper.enable", "gripper.disable", "gripper.clear_fault",
     "gripper.open", "gripper.close", "gripper.grasp", "gripper.move_to",
     "gripper.release", "gripper.reset_stop", "gripper.set_motion",
+    "gripper.load_template", "gripper.import_calibration", "gripper.zero",
 })
 
 #: Commands the stop latch refuses.  Exactly the ones that move the jaws: 失能,
@@ -99,6 +101,11 @@ _NEEDS_CONNECTION = frozenset({
 _MOTION_REQUESTS = frozenset({
     "gripper.open", "gripper.close", "gripper.grasp", "gripper.move_to",
 })
+
+#: The commands that turn a millimetre into a motor angle, and therefore need a
+#: calibration whose numbers describe *this* unit.  张开/闭合 drive to the ends
+#: of the travel and are meaningful under a nominal template; these are not.
+_GEOMETRY_COMMANDS = frozenset({"gripper.move_to", "gripper.grasp"})
 
 #: Wire names for the daemon's own connection states — identical strings today,
 #: named here so the two can never drift apart silently.
@@ -138,17 +145,13 @@ def _wire_source(info: Any) -> Optional[str]:
     """Calibration provenance → the wire's ``source`` field (§4.1).
 
     ``None`` means "no calibration has been resolved yet", which is a different
-    statement from ``"missing"`` (resolution ran and found nothing).
+    statement from ``"missing"`` (resolution ran and found nothing).  The mapping
+    itself lives on :class:`~litearm_studio_daemon.gripper.calibration.CalibrationInfo`
+    so the session and the calibration page cannot disagree about it.
     """
     if info is None:
         return None
-    return {
-        PROVENANCE_USER: "measured",
-        PROVENANCE_MEMORY: "measured",
-        PROVENANCE_FACTORY: "factory",
-        PROVENANCE_MISSING: "missing",
-        PROVENANCE_INVALID: "missing",
-    }.get(info.provenance, "missing")
+    return getattr(info, "wire_source", None)
 
 
 class _Emitter:
@@ -260,7 +263,9 @@ class GripperSession:
         if self._fake:
             from .backend.sim import SimBackend
 
-            return SimBackend(realtime=True)
+            return SimBackend(realtime=True, channel=config.channel,
+                              mount=config.mount,
+                              pinned_path=config.calibration_path)
         # Imported here, not at module scope: ``litegrip`` needs ``fcntl`` and
         # ``PF_CAN`` and raises at import on Windows (D10), and the daemon must
         # still start there with the gripper absent.
@@ -272,6 +277,7 @@ class GripperSession:
             mst_id=config.mst_id,
             max_stroke_mm=config.travel_mm,
             calibration_path=config.calibration_path,
+            mount=config.mount,
         )
 
     def _make_can_link(self, config: ChannelConfig) -> Any:
@@ -377,16 +383,29 @@ class GripperSession:
         return self.status == "connected"
 
     def conn_info(self) -> dict:
-        """The ``gripper_conn`` frame's payload (without ``t``)."""
+        """The ``gripper_conn`` frame's payload (without ``t``).
+
+        ``mount`` is *read back* from the limits the device is actually running
+        on, and only falls back to the declared record when nothing is loaded:
+        a declaration is a request, and the operator has to be able to see which
+        one the hardware ended up with (§6.3's read-back discipline).
+        """
         with self._lock:
             config, status = self._config, self._status
             error, gate, reason = self._last_error, self._gate, self._gate_reason
-        info = self.loop.info
+            loop = self._loop
+        info = loop.info if loop is not None else None
+        mount = config.mount
+        limits = getattr(info, "limits", None) if info is not None else None
+        if limits is not None:
+            mount = "reverse" if limits.reversed_mount else "normal"
         return {
             "status": status,
             "channel": config.channel,
             "canId": int(config.can_id),
-            "mount": config.mount,
+            "mount": mount,
+            "declaredMount": config.mount,
+            "template": getattr(info, "template", None) if info is not None else None,
             "source": _wire_source(info),
             "path": getattr(info, "path", None) if info is not None else None,
             "travelMm": float(config.travel_mm),
@@ -695,10 +714,17 @@ class GripperSession:
         refusal that never leaves the WebSocket thread is the difference between
         an operator reading a reason and an operator watching a button do
         nothing.
+
+        The one nuance is the nominal template (§5.3): it allows 张开/闭合/零重力
+        and refuses every millimetre target, because its geometry describes a
+        120 mm unit and every target computed from it would be wrong by about
+        40 %.
         """
         with self._lock:
             gate, reason = self._gate, self._gate_reason
         if gate is GateState.READY:
+            return
+        if gate is GateState.TEMPLATE and method not in _GEOMETRY_COMMANDS:
             return
         raise GripperCalibrationError(reason or f"标定未就绪, 拒绝 {method}")
 
@@ -778,6 +804,161 @@ class GripperSession:
                 speed if speed is not None else params.speed_mm_s),
             "forceN": clamp_force(force if force is not None else params.force_n),
         }
+
+    # ── 标定 (§5.3) ─────────────────────────────────────────────────────────
+    def _cmd_load_template(self, p: dict) -> dict:
+        """Declare the mounting direction by loading an SDK template by name."""
+        mount = p.get("mount")
+        if mount not in ("normal", "reverse"):
+            raise ValueError("mount 需为 normal 或 reverse")
+        self._persist(mount=mount)
+        # The declaration reaches the backend *before* the load.  They are two
+        # commands only because the queue is FIFO, which is what makes the order
+        # hold: resolution row 5 answers with a template only when the backend
+        # already knows a mount has been declared.
+        self.loop.submit(cmd.SetMount(mount))
+        self.loop.submit(cmd.LoadTemplate(mount))
+        info = self._await_calibration(
+            lambda i: i.template == mount,
+            f"模板 {mount} 未在 {constants.CALIBRATION_LOAD_TIMEOUT_S:.0f}s 内生效")
+        return {"mount": mount, "source": info.wire_source}
+
+    def _cmd_list_calibrations(self, p: dict) -> List[dict]:
+        """Every calibration this channel could use, with provenance and validity.
+
+        A filesystem question, answered without a connection: the settings page
+        asks it before it connects, which is when the operator is deciding which
+        file to use.
+        """
+        del p
+        config = self.config
+        return calibration.list_candidates(
+            config.channel,
+            pinned=config.calibration_path,
+            mount=config.mount,
+            travel_mm=config.travel_mm,
+        )
+
+    def _cmd_import_calibration(self, p: dict) -> dict:
+        """Pin and apply a calibration file the operator chose."""
+        path = p.get("path")
+        if not isinstance(path, str) or not path.strip():
+            raise ValueError("path 是必需的 (控制机上的文件路径)")
+        target = Path(path).expanduser()
+        if not target.is_file():
+            raise ValueError(f"标定文件不存在: {target}")
+        # Validate before the SDK sees it: the SDK indexes the keys unguarded,
+        # so a malformed file would surface as a KeyError from inside it.
+        preview = calibration.inspect_file(target, self.config.travel_mm)
+        if preview.problems:
+            raise GripperCalibrationError("；".join(preview.problems))
+        self._persist(calibration_path=str(target))
+        # The backend must know the pin before it is asked to resolve again: the
+        # next connect re-resolves this channel's calibration, and it has to end
+        # at the file the operator pinned rather than at the channel default.
+        self.loop.submit(cmd.SetCalibrationPath(str(target)))
+        self.loop.submit(cmd.LoadCalibration(str(target)))
+        info = self._await_calibration(
+            lambda i: i.path == str(target),
+            f"{target} 未在 {constants.CALIBRATION_LOAD_TIMEOUT_S:.0f}s 内生效")
+        if not info.usable:
+            raise GripperCalibrationError("；".join(info.problems) or "标定不可用")
+        return {"path": str(target), "source": info.wire_source}
+
+    def _cmd_zero(self, p: dict) -> dict:
+        """Measure both travel limits, save the result, and answer with it.
+
+        The only long-blocking gripper command: the probe runs on the tick (one
+        step per tick, so an E-stop interrupts it), while this thread waits for
+        it to finish and answers with the calibration that came out.  The client
+        must not subject it to the ordinary 60 s command timeout (§4.2).
+        """
+        travel = _required_float(p, "travelMm")
+        _check_range(travel, constants.STROKE_MIN_MM, constants.STROKE_MAX_MM,
+                     "travelMm")
+        loop = self.loop
+        if loop.estopped:
+            raise GripperEstoppedError("急停已触发; 请先排除原因并按复位急停")
+        if not loop.connected:
+            raise GripperNotConnectedError("夹爪未连接")
+        if loop.probe is not None:
+            raise GripperBusyError("已有标定正在进行")
+        if not loop.enabled:
+            # The probe drives into the stops and steers by the encoder, so it
+            # needs a motor that answers.  Said here rather than left to the
+            # tick, because a probe refused on the tick looks like nothing.
+            raise ValueError("标定需要电机使能；请先使能再运行零位标定")
+
+        # The travel is the numerator of every millimetre the calibration will
+        # produce, so it is recorded before the probe uses it.
+        self._persist(travel_mm=travel)
+        loop.submit(cmd.SetTravelMm(travel))
+        loop.submit(cmd.StartGuidedCalibration(
+            reversed_mount=(self.config.mount == "reverse")))
+        if not self._wait_until(lambda: self.loop.probe is not None, 5.0):
+            raise GripperCalibrationError("标定未能开始（检查使能、急停与连接状态）")
+        # ⚠ Wait for the *result*, not merely for the probe object to be dropped:
+        # ``_finish_probe`` clears it first and adopts, validates and saves the
+        # calibration afterwards, so a waiter that stopped at the first half
+        # would answer with the in-memory (unsaved) numbers — and the page would
+        # show a result that is not yet on disk.
+        if not self._wait_until(
+                lambda: self.loop.probe is None
+                and self.loop.info is not None
+                and self.loop.info.provenance != calibration.PROVENANCE_MEMORY,
+                constants.ZERO_PROBE_TIMEOUT_S):
+            self.loop.submit(cmd.CancelCalibration())
+            raise GripperCalibrationError(
+                f"标定超过 {constants.ZERO_PROBE_TIMEOUT_S:.0f}s 未结束，已取消")
+        info = self.loop.info
+        if info is None or info.limits is None:
+            reason = "；".join(info.problems) if info is not None else "没有标定结果"
+            raise GripperCalibrationError(reason or "标定未产生可用的结果")
+        return {
+            "closedRad": info.limits.closed_rad,
+            "openRad": info.limits.open_rad,
+            "radToMm": info.limits.rad_to_mm,
+            "source": info.wire_source,
+            "warnings": list(info.warnings),
+        }
+
+    def _cmd_set_allow_factory(self, p: dict) -> dict:
+        """Persist the operator's acknowledgement of the factory calibration.
+
+        A decision, not a state, so it is written to the per-channel record: the
+        gate reads it on the next tick, and a restart does not silently withdraw
+        an acknowledgement the operator made.
+        """
+        allow = p.get("allow")
+        if not isinstance(allow, bool):
+            raise ValueError("allow 需布尔值")
+        self._persist(allow_factory=allow)
+        self.loop.set_allow_factory(allow)
+        return {"allowFactory": allow}
+
+    # ── 标定辅助 ────────────────────────────────────────────────────────────
+    def _persist(self, **changes: Any) -> None:
+        """Write fields into the channel record and adopt the result."""
+        with self._lock:
+            record = replace(self._config, **changes)
+            self._config = self._store.put(record)
+
+    def _wait_until(self, predicate: Callable[[], bool], timeout_s: float) -> bool:
+        deadline = time.monotonic() + float(timeout_s)
+        while time.monotonic() < deadline:
+            if predicate():
+                return True
+            time.sleep(0.01)
+        return bool(predicate())
+
+    def _await_calibration(self, predicate: Callable[[Any], bool],
+                           failure: str) -> Any:
+        """Wait for the loop to report the calibration a load command asked for."""
+        if not self._wait_until(
+                lambda: self.loop.info is not None and predicate(self.loop.info),
+                constants.CALIBRATION_LOAD_TIMEOUT_S):
+            raise GripperCalibrationError(failure)
+        return self.loop.info
 
     # ── 急停 ────────────────────────────────────────────────────────────────
     def estop(self, reason: str = "上位机急停") -> None:

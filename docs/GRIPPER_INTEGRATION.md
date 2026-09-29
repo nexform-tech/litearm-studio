@@ -116,7 +116,7 @@ Additive. Existing arm frames and commands do not change.
   "positionMm":41.2,"forceN":0.0,"torqueNm":0.0,
   "enabled":true,"state":"ready|moving|grasping|holding|fault|disabled|stopped",
   "errorCode":1,"temps":{"mosTemp":31,"coilTemp":34},
-  "fresh":true,"gate":"READY|FACTORY|BLOCKED","gateReason":"…"}}
+  "fresh":true,"gate":"READY|TEMPLATE|FACTORY|BLOCKED","gateReason":"…"}}
 
 {"t":"gripper_calib","probe":"zero","phase":"close|open|done|failed",
  "step":12,"total":80,"detail":"寻找闭合限位"}
@@ -128,7 +128,11 @@ Additive. Existing arm frames and commands do not change.
 
 `gripper_conn` is the single source of truth for the gripper's connection, the
 same way `conn` is for the arm. `status:"error"` with `channel:""` means the
-interface or the device went away.
+interface or the device went away. Its `mount` is read back from the limits the
+device is actually running on, and `declaredMount` keeps the record's
+declaration beside it so the two can be compared; `template` names the SDK
+template in effect when one is. A page that shows a millimetre reading has to be
+able to say whether the geometry behind it was ever measured.
 
 `gripper_state` is pushed at 50 Hz, and immediately whenever `state`, `enabled`,
 `errorCode` or `mount` changes. Its `gate`/`gateReason` fields say why the
@@ -165,9 +169,10 @@ progress, so the page can say why it is waiting.
 | `gripper.reset_stop` | — | `null` (release the latch) |
 | `gripper.set_motion` | `speedMmS?`, `forceN?` | the settings now in effect |
 | `gripper.load_template` | `mount` (`normal` or `reverse`) | `{"mount":…,"source":"template"}` |
-| `gripper.list_calibrations` | — | `[{"path","source","valid","problems":[],"warnings":[],"closedRad","openRad","fileRadToMm"}]` |
+| `gripper.list_calibrations` | — | `[{"path","source","valid","problems":[],"warnings":[],"closedRad","openRad","fileRadToMm","template","mount"}]` |
 | `gripper.import_calibration` | `path` (on the control machine) | `{"path":…,"source":"measured"}` |
-| `gripper.zero` | `travelMm` | `{"closedRad":…,"openRad":…,"radToMm":…}` |
+| `gripper.zero` | `travelMm` | `{"closedRad":…,"openRad":…,"radToMm":…,"source":…,"warnings":[]}` |
+| `gripper.set_allow_factory` | `allow` (bool) | `{"allowFactory":true}` |
 
 Rules:
 
@@ -181,7 +186,13 @@ Rules:
   frames. It must not hold the WS read loop: the tick runs the probe as a state
   machine, one step per tick.
 - Command timeout stays at the daemon's existing 60 s, except `gripper.zero`,
-  which the client must not subject to a 60 s timeout.
+  which the client must not subject to a 60 s timeout. The daemon waits up to
+  120 s for the probe itself and answers with the calibration it produced.
+- `gripper.set_allow_factory` persists the acknowledgement of the factory
+  calibration (a decision, not a state) and is the only way the `FACTORY` gate
+  opens. It is an addition to the table above, needed by §5.3 row 6.
+- `gripper.list_calibrations` needs no connection: it is a filesystem question,
+  and the settings page asks it while deciding what to load.
 
 ### 4.3 Error kinds
 
@@ -234,6 +245,10 @@ The tick borrows `WorkerLoop.tick_once`, whose order is deliberate:
 The daemon decides which calibration is in effect and tells the SDK explicitly.
 It never asks the SDK what it loaded.
 
+The implementation is `daemon/src/litearm_studio_daemon/gripper/calibration.py`
+(`resolve` / `inspect_file` / `sdk_source`) — the same code the settings page
+reads through `gripper.list_calibrations`.
+
 **Resolution order** (first hit wins, and the result carries its provenance):
 
 | # | Source | Condition | Provenance |
@@ -249,8 +264,14 @@ It never asks the SDK what it loaded.
 **Gate.** Motion is allowed only when the provenance is `measured`, or `template`
 for the commands that do not depend on geometry: `open`, `close`, `release`.
 Every millimetre target (`gripper.move_to`, `gripper.grasp`) requires `measured`.
-`factory` requires an explicit, persisted operator acknowledgement. `missing`
-allows nothing but `zero`.
+`factory` requires an explicit, persisted operator acknowledgement
+(`gripper.set_allow_factory`). `missing` allows nothing but `zero`.
+
+The gate is evaluated twice on purpose: the tick asks "may the axis be driven at
+all" (a template says yes, under its own nominal limits), and each command asks
+"may this one name a millimetre" (a template says no). The second question lives
+in `WorkerLoop._refusal(geometry=…)`; the WebSocket thread asks it too, so the
+refusal arrives as a `res` error rather than as an alert after the fact.
 
 **Cross-check.** After loading, read back the limits the SDK actually applied and
 compare them with the file. A mismatch means the numbers on screen do not describe

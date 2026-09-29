@@ -84,10 +84,16 @@ class RealBackend(GripperBackend):
         canfd_mode: bool | None = None,
         max_stroke_mm: float = constants.DEFAULT_TRAVEL_MM,
         calibration_path: str | None = None,
+        mount: str | None = None,
         gripper: Any | None = None,
     ) -> None:
         super().__init__()
+        self._channel = channel
         self._calibration_path = calibration_path
+        #: The declared mount (``"normal"`` / ``"reverse"``), which is one row of
+        #: the resolution order (§5.3 row 5).  A declaration, not a reading: what
+        #: the SDK reports back is the limits the loaded file spells out.
+        self._mount = mount
         self._info: CalibrationInfo | None = None
         self._last_refusal: str | None = None
 
@@ -310,36 +316,54 @@ class RealBackend(GripperBackend):
             raise BackendError(f"零力矩指令失败: {exc}") from exc
 
     # ── calibration ─────────────────────────────────────────────────────────
-    def load_calibration(self, path: str | None = None) -> bool:
+    def load_calibration(self, path: str | None = None,
+                         template: str | None = None) -> bool:
         """Resolve, validate, apply, then verify what the SDK actually applied.
 
         Returns False for every reason motion must not proceed, including a
         successful load that does not match the file.  The stored
         :class:`CalibrationInfo` carries the reason, so the UI can show it.
+
+        ``template`` is a name (``"normal"`` / ``"reverse"``) and is passed to
+        the SDK *as a name*: the templates carry nominal 120 mm geometry that
+        declares direction, and copying one into the user directory would make
+        nominal data pass for a measurement (§D4).
         """
         self._claim()
-        explicit = path if path is not None else self._calibration_path
-        info = calibration.resolve(explicit, self._travel_mm())
+        if template is None and path is None:
+            # The resolution order of §5.3, decided here from the filesystem and
+            # never by asking the SDK what it loaded.
+            info = calibration.resolve(
+                self._channel, path=self._calibration_path, mount=self._mount,
+                travel_mm=self._travel_mm())
+        else:
+            info = calibration.resolve(
+                self._channel, path=path, mount=self._mount,
+                travel_mm=self._travel_mm(), template=template)
 
-        sdk_path = calibration.sdk_load_path(info)
-        if sdk_path is None:
+        source = calibration.sdk_source(info)
+        if source is None:
             # Unusable, or an unsaved probe result.  Nothing is handed to the
             # SDK: its fallback branch would find *some* file and return True.
             self._info = info
             return False
 
+        kind, value = source
         try:
-            loaded = bool(self._gripper.load_calibration(sdk_path))
+            if kind == "template":
+                loaded = bool(self._gripper.load_calibration(template=value))
+            else:
+                loaded = bool(self._gripper.load_calibration(value))
         except LiteGripError as exc:
             self._info = replace(
-                info, problems=info.problems + (f"SDK 拒绝载入 {sdk_path}: {exc}",)
+                info, problems=info.problems + (f"SDK 拒绝载入 {value}: {exc}",)
             )
             return False
 
         if not loaded:
             # Only reachable if the file vanished between our read and this call.
             self._info = replace(
-                info, problems=info.problems + (f"SDK 未能载入 {sdk_path}",)
+                info, problems=info.problems + (f"SDK 未能载入 {value}",)
             )
             return False
 
@@ -380,7 +404,8 @@ class RealBackend(GripperBackend):
         info = self._info
         if info is None or info.limits is None:
             raise NotReady("没有可保存的标定")
-        target = path or self._calibration_path or str(calibration.default_user_path())
+        target = path or self._calibration_path or str(
+            calibration.default_user_path(self._channel))
 
         # The SDK's own file is data, not state: it ships with the package and
         # describes whichever unit it was taken on.  Overwriting it would
@@ -447,6 +472,16 @@ class RealBackend(GripperBackend):
         if info is not None and info.limits is not None:
             return info.limits
         return Limits.from_config(self._gripper.config)
+
+    def set_calibration_path(self, path: str | None) -> None:
+        """Pin the file this channel resolves to (§5.3 row 1)."""
+        self._claim()
+        self._calibration_path = path
+
+    def set_mount(self, mount: str | None) -> None:
+        """Record the declared mounting direction (§5.3 row 5)."""
+        self._claim()
+        self._mount = mount
 
     def set_travel_mm(self, max_stroke_mm: float) -> None:
         """Set the measured travel, which the SDK's schema cannot carry.
