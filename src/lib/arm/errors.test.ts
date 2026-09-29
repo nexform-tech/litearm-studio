@@ -65,6 +65,31 @@ describe('formatArmError (daemon err.kind → i18n)', () => {
     await i18n.changeLanguage('zh')
   })
 
+  it('names the remedy when the firmware refuses ENABLE because the arm is not activated', async () => {
+    // ERR{0x10,0x08}: 固件 `ctrl_enable()` 的第一条判据就是"没激活"。这条错**必须**说清
+    // 下一步 —— 只说"控制器拒绝了该命令（错误码 8）"等于没说，而它正是每台未激活的
+    // 机器一开机就会撞上的那条。
+    await i18n.changeLanguage('zh')
+    const zh = formatArmError(daemonErr('CommandRejectedError', 'ERR [10,8]', { cmd: 16, code: 8 }))
+    expect(zh).toContain('尚未激活')
+    expect(zh).toContain('授权激活')
+    expect(formatArmError(daemonErr('CommandRejectedError', 'ERR [10,8]', { cmd: 16, code: 8 }))).not.toContain('错误码 8')
+
+    await i18n.changeLanguage('en')
+    const en = formatArmError(daemonErr('CommandRejectedError', 'ERR [10,8]', { cmd: 16, code: 8 }))
+    expect(en).toContain('not activated')
+    expect(en).toContain('Activation')
+
+    // ⚠ 同一个数字在别的命令下**不是**这个意思：不带命令码时不许套用这条文案。
+    await i18n.changeLanguage('zh')
+    expect(formatArmError(daemonErr('CommandRejectedError', 'rejected', { code: 8 }))).toBe(
+      '控制器拒绝了该命令（错误码 8）',
+    )
+    expect(formatArmError(daemonErr('CommandRejectedError', 'rejected', { cmd: 63, code: 8 }))).toBe(
+      '控制器拒绝了该命令（错误码 8）',
+    )
+  })
+
   it('unwraps the daemon info carried on a rejected command Error', async () => {
     await i18n.changeLanguage('zh')
     const err = Object.assign(new Error('已有运动在途'), { err: daemonErr('MotionBusyError', '已有运动在途') })

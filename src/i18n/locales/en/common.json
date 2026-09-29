@@ -102,6 +102,7 @@
     "cartUnsupported": "This firmware was built without cartesian planning: movel and cartesian jog are unavailable, use joint space instead",
     "jointLimitsFallback": "Could not read the joint soft limits from the controller; the sliders fell back to built-in ranges",
     "unknownError": "Operation failed: {{message}}",
+    "notActivated": "This arm is not activated, so the firmware refuses to enable it: open Settings → Activation, copy the device UID and request a license from your supplier",
     "gripperNotConnected": "Gripper is not connected: connect it on the gripper page first",
     "gripperLinkError": "The gripper's CAN interface is unavailable: {{message}}",
     "gripperFaultActive": "The gripper drive reports a fault: {{message}} — clear it once the cause is gone",

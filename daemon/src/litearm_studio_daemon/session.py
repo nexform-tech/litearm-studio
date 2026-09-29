@@ -147,6 +147,9 @@ COMMANDS: Dict[str, str] = {
     "get_ff_vec": "读回前馈向量 (item 7=重力系数 / 8=惯量系数)",
     "get_ff_scalar": "读回前馈标量 (item 4=载荷质量 / 5=质心 / 6=重力向量)",
     "kin_bench": "固件运动学自检 + 链路诊断计数",
+    # ---- 授权/激活 (只读那一半; 提交凭据要等凭据格式定稿, 见 docs/ACTIVATION.md) ----
+    "license": "读设备授权记录: 是否已激活 + 设备 UID (arm.license) —— "
+               "**未激活是一种状态, 不是错误**",
 }
 
 
@@ -951,6 +954,8 @@ class Session:
                     arm.get_ff_scalar(_int(p, "item"), _int_value(sub_idx, "sub")).value)
             if m == "kin_bench":
                 return statemap.jsonable(arm.diag.kin_bench().value)
+            if m == "license":
+                return _license_dict(arm)
             # 白名单与实现**各写一遍**是刻意的: 只在准入处查表的话, 表里加一条而忘了
             # 实现会静默返回 None (前端看到"成功"却什么都没发生)。
             raise UnknownCommandError(m, sorted(COMMANDS))
@@ -1074,6 +1079,43 @@ def _vector(v: Any, n: int, key: str) -> List[float]:
             raise ValueError(f"{key} 需 {n} 个数值")
         out.append(float(x))
     return out
+
+
+def _license_dict(arm: Arm) -> dict:
+    """读设备授权记录 → 线上 dict (形状见 `docs/ACTIVATION.md`)。
+
+    `supported` 是**三态**, 不是一个布尔 —— 三者对用户说的话完全不同:
+
+    * `True` —— 读到了记录, 其余字段有效 (未激活时 `cust_id`/`issued`/`flags` 恒 0,
+      但 **UID 照回**: 签发凭据用的就是它);
+    * `False` —— 固件明确回了 `ERR{0x2F,0x00}`: 这台固件没有授权命令 (太旧);
+    * `None` —— 没读到 (本次无应答)。
+
+    ⚠ **今天旧固件走的是 `None` 那条, 不是 `False`**: SDK 的 `license()` 只等
+    `RSP_LICENSE(0x4F)` 一条队列, 固件回的那条 `ERR{0x2F,0x00}` 落在它读不到的队列里,
+    于是它等满 1s 抛 `MotionTimeoutError` (litearm-python 的 `_wait_keys`; 修法是给那次
+    `expect` 补 `echo_cmd`, 属 SDK 仓的另一笔)。这里**必须**把它折成"未确认": 让它冒出去
+    的话, 用户看到的是"运动超时", 与"这台固件有没有授权功能"毫不相干。
+    """
+    try:
+        info = arm.license()
+    except litearm.UnsupportedByFirmwareError:
+        return {"supported": False}
+    except litearm.MotionTimeoutError:
+        return {"supported": None}
+    return {
+        "supported": True,
+        "state": int(info.state),
+        "stateName": info.state_name,
+        "activated": bool(info.activated),
+        "factoryMode": bool(info.factory_mode),
+        "ver": int(info.ver),
+        # ⚠ 24 位小写 hex, 与厂商签发器的 `--uid` 参数同一形态 (见 `LicenseInfo.uid_hex`)。
+        "uid": info.uid_hex,
+        "custId": int(info.cust_id),
+        "issued": int(info.issued),
+        "flags": int(info.flags),
+    }
 
 
 def _joint_param_dict(jp: Any) -> dict:

@@ -29,6 +29,10 @@ describe('i18n Internationalization', () => {
     expect(i18n.t('gripper:zero.start')).toBe('开始标定')
     expect(i18n.t('gripper:settings.allowFactory')).toBe('允许出厂标定（已确认风险）')
     expect(i18n.t('common:errors.gripperCalibration')).toContain('标定')
+    // 授权激活：未激活的机器一开机就会撞上的那条错误，以及它的入口。
+    expect(i18n.t('settings:tabs.activation')).toBe('授权激活')
+    expect(i18n.t('settings:activation.stateNotActivated')).toBe('未激活')
+    expect(i18n.t('common:errors.notActivated')).toContain('未激活')
   })
 
   it('switches to English (en) and returns corresponding keys', async () => {
@@ -55,6 +59,9 @@ describe('i18n Internationalization', () => {
     expect(i18n.t('gripper:zero.start')).toBe('Start calibration')
     expect(i18n.t('gripper:settings.allowFactory')).toContain('factory')
     expect(i18n.t('common:errors.gripperNotConnected')).toContain('not connected')
+    expect(i18n.t('settings:tabs.activation')).toBe('Activation')
+    expect(i18n.t('settings:activation.stateNotActivated')).toBe('Not activated')
+    expect(i18n.t('common:errors.notActivated')).toContain('not activated')
   })
 
   it('updates document.documentElement.lang on language change', async () => {

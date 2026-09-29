@@ -356,6 +356,44 @@ def test_ws_command_without_a_session_returns_a_structured_error() -> None:
         session.close()
 
 
+def test_ws_license_command_round_trips_the_record() -> None:
+    """`license` 的**线上形状**是契约 (docs/ACTIVATION.md): 前端解析的就是这一帧。
+
+    ⚠ 特意走 WS 而不是直接调 `Session.execute`: 这里要钉的是 `res.v` 里到底有什么
+    (键名、类型、三态字段) —— 那是前端唯一看得见的东西。
+    """
+    from litearm_studio_daemon.session import Session as _Session
+
+    session = _Session(fake=True, reconnect=False,
+                       poll_period=0.05, state_push_interval=0.05)
+    app = create_app(session, version=VERSION, repo_dist=Path("/nonexistent-ui"))
+    try:
+        assert session.connect() is True
+        deadline = time.monotonic() + 5.0
+        while not session.connected and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert session.connected, f"假会话没连上: {session.arm_info()}"
+
+        with TestClient(app) as client:
+            with client.websocket_connect("/ws") as ws:
+                ws.receive_json()                 # hello
+                ws.receive_json()                 # conn
+                ws.send_json({"t": "cmd", "id": 11, "m": "license", "p": {}})
+                while True:                       # 状态帧会插进来, 认 id
+                    frame = ws.receive_json()
+                    if frame["t"] == "res" and frame["id"] == 11:
+                        break
+                assert frame["ok"] is True, frame
+                v = frame["v"]
+                assert v["supported"] is True
+                assert v["activated"] is True and v["state"] == 1
+                assert v["stateName"] == "activated"
+                # 签发器要的形态: 24 位小写 hex。
+                assert len(v["uid"]) == 24 and v["uid"] == v["uid"].lower()
+    finally:
+        session.close()
+
+
 def test_ws_command_requires_the_m_field() -> None:
     session, app = _client()
     try:

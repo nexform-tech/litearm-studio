@@ -191,6 +191,7 @@ describe('ArmClient (daemon WebSocket)', () => {
       [() => client.saveParams(), { m: 'save_params', p: {} }],
       [() => client.resetFactoryParams(), { m: 'reset_factory_params', p: {} }],
       [() => client.kinBench(), { m: 'kin_bench', p: {} }],
+      [() => client.license(), { m: 'license', p: {} }],
     ]
     for (const [run, expected] of cases) {
       const p = run()
@@ -224,6 +225,58 @@ describe('ArmClient (daemon WebSocket)', () => {
     expect(frame).toMatchObject({ m: 'get_ff_vec', p: { item: 7 } })
     ws.receive({ t: 'res', id: frame.id, ok: true, v: [1, 2, 3, 4, 5, 6, 7] })
     await expect(promise).resolves.toEqual([1, 2, 3, 4, 5, 6, 7])
+  })
+
+  it('license() sends the read-only command and keeps the UID the signer needs', async () => {
+    const { client, ws } = connectedClient()
+    const promise = client.license()
+    const frame = ws.lastFrame('cmd')!
+    expect(frame).toMatchObject({ m: 'license', p: {} })
+    ws.receive({
+      t: 'res',
+      id: frame.id,
+      ok: true,
+      v: {
+        supported: true,
+        state: 0,
+        stateName: 'not_activated',
+        activated: false,
+        factoryMode: false,
+        ver: 1,
+        // 未激活也回 UID —— 签发凭据用的就是这一串。
+        uid: '101112131415161718191a1b',
+        custId: 0,
+        issued: 0,
+        flags: 0,
+      },
+    })
+    await expect(promise).resolves.toMatchObject({
+      supported: true,
+      activated: false,
+      state: 0,
+      uid: '101112131415161718191a1b',
+    })
+  })
+
+  it('license() keeps "no such command" apart from "not read this time"', async () => {
+    // 三态刻意不是一个布尔：对用户说的三句话完全不同（固件太旧 / 没读到 / 记录在这里）。
+    const { client, ws } = connectedClient()
+
+    const unsupported = client.license()
+    const f1 = ws.lastFrame('cmd')!
+    ws.receive({ t: 'res', id: f1.id, ok: true, v: { supported: false } })
+    await expect(unsupported).resolves.toEqual({ supported: false })
+
+    const unreadable = client.license()
+    const f2 = ws.lastFrame('cmd')!
+    ws.receive({ t: 'res', id: f2.id, ok: true, v: { supported: null } })
+    await expect(unreadable).resolves.toEqual({ supported: null })
+
+    // 认不出的形状一律折成"没读到"：绝不猜成"已激活"（那会让一台锁着的臂看起来能用）。
+    const garbage = client.license()
+    const f3 = ws.lastFrame('cmd')!
+    ws.receive({ t: 'res', id: f3.id, ok: true, v: { uid: 'aa' } })
+    await expect(garbage).resolves.toEqual({ supported: null })
   })
 
   it('rejects commands while the socket is not open', async () => {

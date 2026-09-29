@@ -38,6 +38,37 @@ export type RobotState = {
 /** SDK 原生 6 元组 `[x, y, z, rx, ry, rz]`（计划 3.4）。 */
 export type Pose6 = [number, number, number, number, number, number]
 
+/** 读到了授权记录时的形状（daemon `license` 命令，见 `docs/ACTIVATION.md`）。 */
+export type LicenseRecord = {
+  supported: true
+  /** 固件原生的 state 码：0=未激活 / 1=已激活 / 2=已激活且产线模式。 */
+  state: number
+  /** `state` 的可读名；认不出的码带原值回（`unknown_state_7`）。 */
+  stateName: string
+  activated: boolean
+  /** `flags` bit0 = 产线码。⚠ 它**不表示**激活与否，别拿它替代 `activated`。 */
+  factoryMode: boolean
+  /** 记录版本（固件当前 1）。 */
+  ver: number
+  /** 24 位小写 hex —— **厂商签发凭据时要的就是这一串**。 */
+  uid: string
+  custId: number
+  /** 签发日 `YYYYMMDD`；未激活时恒 0。 */
+  issued: number
+  flags: number
+}
+
+/**
+ * 授权记录的三态读取结果。
+ *
+ * `supported` 刻意**不是一个布尔** —— 三种情况对用户说的话完全不同：
+ *  · `true`  —— 读到了记录（未激活也是正常返回，`activated === false`）；
+ *  · `false` —— 固件明确回 `ERR{0x2F,0x00}`：这台固件没有授权命令（固件 1.8.0 起才有）；
+ *  · `null`  —— 本次没读到。⚠ 今天旧固件走的就是这一条：SDK 的探测帧读不到那条 ERR，
+ *              于是等满 1s 抛超时（见 daemon `session._license_dict` 的说明）。
+ */
+export type LicenseSnapshot = LicenseRecord | { supported: false } | { supported: null }
+
 /** `get_joint_params` 单轴参数（键名与 SDK 一致，snake_case）。 */
 export type JointParams = {
   idx: number
@@ -99,6 +130,31 @@ export function normalizeRobotState(raw: RobotState | null | undefined): RobotSt
 
 /** 命令被 daemon 拒绝时抛出的 Error，`err` 携带结构化错误信息。 */
 export type ArmCommandError = CommandError
+
+/**
+ * 归一化 daemon 的 `license` 应答：认不出的形状一律折成"没读到"（`supported: null`）。
+ *
+ * ⚠ 判据是 `supported` 这个**显式**字段，不是"有没有 uid" —— 未激活的记录也回 UID，
+ * 拿字段有无当判据会把"未激活"读成"读不到"。
+ */
+export function normalizeLicense(raw: unknown): LicenseSnapshot {
+  if (!raw || typeof raw !== 'object') return { supported: null }
+  const r = raw as Record<string, unknown>
+  if (r.supported === false) return { supported: false }
+  if (r.supported !== true) return { supported: null }
+  return {
+    supported: true,
+    state: num(r.state),
+    stateName: typeof r.stateName === 'string' ? r.stateName : '',
+    activated: r.activated === true,
+    factoryMode: r.factoryMode === true,
+    ver: num(r.ver),
+    uid: typeof r.uid === 'string' ? r.uid : '',
+    custId: num(r.custId),
+    issued: num(r.issued),
+    flags: num(r.flags),
+  }
+}
 
 /**
  * 拥有全应用唯一的 daemon WebSocket 连接：
@@ -289,6 +345,19 @@ export class ArmClient {
 
   getJointParams(): Promise<JointParams[]> {
     return this._sendCmd('get_joint_params') as Promise<JointParams[]>
+  }
+
+  // ─────────────────────────── 授权 / 激活（只读） ───────────────────────────
+
+  /**
+   * 读设备授权记录（是否已激活 + 设备 UID）。
+   *
+   * ⚠ **未激活不是错误**：`activated === false` 是正常返回值 —— 未激活的臂除 ENABLE 外
+   * 一切照常。只有真读不到时才由 `supported` 表达（见 `LicenseSnapshot`）。
+   * 提交凭据（`0x3F`）不在这里：凭据格式还没定稿，见 `docs/ACTIVATION.md`。
+   */
+  async license(): Promise<LicenseSnapshot> {
+    return normalizeLicense(await this._sendCmd('license'))
   }
 
   // ───────────────── 参数 / 标定 / 自检（设置页用，计划 §5「直接接线」） ─────────────────

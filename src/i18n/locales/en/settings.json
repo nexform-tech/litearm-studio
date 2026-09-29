@@ -12,7 +12,8 @@
     "gravity": "Gravity & Inertia",
     "joints": "Gains & Limits",
     "diagnostics": "Diagnostics",
-    "gripper": "Gripper & bus"
+    "gripper": "Gripper & bus",
+    "activation": "Activation"
   },
   "payload": {
     "title": "End-effector payload",
@@ -50,6 +51,34 @@
     "desc": "Kinematics self-test plus link diagnostics (CRC errors, FIFO drops).",
     "run": "Run self-test",
     "empty": "Run the self-test to read the firmware's diagnostics counters."
+  },
+  "activation": {
+    "title": "Device activation",
+    "desc": "This arm's activation state and device UID. An unactivated arm is refused by the firmware.",
+    "refresh": "Refresh",
+    "state": "Activation state",
+    "stateActivated": "Activated",
+    "stateFactory": "Activated (factory mode)",
+    "stateNotActivated": "Not activated",
+    "stateUnknown": "Unrecognised state code {{code}}",
+    "unreadable": "Unreadable",
+    "unsupported": "Not supported",
+    "uid": "Device UID",
+    "uidHint": "Give this 24-character hex string to your supplier to obtain the activation license for this machine. It is bound to this arm; another arm needs its own.",
+    "copy": "Copy",
+    "copied": "Device UID copied",
+    "copyFailed": "Copy failed: select the UID above and copy it manually",
+    "customer": "Customer ID",
+    "issued": "Issued",
+    "flags": "Flags",
+    "flagsFactory": "Factory code",
+    "flagsNone": "None",
+    "recordVer": "Record version",
+    "locked": "This arm is not activated, so the firmware refuses to enable it. Give the device UID above to your supplier; once you have the license, it can be activated.",
+    "activatedHint": "This arm is activated and can be enabled normally.",
+    "unreadableHint": "The activation record could not be read this time: the firmware may not have the command, or the reply was lost. Press Refresh to retry; if it never reads, check the firmware version.",
+    "unsupportedHint": "This firmware has no activation query command (activation exists from firmware 1.8.0). Update the firmware first.",
+    "offline": "No arm connected — connect first to read the activation state."
   },
   "toast": {
     "readFailed": "Failed to read controller parameters: {{message}}",

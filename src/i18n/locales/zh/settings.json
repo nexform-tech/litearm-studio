@@ -12,7 +12,8 @@
     "gravity": "重力与惯量",
     "joints": "增益与限位",
     "diagnostics": "诊断",
-    "gripper": "夹爪与总线"
+    "gripper": "夹爪与总线",
+    "activation": "授权激活"
   },
   "payload": {
     "title": "末端负载",
@@ -50,6 +51,34 @@
     "desc": "运动学自检 + 链路诊断计数（CRC 错、FIFO 丢帧）。",
     "run": "运行自检",
     "empty": "运行自检后可看到固件的诊断计数。"
+  },
+  "activation": {
+    "title": "设备授权",
+    "desc": "这台机械臂的授权状态与设备 UID。未激活的机械臂会被固件拒绝使能。",
+    "refresh": "刷新",
+    "state": "授权状态",
+    "stateActivated": "已激活",
+    "stateFactory": "已激活（产线模式）",
+    "stateNotActivated": "未激活",
+    "stateUnknown": "未认出的状态码 {{code}}",
+    "unreadable": "读不到",
+    "unsupported": "固件不支持",
+    "uid": "设备 UID",
+    "uidHint": "把这一串（24 位十六进制）交给供应商换取本机的授权凭据。它绑定这台机器，换一台要重新签发。",
+    "copy": "复制",
+    "copied": "设备 UID 已复制",
+    "copyFailed": "复制失败：请手动选中上面的 UID 复制",
+    "customer": "客户号",
+    "issued": "签发日期",
+    "flags": "标记",
+    "flagsFactory": "产线码",
+    "flagsNone": "无",
+    "recordVer": "记录版本",
+    "locked": "这台机械臂尚未激活，固件会拒绝使能。请把上面的设备 UID 提供给供应商；拿到授权凭据后即可激活。",
+    "activatedHint": "这台机械臂已激活，可以正常使能。",
+    "unreadableHint": "本次没有读到授权记录：固件可能没有这条命令，或这一帧没有应答。可点「刷新」重试；一直读不到请核对固件版本。",
+    "unsupportedHint": "当前固件没有授权查询命令（授权功能从固件 1.8.0 起提供）。请先升级固件。",
+    "offline": "未连接机械臂 —— 连上之后才能读取授权状态。"
   },
   "toast": {
     "readFailed": "读取控制器参数失败：{{message}}",

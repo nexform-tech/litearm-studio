@@ -921,3 +921,65 @@ def test_calibration_commands_validate_their_arguments(fake_session: Session,
                                                        params: dict) -> None:
     with pytest.raises(ValueError):
         fake_session.execute(method, params)
+
+
+# ------------------------------------------------- 授权/激活 (只读那一半)
+
+def test_license_reads_the_record_and_names_the_state(fake_session: Session) -> None:
+    """已激活: 记录照读, 并且把 `state` 翻译成**可读名** (界面直接显示, 不再自己映射)。"""
+    info = fake_session.execute("license", {})
+    assert info["supported"] is True
+    assert info["activated"] is True and info["state"] == 1
+    assert info["stateName"] == "activated"
+    assert info["factoryMode"] is False
+    # ⚠ UID 必须是**签发器要的那个形态**: 24 位小写 hex (厂商的 `--uid` 参数)。
+    assert len(info["uid"]) == 24 and info["uid"] == info["uid"].lower()
+    assert set(info["uid"]) <= set("0123456789abcdef")
+
+
+def test_license_reports_an_unactivated_arm_as_a_state_not_an_error(
+        fake_session: Session) -> None:
+    """未激活不是错误 —— 而且**UID 照回** (否则没法给这台机器签凭据)。"""
+    fake_session._arm._tr.activated = False
+    info = fake_session.execute("license", {})
+    assert info["supported"] is True
+    assert info["activated"] is False and info["state"] == 0
+    assert info["stateName"] == "not_activated"
+    assert len(info["uid"]) == 24
+    assert (info["custId"], info["issued"], info["flags"]) == (0, 0, 0)
+
+
+def test_license_maps_a_firmware_without_the_command_to_supported_false(
+        fake_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    """固件明确"没有这条命令" -> `supported=False` (界面据此说"固件太旧")。"""
+    def _unsupported(*_a, **_kw):
+        raise litearm.UnsupportedByFirmwareError("ERR [2F,00] —— 固件没有实现这条命令",
+                                                cmd=0x2F, code=0x00)
+
+    monkeypatch.setattr(fake_session._arm, "license", _unsupported)
+    assert fake_session.execute("license", {}) == {"supported": False}
+
+
+def test_license_maps_a_missing_reply_to_supported_none(
+        fake_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    """没读到 (超时) -> `supported=None`, **不许**冒出去变成"N 运动超时"。
+
+    ⚠ 旧固件今天走的正是这一条 (SDK 的探测帧读不到那条 `ERR{0x2F,0x00}`, 见
+    `_license_dict` 的说明)。它和"固件确报不支持"是两句话, 界面也得给两种说法。
+    """
+    def _timeout(*_a, **_kw):
+        raise litearm.MotionTimeoutError("get_license 无应答(超时 1.0s)")
+
+    monkeypatch.setattr(fake_session._arm, "license", _timeout)
+    assert fake_session.execute("license", {}) == {"supported": None}
+
+
+def test_license_lets_a_real_link_failure_propagate(
+        fake_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    """链路真断了要**照旧抛** —— 折成 `supported=None` 会把断线说成"读不到授权"。"""
+    def _dead(*_a, **_kw):
+        raise litearm.TransportError("读线程已退出")
+
+    monkeypatch.setattr(fake_session._arm, "license", _dead)
+    with pytest.raises(litearm.TransportError):
+        fake_session.execute("license", {})
