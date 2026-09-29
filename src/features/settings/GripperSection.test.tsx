@@ -125,13 +125,14 @@ describe('GripperSection', () => {
     expect((screen.getByTestId('gripper-zero') as HTMLButtonElement).disabled).toBe(true)
   })
 
-  it('explains the undeclared mounting direction instead of leaving it a mystery', async () => {
+  it('defaults the mounting direction to normal, with no undeclared option', async () => {
+    // daemon 侧不再有"未声明"这一态（参考硬件是正装）：没有记录时表单必须给正装，
+    // 而不是一个空值。
     mocks.conn.current = { ...mocks.conn.current, mount: null, declaredMount: null }
     render(<GripperSection />)
     await waitFor(() => expect(mocks.listCalibrations).toHaveBeenCalled())
-    const hint = screen.getByTestId('gripper-mount-undeclared')
-    expect(hint.textContent).toMatch(/zero calibration|零位标定/)
-    expect(hint.textContent).toMatch(/nominal template|标称模板/)
+    expect(screen.getByTestId('gripper-mount').textContent).toMatch(/Normal|正向/)
+    expect(screen.queryByText(/Not declared|未声明/)).toBeNull()
   })
 
   it('persists the factory acknowledgement through the toggle', async () => {

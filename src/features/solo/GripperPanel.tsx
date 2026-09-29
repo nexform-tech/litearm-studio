@@ -91,11 +91,11 @@ function sourceLabel(vm: GripperPanelVm, t: (key: string) => string): string {
   return source ? t(SOURCE_KEYS[source]) : t('gripper:source.none')
 }
 
+/** 装配方向没有"未声明"态：daemon 永远给一个方向（默认正装）。 */
 function mountLabel(vm: GripperPanelVm, t: (key: string) => string): string {
   const mount = vm.conn?.mount
-  if (mount === 'normal') return t('gripper:connection.mountNormal')
-  if (mount === 'reverse') return t('gripper:connection.mountReverse')
-  return t('gripper:connection.mountUnknown')
+  if (!mount) return '—'
+  return t(`gripper:connection.mount${mount === 'reverse' ? 'Reverse' : 'Normal'}`)
 }
 
 /**
@@ -226,12 +226,10 @@ export function GripperPanel() {
         </span>
       </div>
 
-      {/* 为什么按不动：页面必须说出原因，而不是只灰掉（§6.3） */}
-      {!vm.present ? (
-        <div className="rounded-lg border border-line bg-muted/40 px-2.5 py-1.5 text-[0.6875rem] text-muted-foreground">
-          {t('gripper:connection.noSession')}
-        </div>
-      ) : vm.disabledReason ? (
+      {/* 为什么按不动：组件必须说出原因，而不是只灰掉（§6.3）。
+          没有夹爪会话时不出这一块 —— daemon 侧根本没有夹爪的构建（Windows、
+          `--no-gripper`）不需要在控制页反复解释，状态徽标已经说了"离线"。 */}
+      {vm.disabledReason ? (
         <div
           id="gripper-disabled-reason"
           data-testid="gripper-disabled-reason"

@@ -199,14 +199,16 @@ describe('GripperPanel', () => {
     expect(mocks.resetStop).toHaveBeenCalledTimes(1)
   })
 
-  it('says the daemon has no gripper session instead of showing a dead panel', () => {
+  it('leaves the panel inert when the daemon has no gripper session', () => {
     mocks.present.current = false
     mocks.conn.current = null
     mocks.status.current = 'disconnected'
     mocks.state.current = null
     render(<GripperPanel />)
     expect((screen.getByTestId('gripper-connect') as HTMLButtonElement).disabled).toBe(true)
-    expect(screen.getByText(/no gripper session|没有夹爪会话/)).toBeTruthy()
+    // 状态徽标已经说了"离线"，不再为这个构建形态多写一段解释。
+    expect(screen.getByTestId('gripper-status').textContent).toMatch(/offline|离线/)
+    expect(screen.queryByTestId('gripper-disabled-reason')).toBeNull()
   })
 
   it('shows an unknown position as unknown rather than as zero', () => {

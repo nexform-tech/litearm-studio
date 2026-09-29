@@ -203,13 +203,15 @@ describe('useGripperPanel', () => {
     expect(result.current.speedMmS).toBe(50)
   })
 
-  it('reports no session when the daemon has none', () => {
+  it('stays quiet when the daemon has no gripper session at all', () => {
     mocks.present.current = false
     mocks.conn.current = null
     mocks.status.current = 'disconnected'
     mocks.state.current = null
     const { result } = renderHook(() => useGripperPanel())
     expect(result.current.present).toBe(false)
-    expect(result.current.disabledReason).toBe(i18n.t('gripper:connection.noSession'))
+    // 这个构建形态（Windows、--no-gripper）只在控制页留一个离线的徽标，
+    // 不再多写一段解释；设置页仍然说，因为那才是配置的地方。
+    expect(result.current.disabledReason).toBe('')
   })
 })

@@ -11,7 +11,6 @@
     "mount": "装配方向",
     "mountNormal": "正向",
     "mountReverse": "反向",
-    "mountUnknown": "未声明",
     "mountMismatch": "记录声明为{{declared}}，设备实际按{{actual}}在跑 —— 请确认接线",
     "travel": "行程",
     "noSession": "本进程没有夹爪会话（非 Linux，或启动时用了 --no-gripper）",
@@ -139,7 +138,6 @@
     "noTravel": "行程必须为正",
     "applied": "已应用并重连",
     "declareMount": "按此方向载入模板",
-    "effectiveMount": "设备实际按{{mount}}在跑",
-    "mountUndeclared": "未声明 = 不按任何方向载入标称模板。没有本机实测标定文件时，选一个方向会按名载入 SDK 的标称模板：它只声明方向、从未在本机实测。设备实际按哪个方向在跑，由标定文件的两个端点角决定，不由这里的选择决定 —— 拿不准就先运行零位标定。"
+    "effectiveMount": "设备实际按{{mount}}在跑"
   }
 }

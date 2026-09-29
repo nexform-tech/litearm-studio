@@ -28,8 +28,6 @@ describe('i18n Internationalization', () => {
     expect(i18n.t('gripper:state.grasping')).toBe('夹持中')
     expect(i18n.t('gripper:zero.start')).toBe('开始标定')
     expect(i18n.t('gripper:settings.allowFactory')).toBe('允许出厂标定（已确认风险）')
-    // 「未声明」是默认值：它必须自己解释自己，而不是让操作员猜（见 §6.2）。
-    expect(i18n.t('gripper:settings.mountUndeclared')).toContain('零位标定')
     expect(i18n.t('common:errors.gripperCalibration')).toContain('标定')
   })
 
@@ -56,7 +54,6 @@ describe('i18n Internationalization', () => {
     expect(i18n.t('gripper:state.grasping')).toBe('Grasping')
     expect(i18n.t('gripper:zero.start')).toBe('Start calibration')
     expect(i18n.t('gripper:settings.allowFactory')).toContain('factory')
-    expect(i18n.t('gripper:settings.mountUndeclared')).toContain('zero calibration')
     expect(i18n.t('common:errors.gripperNotConnected')).toContain('not connected')
   })
 

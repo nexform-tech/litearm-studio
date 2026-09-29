@@ -120,7 +120,7 @@ def test_store_drops_a_foreign_field_without_losing_the_record(tmp_path: Path) -
     }}}), encoding="utf-8")
     record = ChannelStore(path).get("can0")
     assert record.travel_mm == 85.0          # fell back to the default
-    assert record.mount is None              # an unknown mount is not a declaration
+    assert record.mount == "normal"          # an unknown mount falls back to the default
     assert record.can_id == 8                # the rest of the record survives
 
 
@@ -595,8 +595,9 @@ def test_channel_config_is_a_frozen_record() -> None:
     record = ChannelConfig(channel="can0")
     with pytest.raises(Exception):
         record.travel_mm = 10.0            # type: ignore[misc]
-    assert record.mounted is False
-    assert ChannelConfig(channel="can0", mount="normal").mounted is True
+    # 方向永远是声明过的：参考硬件是正装，所以默认就是它。
+    assert record.mounted is True
+    assert ChannelConfig(channel="can0", mount="reverse").mounted is True
     assert ChannelConfig(channel="can0").to_wire()["canId"] == 8
 
 # ------------------------------------------------------------------ 告警的 kind

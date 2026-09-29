@@ -28,7 +28,8 @@ export function useGripperSettings() {
   const [channel, setChannel] = useState('')
   const [canId, setCanId] = useState(8)
   const [mstId, setMstId] = useState<number | null>(null)
-  const [mount, setMount] = useState<'normal' | 'reverse' | null>(null)
+  // 装配方向没有"未声明"：正装是默认，也是参考硬件的装配方式。
+  const [mount, setMount] = useState<'normal' | 'reverse'>('normal')
   const [travel, setTravel] = useState(85)
   const [importPath, setImportPath] = useState('')
   const [channels, setChannels] = useState<string[]>([])
@@ -51,7 +52,8 @@ export function useGripperSettings() {
     if (connChannel == null || connCanId == null) return
     setChannel((prev) => (prev === '' ? connChannel : prev))
     setCanId(connCanId)
-    setMount(connMount ?? null)
+    // 没有会话（`conn` 为 null）时不动它：默认就是正装。
+    if (connMount != null) setMount(connMount)
     setTravel(connTravel && connTravel > 0 ? connTravel : 85)
   }, [connChannel, connCanId, connMount, connTravel])
 
@@ -102,7 +104,7 @@ export function useGripperSettings() {
         channel: channel || undefined,
         canId,
         mstId: mstId ?? undefined,
-        mount: mount ?? undefined,
+        mount,
       })
       toast.success(t('gripper:settings.applied'), { id: 'gripper-settings-error' })
       await refresh()

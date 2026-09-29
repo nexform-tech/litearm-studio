@@ -18,8 +18,6 @@ const SOURCE_KEYS: Record<CalibrationSource, string> = {
   missing: 'gripper:source.missing',
 }
 
-const AUTO = '__auto__'
-
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="flex flex-col gap-1">
@@ -104,14 +102,13 @@ export function GripperSection() {
           </Field>
           <Field label={t('gripper:settings.mount')}>
             <Select
-              value={vm.mount ?? AUTO}
-              onValueChange={(v) => vm.setMount(v === AUTO ? null : (v as 'normal' | 'reverse'))}
+              value={vm.mount}
+              onValueChange={(v) => vm.setMount(v as 'normal' | 'reverse')}
             >
               <SelectTrigger id="gripper-mount" data-testid="gripper-mount">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value={AUTO}>{t('gripper:connection.mountUnknown')}</SelectItem>
                 <SelectItem value="normal">{t('gripper:connection.mountNormal')}</SelectItem>
                 <SelectItem value="reverse">{t('gripper:connection.mountReverse')}</SelectItem>
               </SelectContent>
@@ -135,8 +132,8 @@ export function GripperSection() {
             data-testid="gripper-save-template"
             size="sm"
             variant="outline"
-            disabled={!vm.connected || vm.mount == null}
-            onClick={() => void vm.useTemplate(vm.mount ?? 'normal')}
+            disabled={!vm.connected}
+            onClick={() => void vm.useTemplate(vm.mount)}
           >
             <ScanLine className="size-3.5" />
             {t('gripper:settings.declareMount')}
@@ -145,7 +142,7 @@ export function GripperSection() {
             <span className="text-[0.6875rem] text-muted-foreground">{t('gripper:settings.needsDisconnect')}</span>
           ) : null}
           {/* 声明与实际可能不同：菜单里是**声明**，这句话说的是设备**实际**在跑的方向。 */}
-          {vm.conn?.mount && vm.conn.mount !== vm.mount ? (
+          {vm.conn && vm.conn.mount !== vm.mount ? (
             <span id="gripper-effective-mount" data-testid="gripper-effective-mount" className="text-[0.6875rem] text-warn">
               {t('gripper:settings.effectiveMount', {
                 mount: t(`gripper:connection.mount${vm.conn.mount === 'reverse' ? 'Reverse' : 'Normal'}`),
@@ -153,18 +150,6 @@ export function GripperSection() {
             </span>
           ) : null}
         </div>
-
-        {/* 「未声明」是默认值，也是最容易被误读的一个：它不是"忘了填"，而是一次选择。
-            操作员看不到理由就会随手选一个方向，然后按 SDK 的标称模板去运动。 */}
-        {vm.mount == null ? (
-          <p
-            id="gripper-mount-undeclared"
-            data-testid="gripper-mount-undeclared"
-            className="text-[0.6875rem] leading-relaxed text-muted-foreground"
-          >
-            {t('gripper:settings.mountUndeclared')}
-          </p>
-        ) : null}
       </Card>
 
       <Card className="flex flex-col gap-3 rounded-[0.875rem] p-5">

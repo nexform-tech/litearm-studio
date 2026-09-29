@@ -92,7 +92,7 @@ than rewritten:
 | New module | Responsibility |
 | --- | --- |
 | `daemon/.../gripper/session.py` | Adapts `WorkerLoop` to the daemon: replaces its signal object with a callback that emits WebSocket frames, adds `gripper.*` command intake, channel enumeration, and the per-channel settings record. |
-| `daemon/.../gripper/config.py` | Per-channel device record (channel, CAN id, mount, calibration path override, travel) persisted next to the daemon's settings. |
+| `daemon/.../gripper/config.py` | Per-channel device record (channel, CAN id, mount, calibration path override, travel) persisted next to the daemon's settings. `mount` is always `normal` or `reverse` and defaults to `normal`: the reference hardware is assembled that way, so a channel with no measured file resolves to the nominal `normal` template (row 5) rather than to the factory fallback or to nothing. |
 | `daemon/.../server.py` (edit) | Route `gripper.*` commands, relay gripper frames to clients, add the gripper to `/api/health`. |
 | `src/lib/arm/gripperClient.ts` (new) | Frontend client half: gripper frame handling and command wrappers. |
 
@@ -108,7 +108,7 @@ Additive. Existing arm frames and commands do not change.
 
 ```jsonc
 {"t":"gripper_conn","status":"disconnected|connecting|connected|error",
- "channel":"can0","canId":8,"mount":"normal|reverse|null",
+ "channel":"can0","canId":8,"mount":"normal|reverse",
  "source":"template|measured|factory|missing|null","path":"/home/u/.litegrip/can0_calibration.json",
  "travelMm":85.0,"error":null}
 
@@ -263,8 +263,8 @@ reads through `gripper.list_calibrations`.
 | 2 | `~/.litegrip/<channel>_calibration.json` | parses and validates | `measured` |
 | 3 | `LITEGRIP_CALIB` | set in the environment | `measured`, flagged as an environment override |
 | 4 | `~/.litegrip/litegrip_calibration.json` | channel field matches or is absent | `measured`, flagged as legacy |
-| 5 | SDK template `normal` / `reverse` | a mount is declared | `template` |
-| 6 | SDK bundled `factory_calibration.json` | an operator has enabled it | `factory` |
+| 5 | SDK template `normal` / `reverse` | always — the record's `mount` defaults to `normal` | `template` |
+| 6 | SDK bundled `factory_calibration.json` | row 5 had no template file to load | `factory` |
 | 7 | nothing | — | `missing` |
 
 **Gate.** Motion is allowed only when the provenance is `measured`, or `template`
@@ -297,6 +297,13 @@ nothing.
 human can choose: nudge the jaws at low torque and see which way the angle moves.
 Read the result back from the SDK and show it; a wrong pick is not silent to the
 software but it is to the operator.
+
+The record's `mount` is never absent — it defaults to `normal`, the reference
+hardware's assembly — so row 5 is the ordinary resting state of a channel with no
+measured file, and the operator changes it from the settings page, which loads the
+chosen template by name. `normal` is a *declaration*, not a measurement: row 5's
+nominal geometry is a 120 mm unit's, which is why the gate still refuses every
+millimetre target until `zero()` replaces it.
 
 ### 5.4 CAN link and channel enumeration
 

@@ -95,9 +95,13 @@ export function useGripperPanel() {
   const canControl = connected && enabled && !estopped && gateAllows(true)
   const canDirection = connected && enabled && !estopped && gateAllows(false)
 
-  /** 为什么按钮是灰的 —— 组件必须**说出原因**，而不是只灰掉（§6.3）。 */
+  /** 为什么按钮是灰的 —— 组件必须**说出原因**，而不是只灰掉（§6.3）。
+   *
+   * 没有夹爪会话时不解释：那是 daemon 侧没有夹爪的构建（Windows、
+   * `--no-gripper`），状态徽标的"离线"已经说清楚了，控制页不需要为它留一段字。
+   */
   const disabledReason = useMemo(() => {
-    if (!present) return t('gripper:connection.noSession')
+    if (!present) return ''
     if (!connected) return t('common:disconnected')
     if (estopped) return t('common:errors.gripperEstopped')
     if (!enabled) return t('common:errors.notEnabled')
