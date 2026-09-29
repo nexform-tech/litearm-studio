@@ -443,3 +443,34 @@ def test_set_allow_factory_is_persisted(tmp_path: Path) -> None:
     finally:
         session.close()
     assert _session(tmp_path).config.allow_factory is True
+
+
+def test_list_calibrations_marks_the_one_in_effect_and_includes_it(tmp_path: Path) -> None:
+    """生效的那一份必须出现在列表里 —— 即使它不是解析顺序里的候选。
+
+    仿真后端保存到自己的文件（绝不碰台架那份），所以只有候选列表的页面会在一次成功的
+    zero() 之后显示"什么都没测到"。
+    """
+    session = _session(tmp_path)
+    try:
+        _connect(session)
+        before = session.execute("gripper.list_calibrations", {})
+        # 生效的那一份**总是**在列表里，即使它不是解析顺序里的候选（仿真默认就在这里）。
+        assert sum(1 for item in before if item.get("inUse")) == 1, before
+
+        assert session.execute("gripper.enable", {}) == {"enabled": True}
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline and not (session.state() and session.state()["enabled"]):
+            session.heartbeat()
+            time.sleep(0.01)
+        result = session.execute("gripper.zero", {"travelMm": 85.0})
+        assert result["source"] == "measured"
+
+        after = session.execute("gripper.list_calibrations", {})
+        active = [item for item in after if item.get("inUse")]
+        assert len(active) == 1, after
+        assert active[0]["path"] == session.loop.info.path
+        assert active[0]["source"] == "measured"
+        assert active[0]["closedRad"] is not None
+    finally:
+        session.close()

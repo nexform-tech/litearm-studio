@@ -11,7 +11,8 @@
     "payload": "末端负载",
     "gravity": "重力与惯量",
     "joints": "增益与限位",
-    "diagnostics": "诊断"
+    "diagnostics": "诊断",
+    "gripper": "夹爪与总线"
   },
   "payload": {
     "title": "末端负载",

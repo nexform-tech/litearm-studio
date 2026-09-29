@@ -19,6 +19,8 @@ export type GripperConnInfo = {
   source: CalibrationSource | null
   path: string | null
   travelMm: number
+  /** 是否已确认「允许出厂标定」（持久化在通道记录里）。 */
+  allowFactory: boolean
   /** 生效标定的闭合角（rad），没有可用限位时为 `null`。 */
   closedRad: number | null
   /** 生效标定的张开角（rad）。 */
@@ -82,6 +84,8 @@ export type CalibrationCandidate = {
   fileRadToMm: number | null
   mount: 'normal' | 'reverse' | null
   selected?: boolean
+  /** daemon 说这一份正在生效（不总是候选之一，见 daemon 侧的说明）。 */
+  inUse?: boolean
 }
 
 /** `gripper.set_motion` 的答复：**已经生效**的设置。 */
@@ -347,6 +351,7 @@ export class GripperClient {
             : null,
       path: typeof msg.path === 'string' ? msg.path : null,
       travelMm: num(msg.travelMm),
+      allowFactory: msg.allowFactory === true,
       closedRad: optionalNum(msg.closedRad),
       openRad: optionalNum(msg.openRad),
       fileRadToMm: optionalNum(msg.fileRadToMm),

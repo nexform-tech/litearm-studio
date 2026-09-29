@@ -136,6 +136,9 @@
     "allowFactoryDesc": "出厂数据不属于本机夹爪时，所有毫米读数都会偏移；只有确认过才勾选。",
     "travel": "实测行程 (mm)",
     "travelDesc": "每通道记录：它是界面上每一个毫米的分子，必须在重启后仍然存在。",
-    "noTravel": "行程必须为正"
+    "noTravel": "行程必须为正",
+    "applied": "已应用并重连",
+    "declareMount": "按此方向载入模板",
+    "effectiveMount": "设备实际按{{mount}}在跑"
   }
 }

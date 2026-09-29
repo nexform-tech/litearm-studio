@@ -136,6 +136,9 @@
     "allowFactoryDesc": "If the factory data is not this unit, every millimetre reading is offset; tick only once you have confirmed it.",
     "travel": "Measured travel (mm)",
     "travelDesc": "Per channel: it is the numerator of every millimetre on screen and has to survive a restart.",
-    "noTravel": "The travel must be positive"
+    "noTravel": "The travel must be positive",
+    "applied": "Applied and reconnected",
+    "declareMount": "Load this mounting",
+    "effectiveMount": "The device is running {{mount}}"
   }
 }

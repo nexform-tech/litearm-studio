@@ -794,7 +794,7 @@ def list_candidates(
                             channel=channel)
         if note:
             info = _with_warning(info, note)
-        out.append(_candidate_dict(info, channel))
+        out.append(candidate_dict(info, channel))
 
     if pinned:
         add(Path(pinned).expanduser(),
@@ -815,7 +815,12 @@ def list_candidates(
     return out
 
 
-def _candidate_dict(info: CalibrationInfo, channel: str) -> dict[str, Any]:
+def candidate_dict(info: CalibrationInfo, channel: str) -> dict[str, Any]:
+    """One row of ``gripper.list_calibrations``.
+
+    ``inUse`` is deliberately absent here: which candidate is *in effect* is the
+    session's answer (it knows what the backend applied), not the resolver's.
+    """
     limits = info.limits
     return {
         "path": info.path,

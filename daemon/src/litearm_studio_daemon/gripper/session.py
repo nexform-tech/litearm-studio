@@ -410,6 +410,7 @@ class GripperSession:
             "source": _wire_source(info),
             "path": getattr(info, "path", None) if info is not None else None,
             "travelMm": float(config.travel_mm),
+            "allowFactory": bool(config.allow_factory),
             # 两个端点角度与文件自带的系数：标定卡片要把它们**显示出来**，
             # 而不是只显示一个来源标签 (§6.3)。
             "closedRad": None if limits is None else limits.closed_rad,
@@ -864,12 +865,25 @@ class GripperSession:
         """
         del p
         config = self.config
-        return calibration.list_candidates(
+        items = calibration.list_candidates(
             config.channel,
             pinned=config.calibration_path,
             mount=config.mount,
             travel_mm=config.travel_mm,
         )
+        # Which row is *in effect* is the session's answer, not the resolver's —
+        # and the active file is not always one of the candidates.  The simulator
+        # saves to a path of its own so that it can never overwrite the bench
+        # unit's calibration, and a page that listed only the candidates would
+        # show "nothing measured" right after a successful zero().
+        active = self.loop.info
+        active_path = getattr(active, "path", None) if active is not None else None
+        for item in items:
+            item["inUse"] = active_path is not None and item["path"] == active_path
+        if active_path and not any(item["path"] == active_path for item in items):
+            items.insert(0, {**calibration.candidate_dict(active, config.channel),
+                             "inUse": True})
+        return items
 
     def _cmd_import_calibration(self, p: dict) -> dict:
         """Pin and apply a calibration file the operator chose."""
