@@ -70,14 +70,18 @@ def connect(session: GripperSession) -> None:
     assert wait_for(session.connected), f"没连上: {session.conn_info()}"
 
 
+# 每条用例一个私有 ``$HOME``, 里面放着一份 **实测** 标定(``conftest.measured_home``)。
+#
+# 两件事都需要它。一, 仿真后端的 ``save_calibration`` 写到 ``~/.litegrip/`` (见 sim.py),
+# 不隔离就会写进跑测试那个人的家目录。二, 装配方向现在默认 ``normal``, 所以"没有实测
+# 文件"的通道会落到标称模板上, 而模板的门**故意**拒绝每一个毫米目标(§5.3) —— 凡是动
+# 毫米的用例, 实测标定就是它的前提, 必须由夹具给, 不能指望跑测试那台机器的 ``$HOME``。
 @pytest.fixture(autouse=True)
-def private_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """每条用例一个私有 ``$HOME``。
+def private_home(measured_home: Path) -> None:
+    """私有 ``$HOME`` + 一份实测标定；见上面的说明。"""
+    del measured_home
 
-    仿真后端的 ``save_calibration`` 写到 ``~/.litegrip/litegrip_calibration.sim.json``
-    （见 sim.py）—— 不隔离的话, 一次成功的标定就会写进跑测试那个人的家目录。
-    """
-    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
 
 
 # ------------------------------------------------------------------ 配置存储

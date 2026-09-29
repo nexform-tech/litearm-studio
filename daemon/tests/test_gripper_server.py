@@ -17,6 +17,16 @@ from litearm_studio_daemon.session import Session
 VERSION = "9.9.9-test"
 
 
+@pytest.fixture(autouse=True)
+def private_home(measured_home: Path) -> None:
+    """私有 ``$HOME`` + 一份实测标定(``conftest.measured_home``)。
+
+    没有它, 这个文件里的闸门断言读的是跑测试那台机器的 ``~/.litegrip``: 有实测文件
+    时 READY, 没有时(CI)落到标称模板上的 TEMPLATE —— 同一份代码两种结果。
+    """
+    del measured_home
+
+
 def _make(tmp_path: Path, *, with_gripper: bool = True):
     session = Session(port_finder=lambda: None)
     gripper: Optional[GripperSession] = None
