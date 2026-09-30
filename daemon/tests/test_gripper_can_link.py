@@ -128,8 +128,22 @@ def test_parse_link_reads_a_healthy_classic_bus() -> None:
     assert state.exists and state.up and not state.fd
     assert state.bitrate == 1_000_000
     assert state.can_state == can_link.CAN_ERROR_ACTIVE
+    assert state.restart_ms == 100
     assert state.matches(1_000_000) and not state.deaf
     assert "已 up" in state.describe() and "经典 CAN" in state.describe()
+    assert "bus-off 重启 100ms" in state.describe()
+
+
+def test_parse_link_reads_a_zero_restart_delay_as_zero_not_as_absent() -> None:
+    """`gs_usb` 打印的 `restart-ms 0` 是"没有这个旋钮", 不是"没读到"。
+
+    两者必须能分开: 前者要照常匹配（不然每次连接都为它白修一次），后者是
+    `ip` 根本没打印这一行。所以 0 存成 0, 只有读不到才存 None。
+    """
+    zero = parse_link(WRONG_BITRATE)
+    assert zero.restart_ms == 0
+    assert "bus-off 重启 0ms" in zero.describe()
+    assert parse_link(DOWN_UNCONFIGURED).restart_ms is None
 
 
 def test_parse_link_reads_a_down_interface() -> None:
@@ -145,7 +159,6 @@ def test_parse_link_reads_bus_off_and_fd() -> None:
     fd = parse_link(FD)
     assert fd.fd and fd.bitrate == 1_000_000        # the nominal one, not dbitrate
     assert not fd.matches(1_000_000)                # an FD bus is never repaired
-
 
 def test_parse_link_reads_a_missing_device() -> None:
     assert not parse_link(MISSING, returncode=1).exists
@@ -188,6 +201,101 @@ def test_a_missing_interface_is_one_actionable_message_and_no_dialog() -> None:
     assert outcome.needs_attention
     assert "can7" in outcome.detail and "不存在" in outcome.detail
     assert ip.privileged == [], "设备不存在时提权只会白弹一次密码框"
+
+
+# ── gs_usb: 不支持 restart-ms 的驱动 (#54) ──────────────────────────────────
+#
+# 参考机型上的两块适配器都是 gs_usb (`1d50:606f`), 内核对它们不支持
+# `restart-ms`, 会以 "Device doesn't support restart from Bus Off." 拒绝。
+# 修好之前, 那句拒绝发生在接口已经 `down` 之后, 于是"修一次"把还能用的接口
+# 变成了彻底不能用的。
+
+#: 一块 gs_usb 适配器**已经处于**要的状态时的 `ip -details` 输出: 经典 CAN,
+#: 比特率对, up, 控制器 ERROR-ACTIVE —— 唯一的痕迹是 `restart-ms 0`, 而那是
+#: 驱动没有这个旋钮的默认值, 不是待修的错。
+GS_USB_READY = (
+    "3: can0: <NOARP,UP,LOWER_UP,ECHO> mtu 16 qdisc pfifo_fast state UP mode DEFAULT "
+    "group default qlen 10\n"
+    "    link/can  promiscuity 0 allmulti 0 minmtu 0 maxmtu 0\n"
+    "    can state ERROR-ACTIVE restart-ms 0\n"
+    "          bitrate 1000000 sample-point 0.750\n"
+)
+
+
+def test_the_hint_an_operator_pastes_works_on_every_driver() -> None:
+    """提示是"手动照着做也一定能成"的那一条, 所以不能带 restart-ms。
+
+    带上它, gs_usb 上第二条命令就失败; 而提示里的命令是 `&&` 串起来的,
+    失败处之后的 `up` 不会执行 —— 和脚本修好之前是同一个坑。
+    """
+    hint = manual_hint("can0", 1_000_000)
+    assert "restart-ms" not in hint
+    assert hint.endswith("sudo ip link set can0 up")
+    assert "bitrate 1000000 fd off" in hint
+
+
+def test_the_repair_attempts_restart_ms_and_still_brings_the_link_up(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """真跑一遍 `/bin/sh` 的那段脚本, 只把 `ip` 换成一个记录调用的假货。
+
+    这一条是 #54 缺陷 1 的回归: 断言脚本在 restart-ms 被拒后**仍然**把接口
+    `up` 起来 —— 也就是假 `ip` 收到的调用序列里, 最后一条是 `... up`, 且中间
+    有一次丢掉 restart-ms 的重新配置。修好之前, 这里停在第二条命令上。
+    """
+    if not Path(can_link.SHELL).exists():
+        pytest.skip("没有 /bin/sh, 无法执行特权脚本")
+
+    calls = tmp_path / "calls"
+    stub = tmp_path / "ip"
+    stub.write_text(
+        "#!/bin/sh\n"
+        f'echo "$@" >> {calls}\n'
+        'case "$*" in\n'
+        '  *restart-ms*) echo "Error: Device doesn\'t support restart from Bus Off." >&2;'
+        " exit 1 ;;\n"
+        "esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+
+    result = subprocess.run(
+        [can_link.SHELL, "-c", can_link.SCRIPT, can_link.SCRIPT_NAME,
+         "can0", "1000000", str(can_link.constants.CAN_LINK_RESTART_MS)],
+        capture_output=True, text=True, check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    commands = calls.read_text(encoding="utf-8").strip().splitlines()
+    assert commands[0] == "link set can0 down"
+    assert any("restart-ms" in c for c in commands), "先试一次 restart-ms"
+    assert "link set can0 type can bitrate 1000000 fd off" in commands, "被拒后丢掉它"
+    assert commands[-1] == "link set can0 up", "无论哪条路径, 接口都要回到 up"
+
+
+def test_a_repair_reports_configured_when_the_driver_cannot_carry_restart_ms() -> None:
+    """修好之后必须是"已配置", 而不是"还不对"。
+
+    gs_usb 的接口给出的是 `restart-ms 0`, 而它**已经**是要的状态 —— 修好之前
+    这段 transcript 属于 "masking" 的那一半 (匹配条件漏掉 restart-ms, 所以坏
+    代码从没被触发)。修好之后, 匹配条件只认真正要紧的属性, 所以驱动给不给
+    restart-ms 都不影响结论, 也不会被它误导去修一个注定修不成的接口。
+    """
+    healthy = GS_USB_READY
+    assert parse_link(healthy).matches(1_000_000), "修好以后就该接受"
+    assert parse_link(healthy).restart_ms == 0, "gs_usb 报的是 0, 不是没报"
+
+    ip = FakeProcess({
+        ("ip", "-details"): [completed(["ip"], DOWN_UNCONFIGURED),
+                             completed(["ip"], healthy)],
+        ("pkexec",): completed(["pkexec"], ""),
+    })
+    link = CanLink("can0", 1_000_000, run=ip, which=which_found)
+    outcome = link.ensure()
+    assert outcome.state == LINK_CONFIGURED
+    assert not outcome.needs_attention
+    assert len(ip.privileged) == 1
 
 
 def test_a_dismissed_dialog_leaves_the_interface_alone_and_says_so() -> None:

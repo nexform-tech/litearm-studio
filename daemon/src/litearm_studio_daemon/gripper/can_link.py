@@ -55,23 +55,54 @@ log = logging.getLogger(__name__)
 #: keeps the guarantee independent of how the script is written.
 DEVICE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,14}$")
 
-#: The privileged half, as one script.  ``$1`` is the interface and ``$2`` the
-#: bitrate; neither is interpolated into this text, so shell metacharacters in a
-#: device name (which :data:`DEVICE_RE` has already rejected) could not execute
-#: even if that check were to fail.
+#: The privileged half, as one script.  ``$1`` is the interface, ``$2`` the
+#: bitrate and ``$3`` the ``restart-ms``; none is interpolated into this text, so
+#: shell metacharacters in a device name (which :data:`DEVICE_RE` has already
+#: rejected) could not execute even if that check were to fail.
 #:
 #: The order is the one the README documents: a CAN bitrate cannot be changed
 #: while the link is up, so it goes down first.  ``restart-ms`` is what stops a
 #: bus-off controller from staying off (see
-#: :data:`~litearm_studio_daemon.gripper.constants.CAN_LINK_RESTART_MS`).  ``fd off`` matches
-#: the classic CAN the rest of this console assumes (the SDK auto-detects FD on
-#: its own, but nothing here configures a data bitrate); a bus that needs FD is
-#: one the operator configures themselves.
+#: :data:`~litearm_studio_daemon.gripper.constants.CAN_LINK_RESTART_MS`), but it
+#: is hardening rather than a requirement, and not every driver has it: the
+#: ``gs_usb`` adapters this product ships with reject the keyword outright
+#: ("Device doesn't support restart from Bus Off"), and the kernel restarts those
+#: controllers itself.  ``restart-ms`` is therefore *attempted* first and dropped
+#: on that one refusal — but the link is brought up either way.
+#:
+#: That ``either way`` is the point.  The obvious script — ``set -e``, ``down``,
+#: ``type can … restart-ms …``, ``up`` — aborts on the rejected keyword *after*
+#: the interface is already down, so a repair attempt turns a working-but-
+#: misconfigured link into an unusable one.  The two settings are also one
+#: command rather than two: a retry after a failed ``type can`` would need either
+#: a second password dialog or a real config rollback, so a refusal is detected
+#: before the interface is touched.  Any *other* failure is allowed to reach the
+#: caller as a nonzero exit, which :meth:`CanLink.ensure` already turns into
+#: ``LINK_FAILED`` plus the manual hint.  ``fd off`` matches the classic CAN the
+#: rest of this console assumes (the SDK auto-detects FD on its own, but nothing
+#: here configures a data bitrate); :meth:`CanLink.ensure` never reaches this
+#: script for an FD bus, so there is no ``fd off`` to drop.
+#:
+#: The refusal is matched with a shell ``case`` rather than ``grep``: ``pkexec``
+#: runs this in a minimal environment, and staying inside the shell keeps the
+#: script free of commands that a stripped-down PATH might not carry.
 SCRIPT = (
     "set -e\n"
     'dev="$1"\n'
     'ip link set "$dev" down\n'
-    'ip link set "$dev" type can bitrate "$2" restart-ms "$3" fd off\n'
+    'opts="bitrate $2 fd off"\n'
+    'case "$3" in\n'
+    '  0|"") ;;\n'
+    '  *) if out=$(ip link set "$dev" type can bitrate "$2" restart-ms "$3" fd off 2>&1); then\n'
+    '       opts="bitrate $2 restart-ms $3 fd off"\n'
+    '     else\n'
+    '       case "$out" in\n'
+    '         *"restart from Bus Off"*) ;;\n'
+    '         *) printf "%s\\n" "$out" >&2; exit 1 ;;\n'
+    "       esac\n"
+    '     fi ;;\n'
+    "esac\n"
+    'ip link set "$dev" type can $opts\n'
     'ip link set "$dev" up\n'
 )
 
@@ -182,9 +213,24 @@ class LinkState:
     version whose ``can state`` line this does not recognise.  An empty value
     never triggers anything: silence is not evidence of a fault.
     """
+    restart_ms: int | None = None
+    """The bus-off restart delay ``ip`` reports, or ``None`` if it did not say.
+
+    Reported, never demanded: ``matches`` deliberately ignores it.  A ``gs_usb``
+    adapter rejects ``restart-ms`` and the kernel restarts its controller itself,
+    so requiring a non-zero value here would send every connect on the hardware
+    this product ships with through a repair that cannot set it.  It is kept so
+    that :meth:`describe` can say what the driver actually has.
+    """
 
     def matches(self, bitrate: int) -> bool:
-        """Is this the state the SDK needs?  If so, nothing has to happen."""
+        """Is this the state the SDK needs?  If so, nothing has to happen.
+
+        Only the properties the gripper needs to talk: the interface exists, is
+        administratively up, carries the bitrate asked for, is classic CAN, and
+        the controller is not off the bus.  ``restart_ms`` is not among them —
+        see the field's docstring.
+        """
         return (
             self.exists
             and self.up
@@ -212,6 +258,11 @@ class LinkState:
         if self.bitrate is None:
             return "已 up，但未配置比特率" if self.up else "已存在，未配置比特率，未 up"
         mode = "CAN FD" if self.fd else "经典 CAN"
+        # The restart delay is reported verbatim when ``ip`` prints it.  It is not
+        # a requirement (see ``matches``): ``gs_usb`` prints ``0`` because it has no
+        # such knob, and a driver that carries it prints what it was set to, so the
+        # number answers "which of the two is this" without this module guessing.
+        restart = f"，bus-off 重启 {self.restart_ms}ms" if self.restart_ms is not None else ""
         # The controller's state is worth printing whenever it is not the healthy
         # one — including ERROR-PASSIVE, which is not repaired and would
         # otherwise be invisible in a message that reads like everything is fine.
@@ -220,7 +271,10 @@ class LinkState:
             if self.can_state and self.can_state != CAN_ERROR_ACTIVE
             else ""
         )
-        return f"{'已 up' if self.up else '未 up'}，{mode}，比特率 {self.bitrate}{trouble}"
+        return (
+            f"{'已 up' if self.up else '未 up'}，{mode}，比特率 {self.bitrate}"
+            f"{restart}{trouble}"
+        )
 
 
 def parse_link(text: str, returncode: int = 0) -> LinkState:
@@ -265,9 +319,19 @@ def parse_link(text: str, returncode: int = 0) -> LinkState:
     # distinguishes a bus-off interface from a working one.
     state_line = re.search(r"\bcan state (\S+)", text)
     can_state = state_line.group(1) if state_line else ""
+    # The delay sits at the end of that same ``can state`` line ("can state
+    # ERROR-ACTIVE restart-ms 100").  ``\b`` keeps this from reading the
+    # ``restart-ms`` of some other interface if ``ip`` ever prints more than one.
+    restart_line = re.search(r"\brestart-ms (\d+)", text)
+    restart_ms = int(restart_line.group(1)) if restart_line else None
 
     return LinkState(
-        exists=True, up="UP" in flags, bitrate=bitrate, fd=fd, can_state=can_state
+        exists=True,
+        up="UP" in flags,
+        bitrate=bitrate,
+        fd=fd,
+        can_state=can_state,
+        restart_ms=restart_ms,
     )
 
 
@@ -275,12 +339,17 @@ def manual_hint(device: str, bitrate: int) -> str:
     """The commands an operator can paste instead, and what the alerts quote.
 
     The same three commands the README documents, in the same order, so that a
-    failure here leads to the procedure the operator may already know.
+    failure here leads to the procedure the operator may already know — and the
+    ones that work on every driver.  ``restart-ms`` is deliberately **not** in
+    here: the ``gs_usb`` adapters this product ships with refuse the keyword, and
+    an operator who pastes a hint has no ``set -e``-free retry to fall back on —
+    the ``down`` and the ``up`` are joined by ``&&``, so a refusal leaves the
+    interface down.  Where the driver does support it, the daemon's own script
+    still applies it; the hint is the lowest common denominator.
     """
     return (
         f"sudo ip link set {device} down && "
-        f"sudo ip link set {device} type can bitrate {bitrate} "
-        f"restart-ms {constants.CAN_LINK_RESTART_MS} fd off && "
+        f"sudo ip link set {device} type can bitrate {bitrate} fd off && "
         f"sudo ip link set {device} up"
     )
 
