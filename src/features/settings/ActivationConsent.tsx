@@ -13,21 +13,23 @@ import {
 const PRIVACY_URL = 'https://act.nexform.tech/privacy'
 
 /**
- * 同意书里**逐项列出**的采集内容。
+ * 同意书里**逐项列出**的发送内容。
  *
  * ⚠ 这张表就是"我们会发什么"的**唯一清单**：往请求里加字段就必须在这里加一项，
  * 因为界面不再展示原始请求体（那份"将要发送的内容"预览已去掉）。
  * `activationPayload.buildActivationRequest` 的键集由测试钉住，两处一起改才过得去。
+ *
+ * ⚠ 这里只列**上位机发出去的字段**。激活服务自己记录的来源 IP / 请求时间不在这张表里：
+ * 它由服务端在收到请求时产生，披露在隐私政策那边，不在本同意书的范围内。
  */
 const CONSENT_ITEMS = [
   { id: 'contact', what: 'consentItemContact', why: 'consentItemContactWhy' },
   { id: 'uid', what: 'consentItemUid', why: 'consentItemUidWhy' },
   { id: 'versions', what: 'consentItemVersions', why: 'consentItemVersionsWhy' },
-  { id: 'source', what: 'consentItemSource', why: 'consentItemSourceWhy' },
 ] as const
 
 /**
- * 信息收集同意书（弹窗）。
+ * 激活注册信息同意书（弹窗）。
  *
  * 「同意」按钮**同时**勾上外面的复选框并关闭 —— 让用户在读完的同一个动作里完成同意，
  * 而不是"读完再回去找个框打勾"。

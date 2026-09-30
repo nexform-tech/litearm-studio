@@ -210,7 +210,7 @@ describe('ActivationSection', () => {
     })
   })
 
-  it('spells out every collected item inside the consent document', () => {
+  it('spells out every item the request carries inside the consent document', () => {
     mocks.snapshot.current = LOCKED
     render(<ActivationSection />)
 
@@ -220,12 +220,15 @@ describe('ActivationSection', () => {
 
     const dialog = screen.getByTestId('activation-consent-dialog')
     const items = within(dialog).getAllByRole('listitem')
-    // 逐项列出：联系人、设备 UID、版本、来源 IP。
-    expect(items).toHaveLength(4)
+    // 逐项列出：联系人、设备 UID、版本。
+    expect(items).toHaveLength(3)
     expect(dialog.textContent).toMatch(/姓名|Name/)
     expect(dialog.textContent).toMatch(/设备 UID|Device UID/)
     expect(dialog.textContent).toMatch(/版本|versions/)
-    expect(dialog.textContent).toMatch(/来源 IP|Source IP/)
+    // ⚠ IP 由服务端自己记，不属于"上位机发出去的字段"：列在这里会被读成"我们在采集"。
+    expect(dialog.textContent).not.toMatch(/来源 IP|Source IP/)
+    // 文档名说的是激活注册信息（发送什么），不是信息收集。
+    expect(dialog.textContent).not.toMatch(/信息收集|Information Collection/)
     // 隐私政策要能点开，且指向服务站点。
     expect(
       within(dialog).getByRole('link', { name: /隐私政策|Privacy policy/ }).getAttribute('href'),

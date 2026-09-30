@@ -36,7 +36,9 @@ describe('i18n Internationalization', () => {
     // 注册与同意（激活那一半）：这套文案是给用户签字看的，两种语言都必须存在。
     expect(i18n.t('settings:activation.formTitle')).toContain('激活')
     expect(i18n.t('settings:activation.consentAgreeLabel')).toContain('同意')
-    expect(i18n.t('settings:activation.consentItemSource')).toContain('IP')
+    // 文档名点名的是"激活注册信息"（发送什么），不是"信息收集"。
+    expect(i18n.t('settings:activation.consentTitle')).toBe('激活注册信息同意书')
+    expect(i18n.t('settings:activation.consentItemVersions')).toContain('版本')
     expect(i18n.t('common:errors.activationUnreachable')).toContain('激活服务')
   })
 
@@ -68,6 +70,7 @@ describe('i18n Internationalization', () => {
     expect(i18n.t('settings:activation.stateNotActivated')).toBe('Not activated')
     expect(i18n.t('common:errors.notActivated')).toContain('not activated')
     expect(i18n.t('settings:activation.consentAgreeLabel')).toContain('agree')
+    expect(i18n.t('settings:activation.consentTitle')).toBe('Activation Registration Consent')
     expect(i18n.t('common:errors.activationUnreachable')).toContain('activation service')
   })
 

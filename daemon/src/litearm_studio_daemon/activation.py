@@ -35,7 +35,7 @@ LICENSE_FORMAT = 1
 
 #: 同意书的版本号。⚠ 用户同意的是**某一版文案**, 将来文案改了, 靠这个字段区分
 #: "他当时同意的是哪一版"。`draft-N` 是刻意的 —— 文案待法务定稿。
-CONSENT_TEXT_VERSION = "draft-2"
+CONSENT_TEXT_VERSION = "draft-3"
 
 #: 一次请求的上限与超时。激活是**人等着**的动作, 超时要短到操作员不会以为界面卡死。
 REQUEST_TIMEOUT_S = 10.0
@@ -178,7 +178,7 @@ def build_request(payload: dict) -> dict:
 
     consent = payload.get("consent")
     if not isinstance(consent, dict) or consent.get("granted") is not True:
-        raise ActivationError("consent_required", "未同意信息收集说明 —— 请先阅读并同意")
+        raise ActivationError("consent_required", "未同意《激活注册信息同意书》—— 请先阅读并同意")
 
     contact = payload.get("contact")
     if not isinstance(contact, dict):

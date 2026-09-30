@@ -37,7 +37,7 @@ export function missingContactFields(contact: ActivationContact): (keyof Activat
 export type ActivationDraft = {
   uid: string
   contact: ActivationContact
-  /** "我已阅读并同意《信息收集同意书》"—— 未勾选时**不发**，界面只把按钮变灰。 */
+  /** "我已阅读并同意《激活注册信息同意书》"—— 未勾选时**不发**，界面只把按钮变灰。 */
   consentGranted: boolean
   diagnostics: { studio: string; sdk: string; firmware: string }
   /** 预留：订单号/激活码。今天界面上没有这个输入框，留着是为了契约先定下来。 */

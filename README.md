@@ -71,8 +71,8 @@ litearm-studio-daemon --fake       # offline: full session on the SDK's fake tra
 ```
 
 The fake device is licensed by default, so the activation panel shows a state and no form.
-Add `--fake-unactivated` to walk the whole unlicensed path: the signup form, the consent boxes,
-the request preview, and the `ERR{0x10,0x08}` refusal when you press Enable. The offline activation
+Add `--fake-unactivated` to walk the whole unlicensed path: the signup form, the activation
+consent document, and the `ERR{0x10,0x08}` refusal when you press Enable. The offline activation
 path (`Import a license file`) can be completed end to end — write a file like the one below and
 import it:
 
