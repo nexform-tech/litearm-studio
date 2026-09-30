@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import URDFLoader from 'urdf-loader'
 import type { URDFRobot } from 'urdf-loader'
+import { FRAME_DISTANCE_FACTOR, MIN_FRAME_DISTANCE, defaultPreviewView } from './previewCamera'
 
 const URDF_URL = `${import.meta.env.BASE_URL}description/litearm.urdf`
 const WORKING_PATH = `${import.meta.env.BASE_URL}description/`
@@ -133,8 +134,11 @@ const disposeSceneResources = (root: THREE.Object3D) => {
 
 /**
  * 取景：把机械臂摆到原点（x/z 居中、底座贴地），然后以机械臂真实中心为
- * 观察/旋转中心，从一个固定的近距斜上方视角拍摄。初始加载和“聚焦”按钮
- * 共用同一套逻辑，保证进入页面与点击聚焦后的视角完全一致。
+ * 观察/旋转中心，从一个固定的近距视角拍摄。初始加载和“聚焦”按钮共用同一
+ * 套逻辑，保证进入页面与点击聚焦后的视角完全一致。
+ *
+ * 具体朝哪儿由 `previewCamera.ts` 决定（基座 +X 轴上，见那里的注释）；这里只
+ * 负责量出包络和把结果写进相机与 `OrbitControls`。
  */
 const frameRobot = (
   object: THREE.Object3D,
@@ -157,10 +161,13 @@ const frameRobot = (
 
   const maxDim = Math.max(size.x, size.y, size.z)
   // 近距取景：约 1.7 倍包络尺寸（真机约 1.37m），下限 1m。
-  const distance = Math.max(maxDim * 1.72, 1.0)
+  const distance = Math.max(maxDim * FRAME_DISTANCE_FACTOR, MIN_FRAME_DISTANCE)
   const targetY = size.y * 0.5
-  controls.target.set(0, targetY, 0)
-  camera.position.set(distance * 0.69, targetY + distance * 0.2, distance * 0.69)
+  const view = defaultPreviewView(distance, targetY)
+  // 退化包络（没有网格）：保持当前视角，不要把自己贴到目标点上。
+  if (!view) return
+  camera.position.set(...view.position)
+  controls.target.set(...view.target)
   controls.update()
 }
 
