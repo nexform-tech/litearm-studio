@@ -314,23 +314,6 @@ describe('ArmClient (daemon WebSocket)', () => {
     await expect(promise).resolves.toMatchObject({ supported: true, activated: true, custId: 1042 })
   })
 
-  it('importLicense() sends the parsed file — the offline path never touches the network', async () => {
-    const { client, ws } = connectedClient()
-    const doc = { format: 1, uid: ACTIVATION_REQUEST.uid, cust_id: 1042, issued: 20260929,
-                  flags: 0, mac: '00'.repeat(16) }
-    const promise = client.importLicense(doc)
-    const frame = ws.lastFrame('cmd')!
-    expect(frame).toMatchObject({ m: 'import_license', p: { license: doc } })
-    ws.receive({
-      t: 'res',
-      id: frame.id,
-      ok: true,
-      v: { supported: true, state: 1, stateName: 'activated', activated: true,
-           factoryMode: false, ver: 1, uid: doc.uid, custId: 1042, issued: 20260929, flags: 0 },
-    })
-    await expect(promise).resolves.toMatchObject({ activated: true })
-  })
-
   it('keeps the hello versions — the activation request carries them as diagnostics', () => {
     const { client } = connectedClient()
     // hello 帧只在握手时来一条；激活发生在很久之后，所以要能一直读到它。

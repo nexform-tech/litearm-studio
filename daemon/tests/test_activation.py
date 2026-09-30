@@ -64,7 +64,7 @@ def test_parse_license_reads_the_documented_fields() -> None:
 
 
 def test_parse_license_accepts_json_text_and_normalises_case() -> None:
-    """手动导入那条路拿到的是**文件内容** (文本), 所以两种输入都要吃。"""
+    """凭据既可能是已解析的对象, 也可能是 JSON 文本 —— 两种输入都要吃。"""
     lic = parse_license(json.dumps(license_doc(uid=UID.upper(), mac=MAC.upper())))
     assert lic["uid"] == UID and lic["mac"] == bytes.fromhex(MAC)
 

@@ -111,8 +111,6 @@
     "privacy": "Privacy policy",
     "submit": "Send and activate",
     "submitting": "Sending…",
-    "importButton": "Import a license file…",
-    "importHint": "Machine without internet access: download lic.json from the website and import it here — this path never touches the network.",
     "mustDisable": "The firmware only writes the licence record while disarmed: press Disable first.",
     "activatedJustNow": "Activated: this arm is now unlocked."
   },

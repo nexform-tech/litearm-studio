@@ -52,8 +52,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--activation-url", metavar="URL",
                    default=os.environ.get("LITEARM_ACTIVATION_URL")
                    or activation.DEFAULT_ACTIVATION_URL,
-                   help="激活服务地址 (默认 %(default)s; 传空字符串 = 不提供在线激活,"
-                        "只能手动导入凭据文件; 也可用环境变量 LITEARM_ACTIVATION_URL)")
+                   help="激活服务地址 (默认 %(default)s; 传空字符串 = 不提供在线激活;"
+                        "也可用环境变量 LITEARM_ACTIVATION_URL)")
     p.add_argument("--verbose", "-v", action="store_true", help="打印调试日志")
     return p
 

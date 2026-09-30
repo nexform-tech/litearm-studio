@@ -116,7 +116,6 @@ litearm-python  ──USB CDC (1d50:606f @921600)──>  STM32  ──CAN──
 | `kin_bench` | `arm.diag.kin_bench()` | 固件自检 + 链路诊断计数 |
 | `license` | `arm.license()` | 只读：授权状态 + 设备 UID（**未激活是状态不是错误**；契约见 [ACTIVATION.md](ACTIVATION.md)） |
 | `activate` | 激活服务 + `arm.activate()` | 提交注册信息换取本机凭据并写入设备（**唯一出网的一条**，须失能态） |
-| `import_license` | `arm.activate()` | 手动导入凭据文件，**不联网**（没外网的现场走这条） |
 
 ### 3.3 状态字段
 

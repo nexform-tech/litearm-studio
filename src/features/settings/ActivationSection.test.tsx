@@ -13,7 +13,6 @@ const mocks = vi.hoisted(() => ({
   armState: { current: null as unknown },
   refresh: vi.fn(),
   submit: vi.fn(),
-  importLicense: vi.fn(),
 }))
 
 vi.mock('sonner', () => ({
@@ -36,7 +35,6 @@ vi.mock('./useActivation', () => ({
     error: mocks.error.current,
     refresh: mocks.refresh,
     submit: mocks.submit,
-    importLicense: mocks.importLicense,
   }),
 }))
 
@@ -283,18 +281,5 @@ describe('ActivationSection', () => {
 
     expect(submitButton().disabled).toBe(true)
     expect(screen.getByText(/失能|Disable first/)).toBeTruthy()
-  })
-
-  it('imports a licence file through the daemon (the offline path)', async () => {
-    mocks.snapshot.current = LOCKED
-    render(<ActivationSection />)
-
-    const text = JSON.stringify({ format: 1, uid: UID })
-    const file = { text: () => Promise.resolve(text) } as unknown as File
-    fireEvent.change(screen.getByTestId('activation-file'), { target: { files: [file] } })
-
-    await waitFor(() => expect(mocks.importLicense).toHaveBeenCalledWith(text))
-    // 离线那条路不许碰网络（`submit` 是唯一出网的动作）。
-    expect(mocks.submit).not.toHaveBeenCalled()
   })
 })

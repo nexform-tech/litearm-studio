@@ -441,16 +441,6 @@ export class ArmClient {
     return normalizeLicense(await this._sendCmd('activate', { ...request }))
   }
 
-  /**
-   * 用凭据文件（`lic.json` 解析后的对象）激活 —— **不联网**。
-   *
-   * 没外网的台架走这条：在网站上下载文件，拖进来。文件的格式校验和"是不是这台机器的"
-   * 都在本地程序那一层判（它才知道当前设备的 UID）。
-   */
-  async importLicense(license: Record<string, unknown>): Promise<LicenseSnapshot> {
-    return normalizeLicense(await this._sendCmd('import_license', { license }))
-  }
-
   // ───────────────── 参数 / 标定 / 自检（设置页用，计划 §5「直接接线」） ─────────────────
   // ⚠ 前馈 item 编号不是猜的（见 daemon `session.py` 与 SDK `arm.py`）：
   //   4 = 载荷质量, 5 = 质心(sub 0..2), 6 = 重力向量(sub 0..2),

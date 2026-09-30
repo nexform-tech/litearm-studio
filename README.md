@@ -72,16 +72,7 @@ litearm-studio-daemon --fake       # offline: full session on the SDK's fake tra
 
 The fake device is licensed by default, so the activation panel shows a state and no form.
 Add `--fake-unactivated` to walk the whole unlicensed path: the signup form, the activation
-consent document, and the `ERR{0x10,0x08}` refusal when you press Enable. The offline activation
-path (`Import a license file`) can be completed end to end — write a file like the one below and
-import it:
-
-```json
-{"format":1,"uid":"101112131415161718191a1b","cust_id":1042,"issued":20260929,"flags":0,"mac":"00112233445566778899aabbccddeeff"}
-```
-
-That is a **fake** credential for the fake device: the stub does not verify the tag and a real
-board would reject it. Never ship it to a customer.
+consent document, and the `ERR{0x10,0x08}` refusal when you press Enable.
 
 The console prints the URL it bound to (default `http://127.0.0.1:8765/`, auto-incrementing if busy) and opens a window.
 

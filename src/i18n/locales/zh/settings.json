@@ -111,8 +111,6 @@
     "privacy": "隐私政策",
     "submit": "提交并激活",
     "submitting": "正在提交…",
-    "importButton": "导入凭据文件…",
-    "importHint": "没有外网的机器：在网站上下载 lic.json，再在这里导入——这条路不联网。",
     "mustDisable": "固件要求失能状态才写入授权记录：请先按「失能」。",
     "activatedJustNow": "激活成功：这台机械臂已解锁。"
   },

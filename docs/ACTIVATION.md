@@ -87,14 +87,12 @@ longer stall for a second. The daemon already handles both.
 `CMD_ACTIVATE(0x3F)` takes 28 bytes: `cust_id u32 LE + issued u32 LE + flags u32 LE
 + mac[16]` (two SipHash-2-4 tags). The firmware writes sector 6 on success.
 
-Studio never produces that tag. It gets it from **one of two sources**, and both end
-in the same parser (`daemon/src/litearm_studio_daemon/activation.py`):
-
-1. **The activation service** — `POST https://act.nexform.tech/api/v1/license`
-   (see section 6). Studio sends the operator's registration details plus the
-   device UID and receives the credential file for that board.
-2. **A credential file** the operator imports by hand. This path never touches the
-   network and exists for machines with no internet access.
+Studio never produces that tag. It gets it from **one source only**, the activation
+service — `POST https://act.nexform.tech/api/v1/license` (see section 6). Studio
+sends the operator's registration details plus the device UID and receives the
+credential file for that board. The reply goes through the parser in
+`daemon/src/litearm_studio_daemon/activation.py`, which validates its format and
+its UID.
 
 ### The credential file (`lic.json`)
 
@@ -224,9 +222,6 @@ Anything else is reported as a plain server error.
   document, where they read as something Studio collects.
 - The credential is not a secret: it is bound to one board's UID and the firmware
   rejects it anywhere else. Sending it over plain HTTPS without an account is fine.
-- The operator needs a path that works with no internet. `import_license` is that
-  path, and it is not a degraded mode: it is the same parser and the same firmware
-  command.
 
 ## 7. Rules the panel must keep
 

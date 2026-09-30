@@ -2,8 +2,8 @@
 
 契约见 `docs/ACTIVATION.md`。分两半, 各自能单独测:
 
-* :func:`parse_license` —— 凭据文件的**唯一**解析点: 在线领回来的和用户手动导入的
-  都走这里 ⇒ "格式"只有一份实现, 两个入口不会漂。
+* :func:`parse_license` —— 凭据文件的**唯一**解析点: 在线领回来的凭据也走这里
+  ⇒ "格式"只有一份实现, 不会漂。
 * :func:`request_license` —— 往激活服务 POST 一次注册信息, 拿回这台机器的凭据。
 
 ⚠ **本模块是全仓库唯一出网的地方**。除它之外, 守护进程与前端都不碰网络 —— 这条边界
@@ -322,7 +322,7 @@ def request_license(base_url: str, request: dict, *, timeout: float = REQUEST_TI
     if not base_url:
         raise ActivationError(
             "unconfigured",
-            "未配置激活服务地址 —— 请用 --activation-url 指定, 或手动导入凭据文件")
+            "未配置激活服务地址 —— 请用 --activation-url 指定")
     url = base_url.rstrip("/") + ACTIVATION_PATH
     try:
         status, body = post(url, request, timeout)

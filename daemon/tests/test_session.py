@@ -986,7 +986,7 @@ def test_license_lets_a_real_link_failure_propagate(
         fake_session.execute("license", {})
 
 
-# ------------------------------------------------- 激活 (在线领凭据 / 手动导入)
+# ------------------------------------------------- 激活 (在线领凭据)
 
 LICENSE_DOC = {"format": 1, "uid": "101112131415161718191a1b", "cust_id": 1042,
                "issued": 20260929, "flags": 0, "mac": "00112233445566778899aabbccddeeff"}
@@ -1009,31 +1009,6 @@ def _unlicensed(session: Session):
     """把假设备变成"未激活" —— 激活这条路上的起点。"""
     session._arm._tr.activated = False
     return session._arm._tr
-
-
-def test_import_license_writes_the_credential_and_confirms_by_read_back(
-        fake_session: Session) -> None:
-    """手动导入那条路: 不联网, 直接把文件写进设备, 再**回读**当落位证据。"""
-    tr = _unlicensed(fake_session)
-    rec = fake_session.execute("import_license", {"license": LICENSE_DOC})
-    assert rec["supported"] is True and rec["activated"] is True
-    assert (rec["custId"], rec["issued"]) == (1042, 20260929)
-    assert (tr.license_cust_id, tr.license_issued) == (1042, 20260929)
-
-
-def test_import_license_refuses_a_file_for_another_machine(fake_session: Session) -> None:
-    tr = _unlicensed(fake_session)
-    with pytest.raises(activation.LicenseFileError) as ei:
-        fake_session.execute("import_license",
-                             {"license": {**LICENSE_DOC, "uid": "ff" * 12}})
-    assert ei.value.reason == "uid_mismatch"
-    assert tr.activated is False, "机器不匹配却把凭据写进去了"
-
-
-def test_import_license_rejects_a_file_that_is_not_json(fake_session: Session) -> None:
-    with pytest.raises(activation.LicenseFileError) as ei:
-        fake_session.execute("import_license", {"license": "这不是凭据"})
-    assert ei.value.reason == "not_json"
 
 
 def test_activate_posts_the_consented_request_then_writes_the_credential(

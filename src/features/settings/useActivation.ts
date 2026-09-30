@@ -15,9 +15,8 @@ import {
  * 读: 授权记录**不随状态帧推送**（它是请求/应答式的一次性记录，不是 100Hz 的状态流），
  * 所以连上之后拉一次、用户点「刷新」时再拉。
  *
- * 写: 两条路 —— `submit()` 走激活服务（唯一出网的动作），`importLicense()` 用凭据文件，
- * 不联网。两条都由守护进程做最终校验（同意、UID 是否本机、文件格式），这里只负责把结果
- * 或错误摆到界面上。
+ * 写: 一条路 —— `submit()` 走激活服务（唯一出网的动作）。由守护进程做最终校验（同意、
+ * UID 是否本机、凭据格式），这里只负责把结果或错误摆到界面上。
  */
 export function useActivation() {
   const { t } = useTranslation(['common', 'settings'])
@@ -73,39 +72,7 @@ export function useActivation() {
     [t],
   )
 
-  /**
-   * 用凭据文件激活（不联网）。
-   *
-   * 这里只做 `JSON.parse` —— 让人当场知道"选错文件了"；**字段级的判据全在守护进程**
-   * （它才知道当前设备的 UID），只有一处实现，不会两边漂。
-   */
-  const importLicense = useCallback(
-    async (text: string): Promise<boolean> => {
-      let doc: unknown
-      try {
-        doc = JSON.parse(text)
-      } catch {
-        toast.error(t('common:errors.licenseUnreadable'), { id: 'activation-import' })
-        return false
-      }
-      setSubmitting(true)
-      try {
-        const record = await armClient.importLicense(doc as Record<string, unknown>)
-        setSnapshot(record)
-        setError(null)
-        toast.success(t('settings:activation.activatedJustNow'))
-        return true
-      } catch (err) {
-        toast.error(formatArmError(err) || String(err), { id: 'activation-import' })
-        return false
-      } finally {
-        setSubmitting(false)
-      }
-    },
-    [t],
-  )
-
-  return { connected, snapshot, loading, submitting, error, refresh, submit, importLicense }
+  return { connected, snapshot, loading, submitting, error, refresh, submit }
 }
 
 export type ActivationState = ReturnType<typeof useActivation>

@@ -151,11 +151,9 @@ COMMANDS: Dict[str, str] = {
     # ---- 授权/激活 (只读那一半; 提交凭据要等凭据格式定稿, 见 docs/ACTIVATION.md) ----
     "license": "读设备授权记录: 是否已激活 + 设备 UID (arm.license) —— "
                "**未激活是一种状态, 不是错误**",
-    # ---- 激活 (写入; 两条路: 在线领凭据 / 手动导入凭据文件) ----
+    # ---- 激活 (写入; 在线领凭据) ----
     "activate": "把注册信息提交给激活服务, 拿回本机凭据并写入设备 "
                 "(唯一出网的一条命令; 须失能态)",
-    "import_license": "用凭据文件 (lic.json) 激活, **不联网** —— 没外网的现场走这条 "
-                      "(须失能态)",
 }
 
 
@@ -228,7 +226,7 @@ class Session:
         #: 退出时是否降能量 —— 见 `close()` 与 `_deenergize()`。**产品策略**, 默认开。
         self._disable_on_exit = bool(disable_on_exit)
         #: 激活服务地址 (见 `activation.py`)。空 = 未配置: 在线激活会当场说清, 而不是
-        #: 转圈等超时; 手动导入凭据那条路不受它影响。
+        #: 转圈等超时。
         self._activation_url = (activation_url or "").strip()
         self.sdk_version = sdk_version
 
@@ -989,10 +987,6 @@ class Session:
                 return _submit_license(arm, activation.request_license(
                     self._activation_url, request,
                     expected_uid=device_uid or request["uid"]))
-            if m == "import_license":
-                # 没外网的现场走这条: 用户在网站上下载 lic.json, 在这里导入。
-                return _submit_license(arm, activation.parse_license(
-                    p.get("license"), expected_uid=_device_uid(arm)))
             # 白名单与实现**各写一遍**是刻意的: 只在准入处查表的话, 表里加一条而忘了
             # 实现会静默返回 None (前端看到"成功"却什么都没发生)。
             raise UnknownCommandError(m, sorted(COMMANDS))
