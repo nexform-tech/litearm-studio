@@ -104,7 +104,10 @@ export function useGripperPanel() {
     if (!present) return ''
     if (!connected) return t('common:disconnected')
     if (estopped) return t('common:errors.gripperEstopped')
-    if (!enabled) return t('common:errors.notEnabled')
+    // 夹爪有自己的使能位，与被控制的 `notEnabled`（机械臂）不是一回事：一个连上
+    // 但没使能的夹爪是正常的静止状态，把这个面板的按钮灰掉的原因说成"机械臂未使能"
+    // 会把操作员支到错误的控件上。
+    if (!enabled) return t('common:errors.gripperNotEnabled')
     if (gate && gate !== 'READY') {
       // 模板也要说：它只挡毫米目标，但操作员必须知道为什么「夹取」是灰的（§6.3）。
       return `${t(`gripper:gate.${gate}`)}：${state?.gateReason || conn?.gateReason || ''}`
