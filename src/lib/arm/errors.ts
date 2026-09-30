@@ -50,8 +50,14 @@ const REASON_KEYS: Record<string, string> = {
   rate_limited: 'activationRateLimited',
   maintenance: 'activationMaintenance',
   bad_response: 'activationBadResponse',
-  // 这次提交本身不成立
+  // 这次提交本身不成立。注册信息逐项分开，是为了让操作员知道该改哪个框，
+  // 而不是收到一句笼统的"格式不对"。判据与激活网站的表单同表（`activation._CONTACT_RULES`）。
   consent_required: 'activationConsentRequired',
+  missing_contact: 'activationMissingContact',
+  bad_name: 'activationBadName',
+  bad_phone: 'activationBadPhone',
+  bad_email: 'activationBadEmail',
+  contact_too_long: 'activationContactTooLong',
   uid_mismatch: 'licenseUidMismatch',
   // 凭据文件读不出来。缺字段 / 字段不对 / 不是 JSON 归成同一句：用户能做的动作是同一个
   // —— 换一份文件。只有"格式版本认不出"要单独说（那是要升级上位机，不是换文件）。
@@ -106,6 +112,12 @@ const FALLBACK_ZH: Record<string, string> = {
   activationRateLimited: '激活服务暂时拒绝了本次请求（请求过于频繁）：请过一会儿再试',
   activationMaintenance: '激活服务正在维护：请稍后重试，或改用「导入凭据文件」离线激活',
   activationConsentRequired: '请先勾选同意发送注册信息',
+  activationMissingContact: '注册信息没填完：带 * 的字段都要填',
+  activationBadName: '姓名不符合要求：只能是文字，2–32 个字，不能含数字',
+  activationBadPhone: '手机号不符合要求：需为 11 位手机号',
+  activationBadEmail: '邮箱不符合要求：格式不正确',
+  activationContactTooLong:
+    '注册信息有一项过长：请核对姓名、手机号、单位、邮箱、微信号、地区、行业与用途说明的长度',
   activationBadResponse: '激活服务的应答不可用：请稍后重试，或改用「导入凭据文件」离线激活',
   licenseUnreadable: '凭据文件不可用：请确认选的是供应商签发的 lic.json（不是别的东西）',
   licenseUnsupportedFormat:

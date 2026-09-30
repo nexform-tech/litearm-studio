@@ -993,10 +993,12 @@ LICENSE_DOC = {"format": 1, "uid": "101112131415161718191a1b", "cust_id": 1042,
 
 
 def _payload(**over):
+    """一份填满的注册信息 —— 八个字段与激活网站的表单同集（见 `test_activation.py`）。"""
     doc = {
         "uid": LICENSE_DOC["uid"],
-        "contact": {"name": "张三", "organization": "某大学",
-                    "email": "z@example.com", "phone": "13800000000"},
+        "contact": {"name": "张三", "phone": "13800000000", "organization": "某大学",
+                    "wechatId": "zhangsan_wx", "email": "z@example.com", "region": "上海",
+                    "industry": "教育", "purpose": "科研教学"},
         "consent": {"granted": True},
     }
     doc.update(over)
@@ -1048,7 +1050,8 @@ def test_activate_posts_the_consented_request_then_writes_the_credential(
 
     assert seen["url"] == activation.DEFAULT_ACTIVATION_URL
     assert seen["request"]["consent"]["granted"] is True
-    assert seen["request"]["contact"]["organization"] == "某大学"
+    # 注册信息**整份**发出去：网站的表单有哪几项，这里就有哪几项。
+    assert seen["request"]["contact"] == _payload()["contact"]
     # 期望 UID 取自**设备**, 不是客户端填的那个。
     assert seen["uid"] == LICENSE_DOC["uid"]
     assert rec["activated"] is True

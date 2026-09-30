@@ -30,11 +30,23 @@ def license_doc(**over):
     return doc
 
 
+#: 一份填满的注册信息 —— 八个字段与激活网站的表单一一对应。
+CONTACT = {
+    "name": "张三",
+    "phone": "13800000000",
+    "organization": "某大学",
+    "wechatId": "zhangsan_wx",
+    "email": "z@example.com",
+    "region": "上海",
+    "industry": "教育",
+    "purpose": "科研教学",
+}
+
+
 def payload(**over):
     doc = {
         "uid": UID,
-        "contact": {"name": "张三", "organization": "某大学", "email": "z@example.com",
-                    "phone": "13800000000"},
+        "contact": dict(CONTACT),
         "consent": {"granted": True},
     }
     doc.update(over)
@@ -94,8 +106,8 @@ def test_build_request_keeps_only_the_agreed_fields() -> None:
     # 请求的键集就是**同意书里逐项列出的那些** —— 多一个都算暗字段。
     assert set(req) == {"uid", "contact", "consent", "diagnostics"}
     assert req["uid"] == UID
-    assert req["contact"] == {"name": "张三", "organization": "某大学",
-                              "email": "z@example.com", "phone": "13800000000"}
+    # 八个字段与激活网站的表单同集 (`litearm-activation/src/lib/validation.ts`)。
+    assert req["contact"] == CONTACT
     # 只有一份同意: 它覆盖全部字段, 所以没有逐项开关。
     assert req["consent"] == {"granted": True, "text_version": CONSENT_TEXT_VERSION}
     # 订单号那一层还没启用: 空值不许作为空字段发出去。
@@ -110,14 +122,53 @@ def test_build_request_refuses_without_consent() -> None:
         assert ei.value.reason == "consent_required"
 
 
-@pytest.mark.parametrize("field", ["name", "organization", "email", "phone"])
+@pytest.mark.parametrize("field", ["name", "phone", "organization", "email", "region"])
 def test_build_request_requires_the_contact_fields(field: str) -> None:
-    contact = dict(payload()["contact"])
-    contact.pop(field)
+    for missing in ("去掉这个键", "留空串", "只有空白"):
+        contact = dict(CONTACT)
+        if missing == "去掉这个键":
+            contact.pop(field)
+        elif missing == "留空串":
+            contact[field] = ""
+        else:
+            contact[field] = "   "
+        with pytest.raises(ActivationError) as ei:
+            build_request(payload(contact=contact))
+        assert ei.value.reason == "missing_contact"
+        assert field in str(ei.value)
+
+
+def test_build_request_fills_absent_optional_fields_with_empty_strings() -> None:
+    """选填的三个**始终在请求里** —— 网站那张表每一项都有, 缺键会让它自己判空。"""
+    contact = {k: v for k, v in CONTACT.items() if k not in ("wechatId", "industry", "purpose")}
+    req = build_request(payload(contact=contact))
+    assert req["contact"]["wechatId"] == ""
+    assert req["contact"]["industry"] == ""
+    assert req["contact"]["purpose"] == ""
+
+
+@pytest.mark.parametrize("field,value,reason", [
+    # 判据与网站 zod 同表: 姓名不许数字、手机号 11 位、邮箱要有 @ 与点。
+    ("name", "张3", "bad_name"),
+    ("name", "张", "missing_contact"),                     # 少于 2 字
+    ("phone", "1380000000", "bad_phone"),
+    ("phone", "12800000000", "bad_phone"),                 # 第二位不是 3-9
+    ("email", "z@example", "bad_email"),
+    ("email", "z example.com", "bad_email"),
+    ("purpose", "长" * 501, "contact_too_long"),
+    ("organization", "长" * 129, "contact_too_long"),
+])
+def test_build_request_mirrors_the_website_form_rules(field, value, reason) -> None:
     with pytest.raises(ActivationError) as ei:
-        build_request(payload(contact=contact))
-    assert ei.value.reason == "missing_contact"
+        build_request(payload(contact={**CONTACT, field: value}))
+    assert ei.value.reason == reason
     assert field in str(ei.value)
+
+
+def test_build_request_accepts_the_names_a_real_customer_has() -> None:
+    """姓名判据不能把真实姓名挡在外面: 拉丁、连字符、撇号、间隔号、全角空格都要过。"""
+    for name in ("张三", "Anne-Marie", "O'Brien", "买买提·艾力", "佐藤 優子"):
+        assert build_request(payload(contact={**CONTACT, "name": name}))["contact"]["name"] == name
 
 
 def test_build_request_rejects_a_bad_uid() -> None:

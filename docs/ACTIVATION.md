@@ -91,7 +91,7 @@ Studio never produces that tag. It gets it from **one of two sources**, and both
 in the same parser (`daemon/src/litearm_studio_daemon/activation.py`):
 
 1. **The activation service** — `POST https://act.nexform.tech/api/v1/license`
-   (see section 7). Studio sends the operator's registration details plus the
+   (see section 6). Studio sends the operator's registration details plus the
    device UID and receives the credential file for that board.
 2. **A credential file** the operator imports by hand. This path never touches the
    network and exists for machines with no internet access.
@@ -136,18 +136,44 @@ believe". The file name carries that information instead
   "uid": "0a1b2c3d4e5f60718293a4b5",
   "contact": {
     "name": "Zhang San",
+    "phone": "13800000000",
     "organization": "Example University",
+    "wechatId": "zhangsan_wx",
     "email": "z@example.com",
-    "phone": "13800000000"
+    "region": "Shanghai",
+    "industry": "Education",
+    "purpose": "Teaching and research"
   },
-  "consent": { "granted": true, "text_version": "draft-3" },
+  "consent": { "granted": true, "text_version": "draft-4" },
   "diagnostics": { "studio": "0.1.0", "sdk": "2.1.0", "firmware": "Litearm1.8.0-7J" },
   "code": ""
 }
 ```
 
-- `contact`: `name`, `organization`, `email` and `phone` are **all required**. Every
-  value is trimmed and capped at 200 characters.
+- `contact` carries **one field per input on the activation website's registration
+  form** (`litearm-activation/src/lib/validation.ts`, the `activationFormSchema`).
+  The website is the authority: it issues the credential, so its fields and its rules
+  define this contract. The daemon re-checks them only because the gate has to sit in
+  the one layer that owns the link.
+
+  | Request field | Website form field | Required | Rule |
+  | --- | --- | --- | --- |
+  | `name` | `contactName` | yes | 2–32 characters, letters and name punctuation only, no digits |
+  | `phone` | `phone` | yes | `^1[3-9]\d{9}$` |
+  | `organization` | `company` | yes | 1–128 characters |
+  | `wechatId` | `wechatId` | no | up to 64 characters |
+  | `email` | `email` | yes | up to 128 characters, `name@example.com` |
+  | `region` | `region` | yes | 1–64 characters |
+  | `industry` | `industry` | no | up to 64 characters |
+  | `purpose` | `purpose` | no | up to 500 characters |
+
+  Two keys keep the names this contract started with — `name` and `organization` —
+  and mean the website's `contactName` and `company`. Every other key is spelled the
+  same on both sides. All eight keys are always present; an unfilled optional field
+  travels as an empty string. Every value is trimmed. A field that is missing, too
+  long or malformed is rejected by the daemon with `missing_contact`,
+  `contact_too_long`, `bad_name`, `bad_phone` or `bad_email`; nobody sends a request
+  the website would refuse.
 - `consent` is **one document**, not a set of per-item switches: the operator reads
   the Activation Registration Consent, which lists every item the request carries
   together with the purpose of each, then agrees to all of it. The document is named
@@ -158,16 +184,19 @@ believe". The file name carries that information instead
   the WebSocket directly must not be able to send personal data without consent.
 - `consent.text_version` records **which wording** the operator agreed to. It changes
   whenever the listed items or their purpose change. The current wording is
-  `draft-3`: `draft-2` listed the source IP, `draft-3` does not.
+  `draft-4`: `draft-2` listed the source IP, `draft-3` does not, and `draft-4` added
+  the four fields the website's form carries besides name, organisation, email and
+  phone — WeChat ID, region, industry and purpose.
 - `diagnostics` always travels with the request, because it is one of the items
   listed in that same consent. It carries versions, nothing else: LAN addresses and
   host names are deliberately not collected. The service records the source IP
   itself, and that record is disclosed in the privacy policy rather than in this
   document, which covers only what Studio sends.
 - `code` is reserved for an order/activation code. Studio sends it when non-empty;
-  no input for it exists yet. **Decide this before the service goes live**: the UID
-  is printed on the board and readable by anyone with the machine, so without a
-  second factor "has the machine" equals "can self-activate".
+  no input for it exists yet. It stays unused because the service answers only for a
+  UID whose credential an operator entered in advance on the website's admin side:
+  possession of the machine is not enough to obtain a credential, so no second factor
+  is needed here.
 
 ### The response
 

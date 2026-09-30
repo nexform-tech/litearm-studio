@@ -183,7 +183,7 @@ pytest daemon/tests -q
 | 命令 | 出网 | 说明 |
 | --- | --- | --- |
 | `license` | 否 | 读授权记录。未激活是**状态**不是错误 |
-| `activate` | **是** | 把注册信息（姓名/单位/邮箱/电话 + 同意标记）连同设备 UID POST 给激活服务，拿回本机凭据并写进设备 |
+| `activate` | **是** | 把注册信息（姓名/手机号/单位/邮箱/地区 + 微信号/行业/用途 + 同意标记）连同设备 UID POST 给激活服务，拿回本机凭据并写进设备 |
 | `import_license` | 否 | 用户手动导入 `lic.json`。没外网的现场走这条 |
 
 - 地址：`--activation-url` 或环境变量 `LITEARM_ACTIVATION_URL`，默认

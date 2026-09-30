@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 import urllib.error
 import urllib.request
 from typing import Any, Callable, Dict, Optional, Tuple
@@ -35,7 +36,8 @@ LICENSE_FORMAT = 1
 
 #: 同意书的版本号。⚠ 用户同意的是**某一版文案**, 将来文案改了, 靠这个字段区分
 #: "他当时同意的是哪一版"。`draft-N` 是刻意的 —— 文案待法务定稿。
-CONSENT_TEXT_VERSION = "draft-3"
+#: `draft-4`: 表单与网站对齐, 新增微信号 / 所在地区 / 所属行业 / 用途说明。
+CONSENT_TEXT_VERSION = "draft-4"
 
 #: 一次请求的上限与超时。激活是**人等着**的动作, 超时要短到操作员不会以为界面卡死。
 REQUEST_TIMEOUT_S = 10.0
@@ -143,24 +145,79 @@ def parse_license(raw: Any, *, expected_uid: Optional[str] = None) -> Dict[str, 
 
 # --------------------------------------------------------------------------- 服务请求
 
-#: 联系人字段 —— **四个都是必填**。电话也要: 现场排障时它比邮箱快得多, 而"联系不上人"
-#: 是这套注册流程最没意义的失败。
-CONTACT_FIELDS = ("name", "organization", "email", "phone")
+#: 注册表单的规则表 —— **逐项对应激活网站的那张表**
+#: (`litearm-activation/src/lib/validation.ts` 的 `activationFormSchema`)。
+#:
+#: ⚠ 网站是权威: 它才是签发的那一端, 字段和判据都以它为准。这里再判一遍不是重复劳动 ——
+#:   **门禁必须在唯一持有链路的那一层**, 界面上的禁用按钮挡不住直连 WebSocket 的客户端。
+#:   网站改了规则, 这里和界面 `activationPayload.ts` 要一起改。
+#:
+#: ⚠ 字段名沿用早期契约: `name` / `organization` 与网站表单的 `contactName` / `company`
+#:   是同一个输入框 (对照表见 `docs/ACTIVATION.md` §6)。
+#:
+#: 每项: (字段, 必填, 最短, 最长), 顺序与网站表单一致。`None` = 这一侧不设该长度判据
+#: (手机号的长度由正则决定, 网站上也没有单独的 min/max)。
+_CONTACT_RULES: Tuple[Tuple[str, bool, Optional[int], Optional[int]], ...] = (
+    ("name", True, 2, 32),
+    ("phone", True, None, None),
+    ("organization", True, 1, 128),
+    ("wechatId", False, None, 64),
+    ("email", True, 1, 128),
+    ("region", True, 1, 64),
+    ("industry", False, None, 64),
+    ("purpose", False, None, 500),
+)
 
-#: 单个字段的字符上限。服务端还会再判一次; 这里只是不让一次手误的粘贴把几 MB 塞进请求里。
-_CONTACT_MAX = 200
+#: 必填字段 —— 与界面 `activationPayload.REQUIRED_CONTACT_FIELDS` 同序同集。
+CONTACT_FIELDS: Tuple[str, ...] = tuple(f for f, required, _, _ in _CONTACT_RULES if required)
+
+#: 格式判据 —— 与网站 `validation.ts` 的正则逐字相同。
+_PHONE_RE = re.compile(r"1[3-9]\d{9}")
+_EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
+
+#: 姓名里额外允许的符号 (与网站 `PERSON_NAME_RE` 同一张表); 其余只许文字 (含 CJK) 与组合音标
+#: —— 数字与其它标点一律不许。
+_NAME_PUNCT = frozenset("·・‧’'- \u3000")
 
 
-def _contact_text(contact: dict, key: str) -> str:
-    raw = contact.get(key)
-    if raw is None or (isinstance(raw, str) and not raw.strip()):
-        raise ActivationError("missing_contact", f"缺少联系人字段 {key}")
-    if not isinstance(raw, str):
-        raise ActivationError("missing_contact", f"联系人字段 {key} 必须是文本")
-    text = raw.strip()
-    if len(text) > _CONTACT_MAX:
-        raise ActivationError("missing_contact", f"联系人字段 {key} 过长 (上限 {_CONTACT_MAX} 字)")
-    return text
+def _is_person_name(text: str) -> bool:
+    """姓名: 只含文字 / 组合音标 / 常见姓名符号。⚠ 与网站同一判据, 不许数字。"""
+    return all(
+        ch in _NAME_PUNCT or ch.isalpha() or unicodedata.category(ch).startswith("M")
+        for ch in text
+    )
+
+
+def _contact_fields(contact: dict) -> Dict[str, str]:
+    """注册表单 → 请求里的 `contact` (**八个字段都在这里判**: 缺 / 超长 / 格式)。
+
+    `reason` 是给界面选文案的短码: `missing_contact`(缺必填)、`contact_too_long`、
+    `bad_name`、`bad_phone`、`bad_email`。
+    """
+    values: Dict[str, str] = {}
+    for field, required, min_len, max_len in _CONTACT_RULES:
+        raw = contact.get(field)
+        if raw is None:
+            raw = ""
+        if not isinstance(raw, str):
+            raise ActivationError("missing_contact", f"字段 {field} 必须是文本")
+        text = raw.strip()
+        if required and not text:
+            raise ActivationError("missing_contact", f"缺少字段 {field}")
+        if max_len is not None and len(text) > max_len:
+            raise ActivationError("contact_too_long", f"字段 {field} 过长 (上限 {max_len} 字)")
+        if text and min_len is not None and len(text) < min_len:
+            raise ActivationError("missing_contact", f"字段 {field} 至少 {min_len} 字")
+        values[field] = text
+
+    # 消息里带上字段名 (方便日志定位), 但**不回显填的值** —— 那是个人信息, 没必要多抄一份。
+    if not _PHONE_RE.fullmatch(values["phone"]):
+        raise ActivationError("bad_phone", "字段 phone 格式不正确: 需为 11 位手机号")
+    if not _EMAIL_RE.fullmatch(values["email"]):
+        raise ActivationError("bad_email", "字段 email 格式不正确: 例如 name@example.com")
+    if not _is_person_name(values["name"]):
+        raise ActivationError("bad_name", "字段 name 格式不正确: 只允许文字 (2-32 字), 不能含数字")
+    return values
 
 
 def build_request(payload: dict) -> dict:
@@ -182,14 +239,14 @@ def build_request(payload: dict) -> dict:
 
     contact = payload.get("contact")
     if not isinstance(contact, dict):
-        raise ActivationError("missing_contact", "缺少联系人信息")
+        raise ActivationError("missing_contact", "缺少注册信息")
 
     diag = payload.get("diagnostics")
     diag = diag if isinstance(diag, dict) else {}
 
     request: Dict[str, Any] = {
         "uid": uid.strip().lower(),
-        "contact": {key: _contact_text(contact, key) for key in CONTACT_FIELDS},
+        "contact": _contact_fields(contact),
         "consent": {
             # ⚠ 只有**一份**同意: 它覆盖下面列出的每一项, 包括 diagnostics。
             #   所以这里没有"逐项同意"的开关 —— 要么整份同意, 要么不发。

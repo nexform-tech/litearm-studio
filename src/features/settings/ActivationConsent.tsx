@@ -24,6 +24,7 @@ const PRIVACY_URL = 'https://act.nexform.tech/privacy'
  */
 const CONSENT_ITEMS = [
   { id: 'contact', what: 'consentItemContact', why: 'consentItemContactWhy' },
+  { id: 'usage', what: 'consentItemUsage', why: 'consentItemUsageWhy' },
   { id: 'uid', what: 'consentItemUid', why: 'consentItemUidWhy' },
   { id: 'versions', what: 'consentItemVersions', why: 'consentItemVersionsWhy' },
 ] as const

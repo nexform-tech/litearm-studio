@@ -80,12 +80,23 @@ export type LicenseRecord = {
  */
 export type LicenseSnapshot = LicenseRecord | { supported: false } | { supported: null }
 
-/** 谁在申请这把授权 —— 会随设备 UID 一起发给激活服务。 */
+/**
+ * 注册信息 —— 会随设备 UID 一起发给激活服务。
+ *
+ * ⚠ **字段集合以激活网站的表单为准**（`litearm-activation/src/lib/validation.ts`）：
+ * `name` / `organization` 与网站表单的 `contactName` / `company` 是同一个输入框，
+ * 其余六个键名与网站逐字相同。改这里必须同时改守护进程 `activation._CONTACT_RULES`
+ * 与同意书（`ActivationConsent.tsx`）。
+ */
 export type ActivationContact = {
   name: string
-  organization: string
-  email: string
   phone: string
+  organization: string
+  wechatId: string
+  email: string
+  region: string
+  industry: string
+  purpose: string
 }
 
 /**

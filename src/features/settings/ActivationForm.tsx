@@ -3,11 +3,14 @@ import { useTranslation } from 'react-i18next'
 import { FileUp, Send } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { armClient, type ActivationContact } from '@/lib/arm'
 import {
+  CONTACT_LIMITS,
   EMPTY_CONTACT,
   buildActivationRequest,
   canSubmitActivation,
+  invalidContactField,
   missingContactFields,
 } from './activationPayload'
 import { ActivationConsentDialog } from './ActivationConsent'
@@ -68,6 +71,8 @@ export function ActivationForm({ vm, uid, firmware, disarmed }: Props) {
   }
   const ready = canSubmitActivation(draft) && disarmed && !vm.submitting
   const missing = missingContactFields(contact)
+  // 格式问题。⚠ 与"还没填"分开：把没填报成填错，操作员会去改一个空框。
+  const problem = invalidContactField(contact)
 
   const setField = (key: keyof ActivationContact, value: string) =>
     setContact((prev) => ({ ...prev, [key]: value }))
@@ -92,19 +97,39 @@ export function ActivationForm({ vm, uid, firmware, disarmed }: Props) {
         <p className="mt-0.5 text-xs text-muted-foreground">{t('settings:activation.formDesc')}</p>
       </div>
 
+      {/* 字段与顺序都以激活网站的表单为准（`litearm-activation/src/lib/validation.ts`）。 */}
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         <Field label={t('settings:activation.name')} required>
           <Input
             data-testid="activation-name"
             value={contact.name}
+            maxLength={CONTACT_LIMITS.name}
             onChange={(e) => setField('name', e.target.value)}
+          />
+        </Field>
+        <Field label={t('settings:activation.phone')} required>
+          <Input
+            data-testid="activation-phone"
+            value={contact.phone}
+            inputMode="numeric"
+            maxLength={CONTACT_LIMITS.phone}
+            onChange={(e) => setField('phone', e.target.value)}
           />
         </Field>
         <Field label={t('settings:activation.organization')} required>
           <Input
             data-testid="activation-organization"
             value={contact.organization}
+            maxLength={CONTACT_LIMITS.organization}
             onChange={(e) => setField('organization', e.target.value)}
+          />
+        </Field>
+        <Field label={t('settings:activation.wechatId')}>
+          <Input
+            data-testid="activation-wechat"
+            value={contact.wechatId}
+            maxLength={CONTACT_LIMITS.wechatId}
+            onChange={(e) => setField('wechatId', e.target.value)}
           />
         </Field>
         <Field label={t('settings:activation.email')} required>
@@ -112,20 +137,46 @@ export function ActivationForm({ vm, uid, firmware, disarmed }: Props) {
             data-testid="activation-email"
             type="email"
             value={contact.email}
+            maxLength={CONTACT_LIMITS.email}
             onChange={(e) => setField('email', e.target.value)}
           />
         </Field>
-        <Field label={t('settings:activation.phone')} required>
+        <Field label={t('settings:activation.region')} required>
           <Input
-            data-testid="activation-phone"
-            value={contact.phone}
-            onChange={(e) => setField('phone', e.target.value)}
+            data-testid="activation-region"
+            value={contact.region}
+            maxLength={CONTACT_LIMITS.region}
+            onChange={(e) => setField('region', e.target.value)}
           />
         </Field>
+        <Field label={t('settings:activation.industry')}>
+          <Input
+            data-testid="activation-industry"
+            value={contact.industry}
+            maxLength={CONTACT_LIMITS.industry}
+            onChange={(e) => setField('industry', e.target.value)}
+          />
+        </Field>
+        <div className="md:col-span-2">
+          <Field label={t('settings:activation.purpose')}>
+            <Textarea
+              data-testid="activation-purpose"
+              rows={3}
+              value={contact.purpose}
+              maxLength={CONTACT_LIMITS.purpose}
+              onChange={(e) => setField('purpose', e.target.value)}
+            />
+          </Field>
+        </div>
       </div>
       <p className="text-[0.6875rem] text-muted-foreground">
         {t('settings:activation.contactRequired')}
       </p>
+      {problem ? (
+        <p data-testid="activation-invalid" className="text-[0.6875rem] text-danger">
+          {t(`settings:activation.${problem.key}`)}
+        </p>
+      ) : null}
 
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <label htmlFor="activation-consent" className="flex items-start gap-2 text-[0.71875rem] leading-relaxed">

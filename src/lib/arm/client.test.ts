@@ -59,10 +59,19 @@ class FakeWebSocket {
 
 const { ArmClient } = await import('./client')
 
-/** 激活请求体 —— 字段就是同意书里逐项列出的那些，这里逐字比对。 */
+/** 激活请求体 —— 字段就是同意书里逐项列出的那些（与激活网站的表单同集），这里逐字比对。 */
 const ACTIVATION_REQUEST = {
   uid: '101112131415161718191a1b',
-  contact: { name: '张三', organization: '某大学', email: 'z@example.com', phone: '13800000000' },
+  contact: {
+    name: '张三',
+    phone: '13800000000',
+    organization: '某大学',
+    wechatId: 'zhangsan_wx',
+    email: 'z@example.com',
+    region: '上海',
+    industry: '教育',
+    purpose: '科研教学',
+  },
   consent: { granted: true },
   diagnostics: { studio: '0.1.0', sdk: '2.1.0', firmware: 'Litearm1.8.0-7J' },
 }

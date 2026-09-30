@@ -71,12 +71,13 @@ function setClipboard(writeText: unknown) {
   Object.defineProperty(navigator, 'clipboard', { value: writeText, configurable: true })
 }
 
-/** 填满必填项并勾选同意 —— 让提交按钮变得可用。⚠ 电话也是必填。 */
+/** 填满**必填项**（与激活网站的表单同集：姓名、手机号、单位、邮箱、所在地区）。 */
 function fillContact() {
   fireEvent.change(screen.getByTestId('activation-name'), { target: { value: '张三' } })
+  fireEvent.change(screen.getByTestId('activation-phone'), { target: { value: '13800000000' } })
   fireEvent.change(screen.getByTestId('activation-organization'), { target: { value: '某大学' } })
   fireEvent.change(screen.getByTestId('activation-email'), { target: { value: 'z@example.com' } })
-  fireEvent.change(screen.getByTestId('activation-phone'), { target: { value: '13800000000' } })
+  fireEvent.change(screen.getByTestId('activation-region'), { target: { value: '上海' } })
 }
 
 function fillForm() {
@@ -166,24 +167,41 @@ describe('ActivationSection', () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalled())
   })
 
-  it('keeps submit disabled until consent is ticked and all four fields are filled', () => {
+  it('keeps submit disabled until consent is ticked and every required field is filled', () => {
     mocks.snapshot.current = LOCKED
     render(<ActivationSection />)
 
     expect(submitButton().disabled).toBe(true)
+    // 必填与否由按钮的可用状态拦，不靠 HTML 的 required（这里没有浏览器表单提交）。
+    expect((screen.getByTestId('activation-phone') as HTMLInputElement).required).toBe(false)
 
     fireEvent.change(screen.getByTestId('activation-name'), { target: { value: '张三' } })
+    fireEvent.change(screen.getByTestId('activation-phone'), { target: { value: '13800000000' } })
     fireEvent.change(screen.getByTestId('activation-organization'), { target: { value: '某大学' } })
     fireEvent.change(screen.getByTestId('activation-email'), { target: { value: 'z@example.com' } })
-    // ⚠ 电话是必填：少它一个就不能提交。
-    expect((screen.getByTestId('activation-phone') as HTMLInputElement).required).toBe(false)
+    // ⚠ 所在地区是必填（网站上它就是必填）：少它一个就不能提交。
     expect(submitButton().disabled).toBe(true)
 
-    fireEvent.change(screen.getByTestId('activation-phone'), { target: { value: '13800000000' } })
+    fireEvent.change(screen.getByTestId('activation-region'), { target: { value: '上海' } })
     // 必填都填了，但**没同意** -> 仍然不能提交（同意是硬门禁，界面只是提前拦住）。
     expect(submitButton().disabled).toBe(true)
 
     fireEvent.click(screen.getByTestId('activation-consent'))
+    expect(submitButton().disabled).toBe(false)
+  })
+
+  it('refuses a value the website form would reject, and says which field it is', () => {
+    mocks.snapshot.current = LOCKED
+    render(<ActivationSection />)
+    fillForm()
+
+    fireEvent.change(screen.getByTestId('activation-phone'), { target: { value: '1380000' } })
+    expect(submitButton().disabled).toBe(true)
+    expect(screen.getByTestId('activation-invalid').textContent).toMatch(/11 位|11-digit/)
+
+    // 改对之后又能提交 —— 拦的是值，不是这个人。
+    fireEvent.change(screen.getByTestId('activation-phone'), { target: { value: '13800000000' } })
+    expect(screen.queryByTestId('activation-invalid')).toBeNull()
     expect(submitButton().disabled).toBe(false)
   })
 
@@ -198,11 +216,16 @@ describe('ActivationSection', () => {
     fireEvent.click(submitButton())
     expect(mocks.submit).toHaveBeenCalledWith({
       uid: UID,
+      // 八个字段与激活网站的表单同集；选填的没填就是空串。
       contact: {
         name: '张三',
-        organization: '某大学',
-        email: 'z@example.com',
         phone: '13800000000',
+        organization: '某大学',
+        wechatId: '',
+        email: 'z@example.com',
+        region: '上海',
+        industry: '',
+        purpose: '',
       },
       consent: { granted: true },
       // 版本信息与联系人字段在**同一份**同意书里，所以一起发。
@@ -220,9 +243,11 @@ describe('ActivationSection', () => {
 
     const dialog = screen.getByTestId('activation-consent-dialog')
     const items = within(dialog).getAllByRole('listitem')
-    // 逐项列出：联系人、设备 UID、版本。
-    expect(items).toHaveLength(3)
+    // 逐项列出：联系人与微信号、地区/行业/用途、设备 UID、版本。
+    expect(items).toHaveLength(4)
     expect(dialog.textContent).toMatch(/姓名|Name/)
+    expect(dialog.textContent).toMatch(/微信号|WeChat ID/)
+    expect(dialog.textContent).toMatch(/用途说明|purpose/i)
     expect(dialog.textContent).toMatch(/设备 UID|Device UID/)
     expect(dialog.textContent).toMatch(/版本|versions/)
     // ⚠ IP 由服务端自己记，不属于"上位机发出去的字段"：列在这里会被读成"我们在采集"。
