@@ -103,6 +103,7 @@
     "jointLimitsFallback": "未能从控制器读取关节软限位，滑条已退回内置默认量程",
     "unknownError": "操作失败：{{message}}",
     "gripperNotConnected": "夹爪未连接：请先在夹爪页连接",
+    "gripperNotEnabled": "夹爪未使能 —— 请先在夹爪面板按「使能」，再操作",
     "gripperLinkError": "夹爪的 CAN 接口不可用：{{message}}",
     "gripperFaultActive": "夹爪驱动报故障：{{message}}，请排除原因后清除故障",
     "gripperCalibration": "夹爪标定不允许这个动作：{{message}}",
