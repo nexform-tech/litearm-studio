@@ -124,6 +124,9 @@
     "gripperFaultActive": "The gripper drive reports a fault: {{message}} — clear it once the cause is gone",
     "gripperCalibration": "The gripper's calibration does not allow this: {{message}}",
     "gripperEstopped": "The gripper's stop is latched: remove the cause, then reset it",
-    "gripperBusy": "The gripper is running another long operation (calibration); wait for it"
+    "gripperBusy": "The gripper is running another long operation (calibration); wait for it",
+    "activationServerError": "The activation service returned an error: try again later, or contact your supplier if it keeps failing",
+    "activationCodeRequired": "The activation service requires an order number or activation code: upgrade Studio, or contact your supplier",
+    "activationInvalidUid": "The device UID is not a valid 24-character hex string: reconnect the arm and try again"
   }
 }

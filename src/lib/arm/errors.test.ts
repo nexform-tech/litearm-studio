@@ -144,6 +144,24 @@ describe('formatArmError (activation reasons)', () => {
     await i18n.changeLanguage('zh')
   })
 
+  it('covers the server-side fallback codes instead of a bare "activation failed"', async () => {
+    await i18n.changeLanguage('zh')
+    const err = (reason: string) =>
+      daemonErr('ActivationError', '激活服务返回 HTTP 400', { reason, method: 'activate' })
+    // `server` 是 daemon 对"服务端回了没登记的 error code"的兜底 —— 最容易撞上的是
+    // 服务端表单判据与本地漂了时回的 `invalid_request`。
+    expect(formatArmError(err('server'))).toContain('激活服务出错')
+    expect(formatArmError(err('code_required'))).toContain('订单号')
+    expect(formatArmError(err('invalid_uid'))).toContain('UID')
+    expect(formatArmError(err('bad_uid'))).toContain('UID')
+
+    await i18n.changeLanguage('en')
+    expect(formatArmError(err('server'))).toContain('activation service')
+    // 中文那句不许被拼进英文句子。
+    expect(formatArmError(err('invalid_uid'))).not.toContain('设备')
+    await i18n.changeLanguage('zh')
+  })
+
   it('falls back to the generic activation text for an unknown reason', async () => {
     await i18n.changeLanguage('zh')
     const text = formatArmError(daemonErr('ActivationError', '出错了', { reason: 'brand_new' }))

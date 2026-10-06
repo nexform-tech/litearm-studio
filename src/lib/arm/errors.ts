@@ -50,6 +50,13 @@ const REASON_KEYS: Record<string, string> = {
   rate_limited: 'activationRateLimited',
   maintenance: 'activationMaintenance',
   bad_response: 'activationBadResponse',
+  // ⚠ `server` 是**兜底码**：服务端回了我们没登记的 error code 时，daemon 一律折成它
+  //   （见 `activation._service_error` 的 `known` 集合）。最容易撞上的是服务端的
+  //   `invalid_request`（它那边表单判据与本地漂了）—— 不单列的话用户只会看到
+  //   "激活失败"，看不出该改哪个框。`code_required` 是服务端预留、今天不发的码。
+  server: 'activationServerError',
+  code_required: 'activationCodeRequired',
+  invalid_uid: 'activationInvalidUid',
   // 这次提交本身不成立。注册信息逐项分开，是为了让操作员知道该改哪个框，
   // 而不是收到一句笼统的"格式不对"。判据与激活网站的表单同表（`activation._CONTACT_RULES`）。
   consent_required: 'activationConsentRequired',
@@ -58,6 +65,8 @@ const REASON_KEYS: Record<string, string> = {
   bad_phone: 'activationBadPhone',
   bad_email: 'activationBadEmail',
   contact_too_long: 'activationContactTooLong',
+  // 本机读到的 UID 不该非法（界面直接填设备回读的 UID）；这条给直连 WS 的客户端兜底。
+  bad_uid: 'activationInvalidUid',
   uid_mismatch: 'licenseUidMismatch',
   // 凭据文件读不出来。缺字段 / 字段不对 / 不是 JSON 归成同一句：用户能做的动作是同一个
   // —— 换一份文件。只有"格式版本认不出"要单独说（那是要升级上位机，不是换文件）。
@@ -111,6 +120,9 @@ const FALLBACK_ZH: Record<string, string> = {
     '激活服务上没有这台机器的凭据：请把设备 UID 提供给供应商，拿到凭据后再试',
   activationRateLimited: '激活服务暂时拒绝了本次请求（请求过于频繁）：请过一会儿再试',
   activationMaintenance: '激活服务正在维护：请稍后重试',
+  activationServerError: '激活服务出错了：请稍后重试；一直失败请联系供应商',
+  activationCodeRequired: '激活服务要求提供订单号 / 激活码：请升级上位机，或联系供应商',
+  activationInvalidUid: '设备 UID 不是合法的 24 位十六进制：请重新连接机械臂后重试',
   activationConsentRequired: '请先勾选同意发送注册信息',
   activationMissingContact: '注册信息没填完：带 * 的字段都要填',
   activationBadName: '姓名不符合要求：只能是文字，2–32 个字，不能含数字',

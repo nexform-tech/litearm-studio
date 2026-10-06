@@ -124,6 +124,9 @@
     "gripperFaultActive": "夹爪驱动报故障：{{message}}，请排除原因后清除故障",
     "gripperCalibration": "夹爪标定不允许这个动作：{{message}}",
     "gripperEstopped": "夹爪急停已锁存：请排除原因后按「复位急停」",
-    "gripperBusy": "夹爪正在执行另一项长操作（标定），请等它结束"
+    "gripperBusy": "夹爪正在执行另一项长操作（标定），请等它结束",
+    "activationServerError": "激活服务出错了：请稍后重试；一直失败请联系供应商",
+    "activationCodeRequired": "激活服务要求提供订单号 / 激活码：请升级上位机，或联系供应商",
+    "activationInvalidUid": "设备 UID 不是合法的 24 位十六进制：请重新连接机械臂后重试"
   }
 }
