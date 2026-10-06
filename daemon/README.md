@@ -163,6 +163,11 @@ python packaging/build.py      # 产物：packaging/dist/litearm-studio-daemon[.
 - **版本单一来源**：`LITEARM_STUDIO_VERSION`（CI 传 git tag）> `git describe --tags` >
   `0.0.0+dev`，写进构建时生成的 `_build_version.py`（不入库）。于是 `hello` 帧报的版本
   就是发出去的那个 tag，而不是 `pyproject.toml` 里的占位符。
+- **激活服务地址可注入**：`LITEARM_ACTIVATION_URL`（可选，必须是 http(s)）写进同样
+  构建时生成的 `_build_activation_url.py`（不入库）。不设置 = 用内置生产地址。
+  release 工作流从**仓库变量**取它（`vars.LITEARM_ACTIVATION_URL`），所以换地址不必
+  改工作流、更不必让用户设环境变量。两个生成文件都在构建的 `finally` 里删除 ——
+  留在源码树里会让下一次"源码直接运行"读到上一次打包的值。
 
 发布时由 `.github/workflows/release.yml` 的 `package` job 在 Ubuntu 22.04 与
 windows runner 上各出一个可执行程序，并附各自的 `.sha256` 校验和一起挂到 release。
@@ -185,8 +190,11 @@ pytest daemon/tests -q
 | `license` | 否 | 读授权记录。未激活是**状态**不是错误 |
 | `activate` | **是** | 把注册信息（姓名/手机号/单位/邮箱/地区 + 微信号/行业/用途 + 同意标记）连同设备 UID POST 给激活服务，拿回本机凭据并写进设备 |
 
-- 地址：`--activation-url` 或环境变量 `LITEARM_ACTIVATION_URL`，默认
-  `https://act.nexform.tech`；传空字符串 = 不提供在线激活。
+- 地址：`--activation-url` > 环境变量 `LITEARM_ACTIVATION_URL` > **打包时注入的地址**
+  > 内置 `https://act.nexform.tech`；传空字符串 = 不提供在线激活。
+  打包期注入见下面「打包」一节的 `LITEARM_ACTIVATION_URL`：它让同一份源码能出指向
+  不同环境的包，而**终端用户不必设环境变量**——"连不上激活服务"是这条链路上最没法
+  自助排查的一种失败（界面只说连不上，说不出该连哪）。
 - **本进程只有这一处出网**（`activation.py`）。它**不上报**任何东西：发出去的字段由
   《激活注册信息同意书》在界面上逐项列出，同意由用户在界面上勾选 —— 而**门禁判在这里**，
   因为界面的禁用按钮挡不住直连 WebSocket 的客户端。

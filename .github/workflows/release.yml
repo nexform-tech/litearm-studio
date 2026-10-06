@@ -110,6 +110,10 @@ jobs:
         working-directory: litearm-studio
         env:
           LITEARM_STUDIO_VERSION: ${{ needs.release.outputs.new_tag }}
+          # 激活服务地址：在仓库变量里改（Settings → Secrets and variables →
+          # Actions → Variables），不必改工作流，也不必让用户设环境变量。
+          # 不设置 = 用 daemon 里的内置生产地址（见 activation.PRODUCTION_ACTIVATION_URL）。
+          LITEARM_ACTIVATION_URL: ${{ vars.LITEARM_ACTIVATION_URL }}
         run: python packaging/build.py
 
       - name: Name the artifact (unix)
