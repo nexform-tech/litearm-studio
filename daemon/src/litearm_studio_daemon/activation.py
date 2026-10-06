@@ -25,7 +25,37 @@ from .errors import DaemonError
 
 #: 生产地址。域名还没上线时, 任何一次提交都会如实报"连不上"——**不要**把它改成
 #: "先假装成功", 那会让现场拿着一个没生效的授权去开机器。
-DEFAULT_ACTIVATION_URL = "https://act.nexform.tech"
+PRODUCTION_ACTIVATION_URL = "https://act.nexform.tech"
+
+
+def _baked_activation_url() -> str:
+    """打包时注入的地址 —— `packaging/build.py` 写进 `_build_activation_url.py`。
+
+    源码运行时没有这个模块, 返回空串。与 `__init__._resolve_version` 同一套做法
+    (构建产物不入库, 见 `.gitignore`)。
+    """
+    try:
+        from ._build_activation_url import __activation_url__ as baked  # type: ignore[import-not-found]
+    except ImportError:
+        return ""
+    return str(baked).strip()
+
+
+def default_activation_url() -> str:
+    """没有 `--activation-url` / `LITEARM_ACTIVATION_URL` 时用的地址。
+
+    优先级: **打包期注入 > 内置生产地址**。
+
+    ⚠ 打包期注入的意义不是"换域名方便"——而是**同一份源码能出指向不同环境的包**
+    (staging / 正式)。终端用户改不了它, 而"连不上激活服务"是这条链路上最没法自助
+    排查的一种失败: 界面上只会说连不上, 说不出该连哪。
+    """
+    return _baked_activation_url() or PRODUCTION_ACTIVATION_URL
+
+
+#: 解析后的默认地址。**保留这个名字**: `session.Session` 的构造默认值直接引用它,
+#: 改名会静默改掉那处的语义。
+DEFAULT_ACTIVATION_URL = default_activation_url()
 
 #: 服务路径 —— 契约里的一部分, 站点那边要实现的就是它。
 ACTIVATION_PATH = "/api/v1/license"

@@ -5,10 +5,13 @@
 from __future__ import annotations
 
 import json
+import sys
+import types
 import urllib.error
 
 import pytest
 
+from litearm_studio_daemon import activation
 from litearm_studio_daemon.activation import (
     ACTIVATION_PATH,
     CONSENT_TEXT_VERSION,
@@ -257,3 +260,34 @@ def test_request_license_reports_an_unreachable_service() -> None:
     with pytest.raises(ActivationError) as ei:
         request_license("https://act.nexform.tech", payload(), post=post)
     assert ei.value.reason == "unreachable"
+
+
+# ------------------------------------------------------------------ 默认激活服务地址
+#: 打包期注入的模块名。`packaging/build.py` 构建时生成它（不入库，见 .gitignore）。
+BAKED_MODULE = "litearm_studio_daemon._build_activation_url"
+
+
+def _fake_baked(monkeypatch: pytest.MonkeyPatch, url: object) -> None:
+    module = types.ModuleType(BAKED_MODULE)
+    module.__activation_url__ = url
+    monkeypatch.setitem(sys.modules, BAKED_MODULE, module)
+
+
+def test_default_url_is_the_builtin_production_address(monkeypatch: pytest.MonkeyPatch) -> None:
+    """源码直接跑：没有注入模块，用的就是内置生产地址。"""
+    monkeypatch.delitem(sys.modules, BAKED_MODULE, raising=False)
+    assert activation.default_activation_url() == activation.PRODUCTION_ACTIVATION_URL
+    # `session.Session` 的构造默认值直接引用这个常量，别让它漂。
+    assert activation.DEFAULT_ACTIVATION_URL == activation.PRODUCTION_ACTIVATION_URL
+
+
+def test_baked_url_wins_over_the_builtin_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """打包时注入的地址优先 —— 否则"同一份源码出 staging 包"这件事不成立。"""
+    _fake_baked(monkeypatch, "https://staging.example")
+    assert activation.default_activation_url() == "https://staging.example"
+
+
+def test_a_blank_baked_url_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    """注入空串等于没注入 —— 不许把空地址当成"配好了"。"""
+    _fake_baked(monkeypatch, "   ")
+    assert activation.default_activation_url() == activation.PRODUCTION_ACTIVATION_URL
