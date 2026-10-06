@@ -219,6 +219,14 @@ Any other status must carry:
 `invalid_uid`, `consent_required`, `rate_limited`, `maintenance`, `code_required`.
 Anything else is reported as a plain server error.
 
+A **2xx reply whose body is not a usable credential is not a server error**. Two of
+those cases name the operator's next action and are reported as themselves:
+`unsupported_format` when the file's format is newer than this build (upgrade
+Studio) and `uid_mismatch` when the service returned a credential for another board
+(check the UID with the supplier). Everything else about a bad body is reported as
+`bad_response`. Do not fold the first two into `bad_response`: "retry later" is a
+promise this path cannot keep.
+
 ### Rules
 
 - The service **stores** credentials; it does not sign them. The signing key stays
@@ -243,6 +251,12 @@ Anything else is reported as a plain server error.
 - **Never disable the arm to satisfy the "must be disarmed" gate** (`0x3F/0x04`).
   Dropping motor power is the operator's decision, not a side effect of a licence
   submission.
+- **Activation must not freeze the arm.** The request runs outside the daemon's single
+  command thread, so movement commands keep working while the credential is being
+  fetched; only the two SDK phases (read the UID, write and read back) occupy that
+  thread. A consequence worth knowing: the arm can be enabled during the fetch, and
+  the firmware then refuses the write with `0x3F/0x04`. That is the gate working, not
+  a bug - the operator is told to disarm and retry.
 - **The transport admits only same-origin pages.** A browser does not apply the
   same-origin policy to WebSocket, so without this gate any page the operator visits
   could open `ws://127.0.0.1:<port>/ws` and drive the arm - including `activate` with

@@ -867,6 +867,9 @@ class Session:
                 self._motion_count += 1
 
         try:
+            if m == "activate":
+                # ⚠ 激活**不占**命令执行器等网络, 见 `_activate` 的两段式说明。
+                return self._activate(arm, params)
             # ⚠ 降能量方向的动作走**另一条**执行器: 与在途运动并行, 不排队等它结束
             # (见 `ENERGY_DOWN_COMMANDS`)。这是「急停永远可达」的落点 —— 只在准入处
             # 豁免运动互斥是不够的, 那样它仍会排在阻塞十几秒的 movej 后面。
@@ -976,21 +979,8 @@ class Session:
                 return statemap.jsonable(arm.diag.kin_bench().value)
             if m == "license":
                 return _license_dict(arm)
-            if m == "activate":
-                # ⚠ 唯一出网的一条命令 (见 activation.py 的模块说明)。
-                request = activation.build_request(p)
-                device_uid = _device_uid(arm)
-                if device_uid is None:
-                    # ⚠ **不许**退回客户端填的 UID: 那会把注册信息 (个人信息) 发到一个
-                    #   没人核实过的 UID 上, 而写入注定失败 (docs/ACTIVATION.md §3:
-                    #   UID 必须来自设备的授权记录)。读不到就在这里停下, 不出网。
-                    raise activation.ActivationError(*_uid_unavailable(arm))
-                if device_uid != request["uid"]:
-                    raise activation.ActivationError(
-                        "uid_mismatch",
-                        f"提交的 UID ({request['uid']}) 不是当前这台机器 ({device_uid})")
-                return _submit_license(arm, activation.request_license(
-                    self._activation_url, request, expected_uid=device_uid))
+            # ⚠ `activate` **不在这里**: 它要拆成"SDK → 网络 → SDK"三段, 由
+            #   `Session._activate` 处理 (见那里的说明)。白名单里仍然有它。
             # 白名单与实现**各写一遍**是刻意的: 只在准入处查表的话, 表里加一条而忘了
             # 实现会静默返回 None (前端看到"成功"却什么都没发生)。
             raise UnknownCommandError(m, sorted(COMMANDS))
@@ -1002,6 +992,52 @@ class Session:
                 # ⚠ 返回之后**再**续一段: `0x25`/`0x36` 的 ACK 只表示受理, 真正的擦写
                 # 通常发生在这一句之后 (见 `FLASH_STALL_GRACE_S`)。
                 self._note_flash_stall()
+
+    def _sdk_call(self, arm: Arm, fn: Callable[[], Any], method: str) -> Any:
+        """在命令执行器上跑一段 SDK 访问 —— 与其它 SDK 调用严格串行。
+
+        ⚠ 传输层失败要当场把链路判死: 与 `execute` 的通用分支同一条纪律 (issue #48)。
+        """
+        try:
+            return self._executor.submit(fn).result()
+        except litearm.TransportError as e:
+            self._note_link_lost(arm, f"命令 {method} 失败: {type(e).__name__}: {e}")
+            raise
+
+    def _activate(self, arm: Arm, p: dict) -> dict:
+        """在线激活 —— **两段式**: SDK 访问走命令执行器, 网络那一段**不占它**。
+
+        ⚠ 为什么要拆: `_executor` 是单线程的, 而一次激活最坏要等十几秒 (读授权记录在旧
+        固件上必等满 1s 超时 + HTTP 超时 10s + 写入 2s + 回读 1s)。占着执行器, 操作员在
+        这十几秒里连 `movej` 都发不出去 —— 急停/失能仍然可达 (见 `ENERGY_DOWN_COMMANDS`),
+        但"能急停"不等于"能动一下"。
+
+        ⚠ 拆开的代价: 等网络这段时间别的命令可以插进来 (最要紧的是 `enable`), 于是写入
+        可能拿到 `ERR{0x3F,0x04}`。那是固件的门禁在说话 —— 如实报给操作员即可, 见
+        `docs/ACTIVATION.md` §7。
+
+        返回写入后的**回读记录**: 回读才是"落位"的证据 (ACK 只说明固件答应了)。
+        """
+        try:
+            # ⚠ 唯一出网的一条命令 (见 activation.py 的模块说明)。
+            request = activation.build_request(p)
+            device_uid = self._sdk_call(arm, lambda: _device_uid(arm), "activate")
+            if device_uid is None:
+                # ⚠ **不许**退回客户端填的 UID: 那会把注册信息 (个人信息) 发到一个没人
+                #   核实过的 UID 上, 而写入注定失败 (docs/ACTIVATION.md §3: UID 必须来自
+                #   设备的授权记录)。读不到就在这里停下, 不出一字节。
+                raise activation.ActivationError(*_uid_unavailable(arm))
+            if device_uid != request["uid"]:
+                raise activation.ActivationError(
+                    "uid_mismatch",
+                    f"提交的 UID ({request['uid']}) 不是当前这台机器 ({device_uid})")
+            # ↓ 这一段在**调用方线程**上跑: 它不碰串口, 不该占着 SDK 那条线程。
+            lic = activation.request_license(
+                self._activation_url, request, expected_uid=device_uid)
+            return self._sdk_call(arm, lambda: _submit_license(arm, lic), "activate")
+        except Exception as e:  # noqa: BLE001 - 命令失败是预期结果, 由 server 转成 err
+            log.info("命令 activate 失败: %s: %s", type(e).__name__, e)
+            raise
 
     def _note_zero_g(self, active: bool, on_event: Optional[Callable[[dict], None]]) -> None:
         """落零重力会话记录, 并让状态立刻反映它 (不必等下一帧状态)。

@@ -1094,6 +1094,49 @@ def test_activate_names_a_firmware_without_license_support(
     assert called == []
 
 
+def test_activate_does_not_hold_the_command_executor_while_waiting_on_the_network(
+        fake_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    """等激活服务的那十几秒里, 别的命令必须还能跑。
+
+    ⚠ 执行器是**单线程**的: 把网络等待也放上去, 操作员在这段时间里连 `movej` 都发不
+    出去 —— 急停/失能仍可达, 但"能急停"不等于"能动一下"。判据是"另起一条命令能不能
+    在 activate 还没返回时就跑完"。
+    """
+    tr = _unlicensed(fake_session)
+    entered = threading.Event()
+    release = threading.Event()
+
+    def slow_post(base_url, request, *, expected_uid=None, **_kw):
+        entered.set()
+        release.wait(10)
+        return activation.parse_license(LICENSE_DOC)
+
+    monkeypatch.setattr(activation, "request_license", slow_post)
+
+    done: dict = {}
+    worker = threading.Thread(
+        target=lambda: done.update(rec=fake_session.execute("activate", _payload())),
+        daemon=True)
+    worker.start()
+    try:
+        assert entered.wait(5), "没走到网络那一步"
+
+        other: dict = {}
+        probe = threading.Thread(
+            target=lambda: other.update(v=fake_session.execute("license", {})),
+            daemon=True)
+        probe.start()
+        probe.join(3.0)
+        assert not probe.is_alive(), "license 被 activate 堵住了 —— 执行器仍被网络等待占着"
+        assert other["v"]["supported"] is True
+    finally:
+        release.set()
+        worker.join(10)
+
+    assert done["rec"]["activated"] is True
+    assert tr.license_cust_id == 1042
+
+
 def test_activate_says_so_when_the_service_is_not_configured() -> None:
     """未配置地址时当场说清, 而不是转圈等超时。"""
     s = Session(fake=True, activation_url="", poll_period=0.05, state_push_interval=0.05)

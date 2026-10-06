@@ -79,6 +79,10 @@ _U32_MAX = 0xFFFFFFFF
 #: `--uid` 完全一致)。
 _UID_RE = re.compile(r"[0-9a-f]{24}")
 
+#: `LicenseFileError.reason` 里哪些要**原样**透给用户 —— 见 `request_license` 的说明。
+#: 判据是"这个短码能不能指出下一步动作": 能指出的透出, 指不出的归成 `bad_response`。
+_TRANSPARENT_LICENSE_REASONS = frozenset({"unsupported_format", "uid_mismatch"})
+
 
 class LicenseFileError(DaemonError):
     """凭据文件本身不合法 (不是 JSON / 缺字段 / 字段不对 / 不是这台机器的)。
@@ -373,4 +377,12 @@ def request_license(base_url: str, request: dict, *, timeout: float = REQUEST_TI
     try:
         return parse_license(doc, expected_uid=expected_uid)
     except LicenseFileError as e:
-        raise ActivationError("bad_response", f"激活服务返回的凭据不可用: {e}") from None
+        # ⚠ 两个短码要**原样透出**, 不能一律折成 `bad_response`:
+        #   * `unsupported_format` —— 服务端给的是比本上位机新的格式, 用户该做的是**升级
+        #     上位机**; 折成 bad_response 就变成"稍后重试", 那是一次永远不会成功的重试;
+        #   * `uid_mismatch` —— 服务端发错了机器, 用户该做的是**找供应商核对**; 同上。
+        #   其余 (不是 JSON / 缺字段 / 字段不对) 确实是"服务端的应答不可用": 前端那两个
+        #   键的文案是"换一份 lic.json", 那是**本地导入**那条路的说法 —— 在线领凭据时
+        #   用户手上没有文件可换, 所以不把它们的 reason 透出去。
+        reason = e.reason if e.reason in _TRANSPARENT_LICENSE_REASONS else "bad_response"
+        raise ActivationError(reason, f"激活服务返回的凭据不可用: {e}") from None
