@@ -44,6 +44,9 @@ UI_DIST = ROOT / "dist"
 OUT_DIST = ROOT / "packaging" / "dist"
 WORK = ROOT / "packaging" / "build"
 VERSION_FILE = DAEMON_SRC / "litearm_studio_daemon" / "_build_version.py"
+#: 打包期注入的激活服务地址（可选）。与版本号同一个套路：构建时生成、不入库、
+#: 用完删掉。见 `activation.default_activation_url()`。
+ACTIVATION_URL_FILE = DAEMON_SRC / "litearm_studio_daemon" / "_build_activation_url.py"
 EXE_NAME = "litearm-studio-daemon"
 # Windows 可执行文件的图标。不传 `--icon` 时 PyInstaller 会用它自带的默认图标 ——
 # 发出去的程序在资源管理器/任务栏里就是那个通用图标，而不是我们的标识。
@@ -63,6 +66,35 @@ def resolve_version() -> str:
         return described or "0.0.0+dev"
     except Exception:  # noqa: BLE001 - 没有 git 也能构建（只是版本不精确）
         return "0.0.0+dev"
+
+
+def resolve_activation_url() -> str:
+    """打包期注入的激活服务地址；没给就返回空串（用 daemon 里的内置生产地址）。
+
+    ⚠ 与版本号不同，这个**不是必填**：正式包用内置默认即可。它存在是为了能用同一份
+    源码出指向别的环境的包（staging / 本地联调），而**不**要求终端用户设环境变量。
+    """
+    url = os.environ.get("LITEARM_ACTIVATION_URL", "").strip()
+    if not url:
+        return ""
+    # 形态闸门放在这里：写进包的地址要是坏串，打包照样成功，用户端只会看到"连不上
+    # 激活服务" —— 而那正是这个功能要消灭的那种失败。
+    if not url.startswith(("http://", "https://")):
+        raise SystemExit(f"LITEARM_ACTIVATION_URL 必须是 http(s) 地址，实得 {url!r}")
+    return url
+
+
+def activation_build_args(url: str) -> list[str]:
+    """注入地址时，显式让 PyInstaller 收下那个模块。
+
+    ⚠ `activation.py` 那句 import 在**函数体内**（惰性，好让源码直接运行时不必有这个
+    文件）。PyInstaller 的静态分析通常能找到函数内 import，但那取决于它有没有把该模块
+    扫进依赖图。显式 hidden-import 是"地址不许静默丢掉"的兜底 —— 丢掉的话打包照样
+    成功，而发出去的包仍然连内置的生产地址。
+    """
+    if not url:
+        return []
+    return ["--hidden-import", "litearm_studio_daemon._build_activation_url"]
 
 
 #: 夹爪 SDK 的平台判据。与 daemon 侧的 `__main__.build_gripper_session` 同一条口径：
@@ -115,50 +147,69 @@ def main() -> int:
             f"`node scripts/render-icon-png.mjs && node scripts/make-icon.mjs` 重新生成")
 
     version = resolve_version().lstrip("v")
+    # ⚠ 先判参数形态, 再写任何构建产物: 坏参数要在**落地文件之前**就失败, 否则源码树里
+    #   会留下一个只属于这次失败构建的 `_build_*` 文件 (下一条注释解释了它为什么要命)。
+    activation_url = resolve_activation_url()
+    print(f"[package] version = {version}")
+
     VERSION_FILE.write_text(
         '"""构建时生成 —— 不要提交（见 .gitignore）。"""\n'
         f'__version__ = "{version}"\n',
         encoding="utf-8")
-    print(f"[package] version = {version}")
+
+    if activation_url:
+        ACTIVATION_URL_FILE.write_text(
+            '"""构建时生成 —— 不要提交（见 .gitignore）。"""\n'
+            f'__activation_url__ = "{activation_url}"\n',
+            encoding="utf-8")
+        print(f"[package] activation url = {activation_url}")
+    else:
+        print("[package] activation url = 内置生产地址 (未注入)")
 
     shutil.rmtree(WORK, ignore_errors=True)
     OUT_DIST.mkdir(parents=True, exist_ok=True)
 
-    args = [
-        sys.executable, "-m", "PyInstaller",
-        "--noconfirm", "--clean", "--onefile",
-        "--name", EXE_NAME,
-        # 可执行文件图标（Windows）；Linux 上被接受但忽略
-        "--icon", str(ICON),
-        "--paths", str(DAEMON_SRC),
-        # 界面: _MEIPASS/dist （与 resolve_ui_dir 的冻结分支一致）
-        "--add-data", f"{UI_DIST}{os.pathsep}dist",
-        # SDK 不在 PyPI 上, 连数据文件一起收进来
-        "--collect-all", "litearm",
-        "--collect-all", "serial",
-        *gripper_build_args(),
-        # uvicorn 的 loop/protocol 实现是动态导入的, PyInstaller 静态分析看不见
-        "--collect-submodules", "uvicorn",
-        "--collect-submodules", "websockets",
-        "--hidden-import", "uvicorn.logging",
-        "--hidden-import", "uvicorn.loops.auto",
-        "--hidden-import", "uvicorn.protocols.http.auto",
-        "--hidden-import", "uvicorn.protocols.websockets.auto",
-        "--hidden-import", "uvicorn.lifespan.on",
-        "--distpath", str(OUT_DIST),
-        "--workpath", str(WORK),
-        "--specpath", str(WORK),
-        str(ROOT / "packaging" / "launcher.py"),
-    ]
-    print("[package] " + " ".join(args))
-    subprocess.run(args, check=True, cwd=ROOT)
+    # ⚠ 两个构建产物**必须**在 finally 里删。留在源码树里的后果不是"多一个文件"：
+    #   下次源码直接运行会读到上一次打包注入的版本号 / 激活地址，于是"没打包却按打包
+    #   的行为跑"—— 而这两处正是最不该被上一次构建污染的地方。
+    try:
+        args = [
+            sys.executable, "-m", "PyInstaller",
+            "--noconfirm", "--clean", "--onefile",
+            "--name", EXE_NAME,
+            # 可执行文件图标（Windows）；Linux 上被接受但忽略
+            "--icon", str(ICON),
+            "--paths", str(DAEMON_SRC),
+            # 界面: _MEIPASS/dist （与 resolve_ui_dir 的冻结分支一致）
+            "--add-data", f"{UI_DIST}{os.pathsep}dist",
+            # SDK 不在 PyPI 上, 连数据文件一起收进来
+            "--collect-all", "litearm",
+            "--collect-all", "serial",
+            *gripper_build_args(),
+            *activation_build_args(activation_url),
+            # uvicorn 的 loop/protocol 实现是动态导入的, PyInstaller 静态分析看不见
+            "--collect-submodules", "uvicorn",
+            "--collect-submodules", "websockets",
+            "--hidden-import", "uvicorn.logging",
+            "--hidden-import", "uvicorn.loops.auto",
+            "--hidden-import", "uvicorn.protocols.http.auto",
+            "--hidden-import", "uvicorn.protocols.websockets.auto",
+            "--hidden-import", "uvicorn.lifespan.on",
+            "--distpath", str(OUT_DIST),
+            "--workpath", str(WORK),
+            "--specpath", str(WORK),
+            str(ROOT / "packaging" / "launcher.py"),
+        ]
+        print("[package] " + " ".join(args))
+        subprocess.run(args, check=True, cwd=ROOT)
 
-    produced = OUT_DIST / (EXE_NAME + (".exe" if os.name == "nt" else ""))
-    if not produced.is_file():
-        raise SystemExit(f"打包结束但没找到产物: {produced}")
-    print(f"[package] 产物: {produced} ({produced.stat().st_size / 1e6:.1f} MB)")
-    # 构建产物没有意义留在源码树里: 版本文件删掉, 免得被误提交/误当作已打包。
-    VERSION_FILE.unlink(missing_ok=True)
+        produced = OUT_DIST / (EXE_NAME + (".exe" if os.name == "nt" else ""))
+        if not produced.is_file():
+            raise SystemExit(f"打包结束但没找到产物: {produced}")
+        print(f"[package] 产物: {produced} ({produced.stat().st_size / 1e6:.1f} MB)")
+    finally:
+        VERSION_FILE.unlink(missing_ok=True)
+        ACTIVATION_URL_FILE.unlink(missing_ok=True)
     return 0
 
 

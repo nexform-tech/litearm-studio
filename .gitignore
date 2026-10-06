@@ -70,3 +70,5 @@ packaging/dist/
 packaging/build/
 # 打包脚本构建时生成的版本文件 (版本来自 git tag, 不是源码)
 daemon/src/litearm_studio_daemon/_build_version.py
+# 打包脚本构建时注入的激活服务地址 (来自 LITEARM_ACTIVATION_URL, 可选)
+daemon/src/litearm_studio_daemon/_build_activation_url.py

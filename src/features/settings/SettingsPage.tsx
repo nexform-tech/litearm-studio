@@ -5,9 +5,10 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { NumberField } from '@/components/ui/number-field'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Download, RefreshCw, Save, Scale, ShieldCheck, Upload, Activity, Grip, Zap } from 'lucide-react'
+import { Download, RefreshCw, Save, Scale, ShieldCheck, Upload, Activity, Grip, KeyRound, Zap } from 'lucide-react'
 import { useSettingsState, type SettingsState } from './useSettingsState'
 import { GripperSection } from './GripperSection'
+import { ActivationSection } from './ActivationSection'
 
 function Section({
   title,
@@ -339,7 +340,7 @@ export function SettingsPage() {
         </div>
 
         <Tabs defaultValue="payload" className="w-full space-y-4">
-          <TabsList className="grid h-11 w-full grid-cols-2 rounded-xl bg-muted/60 p-1 md:grid-cols-5">
+          <TabsList className="grid h-11 w-full grid-cols-2 rounded-xl bg-muted/60 p-1 md:grid-cols-6">
             <TabsTrigger value="payload" className="gap-1.5 rounded-lg text-xs font-semibold">
               <Scale className="size-3.5" />
               {t('settings:tabs.payload')}
@@ -360,6 +361,10 @@ export function SettingsPage() {
               <Grip className="size-3.5" />
               {t('settings:tabs.gripper')}
             </TabsTrigger>
+            <TabsTrigger value="activation" className="gap-1.5 rounded-lg text-xs font-semibold">
+              <KeyRound className="size-3.5" />
+              {t('settings:tabs.activation')}
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="payload" className="focus-visible:outline-none">
@@ -376,6 +381,9 @@ export function SettingsPage() {
           </TabsContent>
           <TabsContent value="gripper" className="focus-visible:outline-none">
             <GripperSection />
+          </TabsContent>
+          <TabsContent value="activation" className="focus-visible:outline-none">
+            <ActivationSection />
           </TabsContent>
         </Tabs>
       </div>

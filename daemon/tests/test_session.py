@@ -12,6 +12,7 @@ import litearm
 import pytest
 from litearm import Arm
 
+from litearm_studio_daemon import activation
 from litearm_studio_daemon.errors import (
     MotionBusyError,
     NotConnectedCommandError,
@@ -921,3 +922,190 @@ def test_calibration_commands_validate_their_arguments(fake_session: Session,
                                                        params: dict) -> None:
     with pytest.raises(ValueError):
         fake_session.execute(method, params)
+
+
+# ------------------------------------------------- 授权/激活 (只读那一半)
+
+def test_license_reads_the_record_and_names_the_state(fake_session: Session) -> None:
+    """已激活: 记录照读, 并且把 `state` 翻译成**可读名** (界面直接显示, 不再自己映射)。"""
+    info = fake_session.execute("license", {})
+    assert info["supported"] is True
+    assert info["activated"] is True and info["state"] == 1
+    assert info["stateName"] == "activated"
+    assert info["factoryMode"] is False
+    # ⚠ UID 必须是**签发器要的那个形态**: 24 位小写 hex (厂商的 `--uid` 参数)。
+    assert len(info["uid"]) == 24 and info["uid"] == info["uid"].lower()
+    assert set(info["uid"]) <= set("0123456789abcdef")
+
+
+def test_license_reports_an_unactivated_arm_as_a_state_not_an_error(
+        fake_session: Session) -> None:
+    """未激活不是错误 —— 而且**UID 照回** (否则没法给这台机器签凭据)。"""
+    fake_session._arm._tr.activated = False
+    info = fake_session.execute("license", {})
+    assert info["supported"] is True
+    assert info["activated"] is False and info["state"] == 0
+    assert info["stateName"] == "not_activated"
+    assert len(info["uid"]) == 24
+    assert (info["custId"], info["issued"], info["flags"]) == (0, 0, 0)
+
+
+def test_license_maps_a_firmware_without_the_command_to_supported_false(
+        fake_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    """固件明确"没有这条命令" -> `supported=False` (界面据此说"固件太旧")。"""
+    def _unsupported(*_a, **_kw):
+        raise litearm.UnsupportedByFirmwareError("ERR [2F,00] —— 固件没有实现这条命令",
+                                                cmd=0x2F, code=0x00)
+
+    monkeypatch.setattr(fake_session._arm, "license", _unsupported)
+    assert fake_session.execute("license", {}) == {"supported": False}
+
+
+def test_license_maps_a_missing_reply_to_supported_none(
+        fake_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    """没读到 (超时) -> `supported=None`, **不许**冒出去变成"N 运动超时"。
+
+    ⚠ 旧固件今天走的正是这一条 (SDK 的探测帧读不到那条 `ERR{0x2F,0x00}`, 见
+    `_license_dict` 的说明)。它和"固件确报不支持"是两句话, 界面也得给两种说法。
+    """
+    def _timeout(*_a, **_kw):
+        raise litearm.MotionTimeoutError("get_license 无应答(超时 1.0s)")
+
+    monkeypatch.setattr(fake_session._arm, "license", _timeout)
+    assert fake_session.execute("license", {}) == {"supported": None}
+
+
+def test_license_lets_a_real_link_failure_propagate(
+        fake_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    """链路真断了要**照旧抛** —— 折成 `supported=None` 会把断线说成"读不到授权"。"""
+    def _dead(*_a, **_kw):
+        raise litearm.TransportError("读线程已退出")
+
+    monkeypatch.setattr(fake_session._arm, "license", _dead)
+    with pytest.raises(litearm.TransportError):
+        fake_session.execute("license", {})
+
+
+# ------------------------------------------------- 激活 (在线领凭据)
+
+LICENSE_DOC = {"format": 1, "uid": "101112131415161718191a1b", "cust_id": 1042,
+               "issued": 20260929, "flags": 0, "mac": "00112233445566778899aabbccddeeff"}
+
+
+def _payload(**over):
+    """一份填满的注册信息 —— 八个字段与激活网站的表单同集（见 `test_activation.py`）。"""
+    doc = {
+        "uid": LICENSE_DOC["uid"],
+        "contact": {"name": "张三", "phone": "13800000000", "organization": "某大学",
+                    "wechatId": "zhangsan_wx", "email": "z@example.com", "region": "上海",
+                    "industry": "教育", "purpose": "科研教学"},
+        "consent": {"granted": True},
+    }
+    doc.update(over)
+    return doc
+
+
+def _unlicensed(session: Session):
+    """把假设备变成"未激活" —— 激活这条路上的起点。"""
+    session._arm._tr.activated = False
+    return session._arm._tr
+
+
+def test_activate_posts_the_consented_request_then_writes_the_credential(
+        fake_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    tr = _unlicensed(fake_session)
+    seen: dict = {}
+
+    def fake_post(base_url, request, *, expected_uid=None, **_kw):
+        seen.update(url=base_url, request=request, uid=expected_uid)
+        return activation.parse_license(LICENSE_DOC)
+
+    monkeypatch.setattr(activation, "request_license", fake_post)
+    rec = fake_session.execute("activate", _payload())
+
+    assert seen["url"] == activation.DEFAULT_ACTIVATION_URL
+    assert seen["request"]["consent"]["granted"] is True
+    # 注册信息**整份**发出去：网站的表单有哪几项，这里就有哪几项。
+    assert seen["request"]["contact"] == _payload()["contact"]
+    # 期望 UID 取自**设备**, 不是客户端填的那个。
+    assert seen["uid"] == LICENSE_DOC["uid"]
+    assert rec["activated"] is True
+    assert tr.license_cust_id == 1042
+
+
+def test_activate_refuses_without_consent_before_any_request(
+        fake_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    """同意是硬门禁: 未勾选时**一个请求都不发**。"""
+    called: list = []
+    monkeypatch.setattr(activation, "request_license",
+                        lambda *a, **k: called.append(1))
+    p = _payload()
+    p.pop("consent")
+    with pytest.raises(activation.ActivationError) as ei:
+        fake_session.execute("activate", p)
+    assert ei.value.reason == "consent_required"
+    assert called == []
+
+
+def test_activate_refuses_a_uid_that_is_not_this_machine(
+        fake_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(activation, "request_license",
+                        lambda *a, **k: pytest.fail("不该发请求"))
+    with pytest.raises(activation.ActivationError) as ei:
+        fake_session.execute("activate", _payload(uid="ff" * 12))
+    assert ei.value.reason == "uid_mismatch"
+
+
+def test_activate_says_so_when_the_service_is_not_configured() -> None:
+    """未配置地址时当场说清, 而不是转圈等超时。"""
+    s = Session(fake=True, activation_url="", poll_period=0.05, state_push_interval=0.05)
+    try:
+        assert s.connect() is True
+        assert _wait(lambda: s.connected), f"假会话没连上: {s.arm_info()}"
+        _unlicensed(s)
+        with pytest.raises(activation.ActivationError) as ei:
+            s.execute("activate", _payload())
+        assert ei.value.reason == "unconfigured"
+    finally:
+        s.close()
+
+
+def test_fake_unactivated_transport_reports_an_unlicensed_bench_device() -> None:
+    """`--fake-unactivated` 的落点: 假设备是**未激活**的那台。
+
+    没有硬件时这是唯一能看到授权面板与注册表单的办法 (桩默认是"已授权的板子")。
+    """
+    arm = Arm(port="fake", transport_factory=build_fake_transport_factory(activated=False))
+    try:
+        arm.connect()
+        lic = arm.license()
+        # 未激活也回 UID —— 表单要靠它。
+        assert lic.activated is False and lic.state == 0 and len(lic.uid_hex) == 24
+        # 使能被拒的是**授权那条码**, 与真机一致 (这样"未激活"的提示也能顺带验)。
+        with pytest.raises(litearm.CommandRejectedError) as ei:
+            arm.enable()
+        assert (ei.value.cmd, ei.value.code) == (0x10, 0x08)
+    finally:
+        arm.close()
+
+
+def test_fake_transport_is_activated_by_default() -> None:
+    """默认不变: `--fake` 起来的是一台已授权的板子 (授权面板只显示状态, 不出表单)。"""
+    arm = Arm(port="fake", transport_factory=build_fake_transport_factory())
+    try:
+        arm.connect()
+        assert arm.license().activated is True
+    finally:
+        arm.close()
+
+
+def test_fake_unactivated_session_exposes_the_form_path() -> None:
+    s = Session(fake=True, fake_activated=False, poll_period=0.05, state_push_interval=0.05)
+    try:
+        assert s.connect() is True
+        assert _wait(lambda: s.connected), f"假会话没连上: {s.arm_info()}"
+        info = s.execute("license", {})
+        assert info["activated"] is False and info["state"] == 0
+        assert len(info["uid"]) == 24
+    finally:
+        s.close()

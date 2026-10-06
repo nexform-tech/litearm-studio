@@ -13,6 +13,17 @@ export type ConnInfo = {
   error: string | null
 }
 
+/**
+ * daemon `hello` 帧的版本信息。
+ *
+ * ⚠ 它只在**握手时**来一条，所以必须自己存下来 —— 激活时要把它随诊断信息一起发给服务端，
+ * 而那时早就过了握手那一刻。
+ */
+export type HelloInfo = {
+  daemon: string
+  sdk: string
+}
+
 /** daemon `state` 帧归一化后的机械臂状态（计划 3.3）。 */
 export type RobotState = {
   q: number[]
@@ -37,6 +48,79 @@ export type RobotState = {
 
 /** SDK 原生 6 元组 `[x, y, z, rx, ry, rz]`（计划 3.4）。 */
 export type Pose6 = [number, number, number, number, number, number]
+
+/** 读到了授权记录时的形状（daemon `license` 命令，见 `docs/ACTIVATION.md`）。 */
+export type LicenseRecord = {
+  supported: true
+  /** 固件原生的 state 码：0=未激活 / 1=已激活 / 2=已激活且产线模式。 */
+  state: number
+  /** `state` 的可读名；认不出的码带原值回（`unknown_state_7`）。 */
+  stateName: string
+  activated: boolean
+  /** `flags` bit0 = 产线码。⚠ 它**不表示**激活与否，别拿它替代 `activated`。 */
+  factoryMode: boolean
+  /** 记录版本（固件当前 1）。 */
+  ver: number
+  /** 24 位小写 hex —— **厂商签发凭据时要的就是这一串**。 */
+  uid: string
+  custId: number
+  /** 签发日 `YYYYMMDD`；未激活时恒 0。 */
+  issued: number
+  flags: number
+}
+
+/**
+ * 授权记录的三态读取结果。
+ *
+ * `supported` 刻意**不是一个布尔** —— 三种情况对用户说的话完全不同：
+ *  · `true`  —— 读到了记录（未激活也是正常返回，`activated === false`）；
+ *  · `false` —— 固件明确回 `ERR{0x2F,0x00}`：这台固件没有授权命令（固件 1.8.0 起才有）；
+ *  · `null`  —— 本次没读到。⚠ 今天旧固件走的就是这一条：SDK 的探测帧读不到那条 ERR，
+ *              于是等满 1s 抛超时（见 daemon `session._license_dict` 的说明）。
+ */
+export type LicenseSnapshot = LicenseRecord | { supported: false } | { supported: null }
+
+/**
+ * 注册信息 —— 会随设备 UID 一起发给激活服务。
+ *
+ * ⚠ **字段集合以激活网站的表单为准**（`litearm-activation/src/lib/validation.ts`）：
+ * `name` / `organization` 与网站表单的 `contactName` / `company` 是同一个输入框，
+ * 其余六个键名与网站逐字相同。改这里必须同时改守护进程 `activation._CONTACT_RULES`
+ * 与同意书（`ActivationConsent.tsx`）。
+ */
+export type ActivationContact = {
+  name: string
+  phone: string
+  organization: string
+  wechatId: string
+  email: string
+  region: string
+  industry: string
+  purpose: string
+}
+
+/**
+ * 提交给激活服务的请求体。
+ *
+ * ⚠ 界面**不再**逐字渲染这个对象（"将要发送的内容"预览已去掉），字段的披露改由
+ * 《激活注册信息同意书》逐项列出来承担（`ActivationConsent.tsx` 的 `CONSENT_ITEMS`）：
+ * 字段增减必须同时改那份文案，不许在这里偷偷加东西。内网地址/主机名**刻意不采集** ——
+ * IP 由服务端在收到请求时自己记，比客户端自报可信。
+ */
+export type ActivationRequest = {
+  uid: string
+  contact: ActivationContact
+  /**
+   * 只有**一份**同意（激活注册信息同意书），它覆盖请求里的每一项 —— 所以这里没有逐项开关。
+   * `granted: false` 的请求会被本地程序当场拒（`consent_required`）：同意是硬门禁，判在
+   * 守护进程那一层，界面上的按钮禁用只是方便。
+   */
+  consent: { granted: boolean }
+  /** 版本号这类环境信息，与联系人字段在同一份同意书里逐项列出。 */
+  diagnostics: { studio: string; sdk: string; firmware: string }
+  /** 预留：订单号/激活码那一层。今天界面上没有这个输入框。 */
+  code?: string
+}
 
 /** `get_joint_params` 单轴参数（键名与 SDK 一致，snake_case）。 */
 export type JointParams = {
@@ -101,6 +185,31 @@ export function normalizeRobotState(raw: RobotState | null | undefined): RobotSt
 export type ArmCommandError = CommandError
 
 /**
+ * 归一化 daemon 的 `license` 应答：认不出的形状一律折成"没读到"（`supported: null`）。
+ *
+ * ⚠ 判据是 `supported` 这个**显式**字段，不是"有没有 uid" —— 未激活的记录也回 UID，
+ * 拿字段有无当判据会把"未激活"读成"读不到"。
+ */
+export function normalizeLicense(raw: unknown): LicenseSnapshot {
+  if (!raw || typeof raw !== 'object') return { supported: null }
+  const r = raw as Record<string, unknown>
+  if (r.supported === false) return { supported: false }
+  if (r.supported !== true) return { supported: null }
+  return {
+    supported: true,
+    state: num(r.state),
+    stateName: typeof r.stateName === 'string' ? r.stateName : '',
+    activated: r.activated === true,
+    factoryMode: r.factoryMode === true,
+    ver: num(r.ver),
+    uid: typeof r.uid === 'string' ? r.uid : '',
+    custId: num(r.custId),
+    issued: num(r.issued),
+    flags: num(r.flags),
+  }
+}
+
+/**
  * 拥有全应用唯一的 daemon WebSocket 连接：
  * 下行接收 hello/conn/state/res，上行发送 connect/disconnect/cmd。
  * status 与 state 两个独立的订阅通道，只关心连接状态的 UI（TopBar）不会
@@ -125,6 +234,9 @@ export class ArmClient {
   private stateFastListeners = new Set<Listener>()
   private motionListeners = new Set<Listener>()
 
+  /** `hello` 帧只来一条，存下来供激活时填写诊断信息（见 `versions`）。 */
+  private _hello: HelloInfo | null = null
+
   /** 共用的 daemon socket。默认自建一条，`armClient` 用默认值；夹爪注入同一条。 */
   readonly socket: DaemonSocket
 
@@ -135,6 +247,7 @@ export class ArmClient {
       this.socket.sendFrame({ t: 'connect' })
     })
     this.socket.onFrame('conn', (msg) => this._applyConn(msg))
+    this.socket.onFrame('hello', (msg) => this._applyHello(msg))
     this.socket.onFrame('state', (msg) => this._applyState(msg.state as RobotState | null | undefined))
     this.socket.onLifecycle((s) => {
       if (s === 'connecting' || s === 'reconnecting' || s === 'error' || s === 'disconnected') {
@@ -160,6 +273,16 @@ export class ArmClient {
   }
   get lastError() {
     return this.socket.lastError
+  }
+
+  /**
+   * daemon 的版本信息（`hello` 帧）。
+   *
+   * ⚠ 只存不推：它一个进程生命周期里只有一条，没有订阅价值 —— 需要它的地方（激活时的
+   * 诊断信息）在用到的那一刻现读。
+   */
+  get versions(): HelloInfo | null {
+    return this._hello
   }
 
   /** True while a motion command (home/movej/movel) is in flight. */
@@ -291,6 +414,33 @@ export class ArmClient {
     return this._sendCmd('get_joint_params') as Promise<JointParams[]>
   }
 
+  // ─────────────────────────── 授权 / 激活（只读） ───────────────────────────
+
+  /**
+   * 读设备授权记录（是否已激活 + 设备 UID）。
+   *
+   * ⚠ **未激活不是错误**：`activated === false` 是正常返回值 —— 未激活的臂除 ENABLE 外
+   * 一切照常。只有真读不到时才由 `supported` 表达（见 `LicenseSnapshot`）。
+   */
+  async license(): Promise<LicenseSnapshot> {
+    return normalizeLicense(await this._sendCmd('license'))
+  }
+
+  /**
+   * 把注册信息提交给激活服务, 拿回本机凭据并写进设备 —— **全应用唯一出网的一条命令**。
+   *
+   * 请求体由界面逐字展示给用户看（见 `ActivationForm` 的"将要发送的内容"），所以这里
+   * **不加任何字段**：界面上没显示的东西，不许偷偷发出去。
+   *
+   * ⚠ 设备必须**失能**：固件要求写授权记录时电机不在无监督下保持使能（会回 `0x3F/0x04`）。
+   * 本地程序**不代劳** `disable()` —— 什么时候可以下电是操作员的决定。
+   *
+   * 返回的是**写入后回读**的授权记录（成功的 ACK 只说明固件答应了）。
+   */
+  async activate(request: ActivationRequest): Promise<LicenseSnapshot> {
+    return normalizeLicense(await this._sendCmd('activate', { ...request }))
+  }
+
   // ───────────────── 参数 / 标定 / 自检（设置页用，计划 §5「直接接线」） ─────────────────
   // ⚠ 前馈 item 编号不是猜的（见 daemon `session.py` 与 SDK `arm.py`）：
   //   4 = 载荷质量, 5 = 质心(sub 0..2), 6 = 重力向量(sub 0..2),
@@ -378,6 +528,13 @@ export class ArmClient {
   }
 
   // ─────────────────────────── 内部实现 ───────────────────────────
+
+  private _applyHello(msg: Record<string, unknown>) {
+    this._hello = {
+      daemon: typeof msg.daemon === 'string' ? msg.daemon : '',
+      sdk: typeof msg.sdk === 'string' ? msg.sdk : '',
+    }
+  }
 
   private _applyConn(msg: Record<string, unknown>) {
     const conn: ConnInfo = {

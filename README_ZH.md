@@ -64,9 +64,15 @@ pip install -e "daemon[test]"     # 装 fastapi/uvicorn，并提供 litearm-stud
 pnpm install && pnpm build         # 构建本地程序要托管的界面
 
 litearm-studio-daemon --fake       # 离线：用 SDK 的假传输跑完整会话，不碰硬件
+# litearm-studio-daemon --fake --fake-unactivated   # 不碰硬件，而且这台假设备**未激活**：
+#                                                   # 「设置 → 授权激活」会显示注册表单
 # litearm-studio-daemon            # 真机：自动发现 USB CDC 设备
 # litearm-studio-daemon --port /dev/ttyACM1 --http-port 9000 --no-open
 ```
+
+假设备默认是**已激活**的，所以授权面板只显示状态、不出表单。加上 `--fake-unactivated`
+就能把未激活那条路整条走一遍：注册表单、激活注册信息同意书，以及按
+「使能」时固件回的那句 `ERR{0x10,0x08}`。
 
 启动后会打印实际监听的地址（默认 `http://127.0.0.1:8765/`，被占用会自动换端口）并打开窗口。
 

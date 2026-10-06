@@ -29,6 +29,17 @@ describe('i18n Internationalization', () => {
     expect(i18n.t('gripper:zero.start')).toBe('开始标定')
     expect(i18n.t('gripper:settings.allowFactory')).toBe('允许出厂标定（已确认风险）')
     expect(i18n.t('common:errors.gripperCalibration')).toContain('标定')
+    // 授权激活：未激活的机器一开机就会撞上的那条错误，以及它的入口。
+    expect(i18n.t('settings:tabs.activation')).toBe('授权激活')
+    expect(i18n.t('settings:activation.stateNotActivated')).toBe('未激活')
+    expect(i18n.t('common:errors.notActivated')).toContain('未激活')
+    // 注册与同意（激活那一半）：这套文案是给用户签字看的，两种语言都必须存在。
+    expect(i18n.t('settings:activation.formTitle')).toContain('激活')
+    expect(i18n.t('settings:activation.consentAgreeLabel')).toContain('同意')
+    // 文档名点名的是"激活注册信息"（发送什么），不是"信息收集"。
+    expect(i18n.t('settings:activation.consentTitle')).toBe('激活注册信息同意书')
+    expect(i18n.t('settings:activation.consentItemVersions')).toContain('版本')
+    expect(i18n.t('common:errors.activationUnreachable')).toContain('激活服务')
   })
 
   it('switches to English (en) and returns corresponding keys', async () => {
@@ -55,6 +66,12 @@ describe('i18n Internationalization', () => {
     expect(i18n.t('gripper:zero.start')).toBe('Start calibration')
     expect(i18n.t('gripper:settings.allowFactory')).toContain('factory')
     expect(i18n.t('common:errors.gripperNotConnected')).toContain('not connected')
+    expect(i18n.t('settings:tabs.activation')).toBe('Activation')
+    expect(i18n.t('settings:activation.stateNotActivated')).toBe('Not activated')
+    expect(i18n.t('common:errors.notActivated')).toContain('not activated')
+    expect(i18n.t('settings:activation.consentAgreeLabel')).toContain('agree')
+    expect(i18n.t('settings:activation.consentTitle')).toBe('Activation Registration Consent')
+    expect(i18n.t('common:errors.activationUnreachable')).toContain('activation service')
   })
 
   it('updates document.documentElement.lang on language change', async () => {

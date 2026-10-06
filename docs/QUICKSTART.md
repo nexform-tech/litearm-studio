@@ -3,8 +3,8 @@ title: "LiteArm"
 subtitle: "Quickstart Guide"
 title-meta: "LiteArm Quickstart Guide"
 author: "NEXFORM ROBOTICS"
-version: "v2.0"
-date: "September 27, 2026"
+version: "v2.1"
+date: "October 6, 2026"
 ---
 
 # LiteArm Quickstart Guide
@@ -80,14 +80,25 @@ The daemon prints the address it actually bound to (default `http://127.0.0.1:87
 
 ## 4. Initial Smoke Test
 
-### Step 1 — Connect and enable
+### Step 1 — Activate
+
+An unactivated arm **refuses to enable** (the firmware answers `ERR{0x10,0x08}`) while every other command keeps working. Open **Settings → Activation**:
+
+1. The panel reads **Not activated** and shows the **device UID** (24 hex characters). Press **Copy** and hand that string to your supplier.
+2. The supplier issues a credential for this UID.
+3. Fill in the registration form (**name, phone, organization, email and region are required**) and accept the *Activation Registration Consent*.
+4. **Disarm the arm first** — the firmware only accepts the licence record while disarmed — then press **Submit and activate**.
+
+The panel then reads **Activated**, and only then will the firmware accept `enable`. Details: user manual §1.4.
+
+### Step 2 — Connect and enable
 
 1. Open the console (the daemon opens it for you).
 2. The top bar shows the connection state and, once connected, the **port · firmware** it resolved. Click **Connect** if the session is not up yet.
 3. Confirm the 3D model renders and J1–J7 show live values.
 4. Click the **Enable** toggle on the control bar.
 
-### Step 2 — Verify motion
+### Step 3 — Verify motion
 
 > [!WARNING]
 > Clear the working envelope of people and obstacles before enabling or commanding motion. **STOP** issues an emergency stop and stays reachable while the arm is moving.
@@ -96,7 +107,7 @@ The daemon prints the address it actually bound to (default `http://127.0.0.1:87
 2. **Home**: click the zero/home action to run the firmware's low-speed homing.
 3. **STOP**: press it once and confirm the arm drops energy immediately.
 
-### Step 3 — Telemetry
+### Step 4 — Telemetry
 
 Open the **Telemetry** page: a session is created automatically when the arm connects, samples are recorded locally, and **Export CSV** writes the selected session to disk.
 
@@ -114,6 +125,12 @@ Open the **Telemetry** page: a session is created automatically when the arm con
 - Verify the device enumerates with VID:PID `1d50:606f`.
 - If it shows up under a different path, pass it explicitly: `litearm-studio-daemon --port /dev/ttyACM1`.
 - On Linux, make sure your user can open the serial device (`dialout` group).
+
+### "Enable" does nothing / the arm reports it is not activated
+
+This arm has not been activated. The firmware checks the licence as the **first** predicate of `enable` and refuses with `ERR{0x10,0x08}`; retrying changes nothing.
+
+Go to **Settings → Activation** and follow step 1 of §4. Nothing except `enable` is affected while unactivated.
 
 ### The UI loads but never shows state
 

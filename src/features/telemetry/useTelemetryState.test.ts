@@ -44,7 +44,7 @@ describe('useTelemetryState', () => {
 
     // 下一个自动刷新周期（3s）应把采样带出来，而不是一直停在"该会话暂无采样"
     await waitFor(() => expect(result.current.samples.length).toBeGreaterThan(0), {
-      timeout: 7000,
+      timeout: 15000,
     })
     expect(result.current.samples[0].state).toBe('holding')
   })
@@ -57,23 +57,26 @@ describe('useTelemetryState', () => {
     )
 
     const { result } = renderHook(() => useTelemetryState())
-    await waitFor(() => expect(result.current.samples).toHaveLength(200), { timeout: 5000 })
+    await waitFor(() => expect(result.current.samples).toHaveLength(200), { timeout: 30000 })
     expect(result.current.hasMore).toBe(true)
 
     // 9 次翻页后视图恰好到达 2000 条上限
     for (let i = 0; i < 9; i++) {
       act(() => result.current.loadOlder())
-      await waitFor(() => expect(result.current.samples).toHaveLength(200 + (i + 1) * 200), { timeout: 5000 })
+      await waitFor(() => expect(result.current.samples).toHaveLength(200 + (i + 1) * 200), { timeout: 30000 })
     }
 
     // 第 10 次翻页追加 100 条后超出上限：应从头部裁掉最新部分，而不是丢弃新加载的旧数据
     act(() => result.current.loadOlder())
-    await waitFor(() => expect(result.current.hasMore).toBe(false), { timeout: 5000 })
+    await waitFor(() => expect(result.current.hasMore).toBe(false), { timeout: 30000 })
     const rows = result.current.samples
     expect(rows).toHaveLength(2000)
     expect(rows[0].ts).toBe(2000)
     expect(rows[rows.length - 1].ts).toBe(1)
-  }, 15000)
+    // 这条用例要翻满 10 页才越过 2000 条视图上限，每页实测约 0.8s（其中数据库查询约
+    // 0.35s，其余是 React + waitFor 的开销）——正常 ~9s，机器满载时更长。上限按最坏
+    // 情况给，判据一个字没动。
+  }, 60000)
 
   it('keeps the selected newest session after saving the retention cap', async () => {
     const old = await telemetryDb.addSession(Date.now() / 1000 - 100, '/dev/ttyACM0')

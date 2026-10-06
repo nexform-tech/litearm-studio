@@ -1,5 +1,17 @@
-export { armClient } from './client'
-export type { ArmCommandError, ConnInfo, ConnectionStatus, JointParams, Pose6, RobotState } from './client'
+export { armClient, normalizeLicense } from './client'
+export type {
+  ActivationContact,
+  ActivationRequest,
+  ArmCommandError,
+  ConnInfo,
+  ConnectionStatus,
+  HelloInfo,
+  JointParams,
+  LicenseRecord,
+  LicenseSnapshot,
+  Pose6,
+  RobotState,
+} from './client'
 export { formatArmError } from './errors'
 export type { DaemonErrorInfo } from './errors'
 export { DEFAULT_JOINT_COUNT, MAX_JOINT_COUNT, jointIndexes, resolveJointCount, useJointCount } from './axes'

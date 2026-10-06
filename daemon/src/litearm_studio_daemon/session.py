@@ -37,6 +37,7 @@ import litearm
 from litearm import Arm
 
 from . import statemap
+from . import activation
 from .errors import MotionBusyError, NotConnectedCommandError, UnknownCommandError
 
 log = logging.getLogger("litearm_studio_daemon.session")
@@ -147,6 +148,12 @@ COMMANDS: Dict[str, str] = {
     "get_ff_vec": "读回前馈向量 (item 7=重力系数 / 8=惯量系数)",
     "get_ff_scalar": "读回前馈标量 (item 4=载荷质量 / 5=质心 / 6=重力向量)",
     "kin_bench": "固件运动学自检 + 链路诊断计数",
+    # ---- 授权/激活 (只读那一半; 提交凭据要等凭据格式定稿, 见 docs/ACTIVATION.md) ----
+    "license": "读设备授权记录: 是否已激活 + 设备 UID (arm.license) —— "
+               "**未激活是一种状态, 不是错误**",
+    # ---- 激活 (写入; 在线领凭据) ----
+    "activate": "把注册信息提交给激活服务, 拿回本机凭据并写入设备 "
+                "(唯一出网的一条命令; 须失能态)",
 }
 
 
@@ -159,7 +166,7 @@ def find_cdc_port() -> Optional[str]:
     return litearm.find_cdc_port()
 
 
-def build_fake_transport_factory():
+def build_fake_transport_factory(*, activated: bool = True):
     """`--fake` 模式的注入工厂 —— 延迟 import, 免得生产运行也拖着 `litearm.testing`。
 
     签名契约 (`litearm-python/tests/conftest.py` 的 `fake_transport_factory` 与
@@ -169,11 +176,18 @@ def build_fake_transport_factory():
     ⚠ 固件版本字面量取 `Litearm1.8.0-7J` + `n=7`: `connect()` 会校验版本约定
     (`Litearm<主.次.修>-{7J|1J}`) 且 `1.8.0 >= MIN_FW (1.5.0)`; `n=7` 让桩固件
     在装配时就把关节数定成 7 (整臂), 于是 `movej` 的 arity 校验一次到位。
+
+    `activated=False` 把假设备变成**未激活**的一台 (`--fake-unactivated`): 授权记录照回
+    (含 UID), 但 `ENABLE` 会被拒 `ERR{0x10,0x08}` —— 于是"未激活"整条界面路径 (授权面板、
+    注册表单、使能被拒的提示) 在没有硬件时也能走一遍。
     """
     from litearm.testing import FakeTransport
 
     def factory(port: str) -> Any:
-        return FakeTransport(port=port, timeout=0.2, fw="Litearm1.8.0-7J", n=7)
+        tr = FakeTransport(port=port, timeout=0.2, fw="Litearm1.8.0-7J", n=7)
+        # ⚠ 桩的 `activated` 默认是 True (它模拟的是一台出厂已授权的板子) —— 这里按需翻掉。
+        tr.activated = bool(activated)
+        return tr
 
     return factory
 
@@ -182,6 +196,7 @@ class Session:
     """单臂会话 —— 线程安全 (状态用一把 `RLock` 圈住)。"""
 
     def __init__(self, *, port: Optional[str] = None, fake: bool = False,
+                 fake_activated: bool = True,
                  port_finder: Optional[Callable[[], Optional[str]]] = None,
                  poll_period: float = POLL_PERIOD_S,
                  state_push_interval: float = STATE_PUSH_INTERVAL_S,
@@ -190,11 +205,15 @@ class Session:
                  reconnect_period: float = RECONNECT_PERIOD_S,
                  reconnect_window: float = RECONNECT_WINDOW_S,
                  disable_on_exit: bool = True,
+                 activation_url: str = activation.DEFAULT_ACTIVATION_URL,
                  sdk_version: str = litearm.__version__) -> None:
         #: 构造时给的端口 —— 空 = 连接时用 `port_finder` (= SDK `find_cdc_port`) 自动发现。
         #: ⚠ `--port` 只是**覆盖**自动发现 (计划 2 节「设备发现」), 所以这里允许 None。
         self._port = port or None
         self._fake = bool(fake)
+        #: `--fake` 下假设备是不是"已激活的那台"。False = 未激活 (界面能看到注册表单)。
+        #: 只在 `--fake` 下有意义; 命令行那边会拒掉"给了它却没给 --fake"的组合。
+        self._fake_activated = bool(fake_activated)
         self._port_finder = port_finder or find_cdc_port
         self._poll_period = float(poll_period)
         self._state_push_interval = float(state_push_interval)
@@ -206,6 +225,9 @@ class Session:
         self._reconnect_window = float(reconnect_window)
         #: 退出时是否降能量 —— 见 `close()` 与 `_deenergize()`。**产品策略**, 默认开。
         self._disable_on_exit = bool(disable_on_exit)
+        #: 激活服务地址 (见 `activation.py`)。空 = 未配置: 在线激活会当场说清, 而不是
+        #: 转圈等超时。
+        self._activation_url = (activation_url or "").strip()
         self.sdk_version = sdk_version
 
         self._lock = threading.RLock()
@@ -382,7 +404,8 @@ class Session:
 
     def _dial(self, target: str) -> Arm:
         """按端口建一条链路 —— `connect()` 与断线自愈**共用**的唯一构造点。"""
-        factory = build_fake_transport_factory() if self._fake else None
+        factory = (build_fake_transport_factory(activated=self._fake_activated)
+                   if self._fake else None)
         return Arm(port=target, transport_factory=factory).connect()
 
     def _commit_link(self, arm: Arm, target: str, gen: int) -> bool:
@@ -951,6 +974,19 @@ class Session:
                     arm.get_ff_scalar(_int(p, "item"), _int_value(sub_idx, "sub")).value)
             if m == "kin_bench":
                 return statemap.jsonable(arm.diag.kin_bench().value)
+            if m == "license":
+                return _license_dict(arm)
+            if m == "activate":
+                # ⚠ 唯一出网的一条命令 (见 activation.py 的模块说明)。
+                request = activation.build_request(p)
+                device_uid = _device_uid(arm)
+                if device_uid is not None and device_uid != request["uid"]:
+                    raise activation.ActivationError(
+                        "uid_mismatch",
+                        f"提交的 UID ({request['uid']}) 不是当前这台机器 ({device_uid})")
+                return _submit_license(arm, activation.request_license(
+                    self._activation_url, request,
+                    expected_uid=device_uid or request["uid"]))
             # 白名单与实现**各写一遍**是刻意的: 只在准入处查表的话, 表里加一条而忘了
             # 实现会静默返回 None (前端看到"成功"却什么都没发生)。
             raise UnknownCommandError(m, sorted(COMMANDS))
@@ -1074,6 +1110,64 @@ def _vector(v: Any, n: int, key: str) -> List[float]:
             raise ValueError(f"{key} 需 {n} 个数值")
         out.append(float(x))
     return out
+
+
+def _device_uid(arm: Arm) -> Optional[str]:
+    """当前设备的 UID; 读不到 (固件太旧 / 本次无应答) 时 `None`。
+
+    ⚠ 读不到**不等于**不能激活: 固件要么会拒, 要么本来就没有授权功能。所以调用方在
+    `None` 时降级为"不核对机器", 由固件自己去拒一份不属于本机的凭据 (它会回 `0x3F/0x02`)。
+    """
+    state = _license_dict(arm)
+    return state["uid"] if state.get("supported") is True else None
+
+
+def _submit_license(arm: Arm, lic: dict) -> dict:
+    """把凭据写进设备, 然后**回读确认** —— 成功的 `ACK` 只说明固件答应了。
+
+    回读是这一步唯一的"落位证据" (与 SDK `Arm.activate()` 同一口径)。返回规范化后的
+    授权记录, 界面拿到就能直接刷新, 不用再单独查一次。
+    """
+    arm.activate(cust_id=lic["cust_id"], issued=lic["issued"],
+                 flags=lic["flags"], mac=lic["mac"])
+    return _license_dict(arm)
+
+
+def _license_dict(arm: Arm) -> dict:
+    """读设备授权记录 → 线上 dict (形状见 `docs/ACTIVATION.md`)。
+
+    `supported` 是**三态**, 不是一个布尔 —— 三者对用户说的话完全不同:
+
+    * `True` —— 读到了记录, 其余字段有效 (未激活时 `cust_id`/`issued`/`flags` 恒 0,
+      但 **UID 照回**: 签发凭据用的就是它);
+    * `False` —— 固件明确回了 `ERR{0x2F,0x00}`: 这台固件没有授权命令 (太旧);
+    * `None` —— 没读到 (本次无应答)。
+
+    ⚠ **今天旧固件走的是 `None` 那条, 不是 `False`**: SDK 的 `license()` 只等
+    `RSP_LICENSE(0x4F)` 一条队列, 固件回的那条 `ERR{0x2F,0x00}` 落在它读不到的队列里,
+    于是它等满 1s 抛 `MotionTimeoutError` (litearm-python 的 `_wait_keys`; 修法是给那次
+    `expect` 补 `echo_cmd`, 属 SDK 仓的另一笔)。这里**必须**把它折成"未确认": 让它冒出去
+    的话, 用户看到的是"运动超时", 与"这台固件有没有授权功能"毫不相干。
+    """
+    try:
+        info = arm.license()
+    except litearm.UnsupportedByFirmwareError:
+        return {"supported": False}
+    except litearm.MotionTimeoutError:
+        return {"supported": None}
+    return {
+        "supported": True,
+        "state": int(info.state),
+        "stateName": info.state_name,
+        "activated": bool(info.activated),
+        "factoryMode": bool(info.factory_mode),
+        "ver": int(info.ver),
+        # ⚠ 24 位小写 hex, 与厂商签发器的 `--uid` 参数同一形态 (见 `LicenseInfo.uid_hex`)。
+        "uid": info.uid_hex,
+        "custId": int(info.cust_id),
+        "issued": int(info.issued),
+        "flags": int(info.flags),
+    }
 
 
 def _joint_param_dict(jp: Any) -> dict:

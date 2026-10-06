@@ -8,9 +8,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import sys
 from typing import List, Optional
 
+from . import activation
 from .server import _is_loopback, serve
 from .session import Session
 
@@ -21,6 +23,9 @@ def build_parser() -> argparse.ArgumentParser:
         description="LiteArm Studio 本地程序 —— 单臂会话 + 状态推送 + 命令执行")
     p.add_argument("--fake", action="store_true",
                    help="用 SDK 的假传输 (litearm.testing.FakeTransport) 起会话, 不碰真硬件")
+    p.add_argument("--fake-unactivated", dest="fake_activated", action="store_false",
+                   help="配合 --fake: 让假设备是**未激活**的那台, 于是授权面板与注册表单都能看到"
+                        " (使能会被固件拒 ERR{0x10,0x08}, 与真机一致)")
     p.add_argument("--port", metavar="PORT", default=None,
                    help="串口设备路径 (覆盖自动发现; --fake 下无意义)")
     p.add_argument("--host", default="127.0.0.1",
@@ -44,6 +49,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-can-setup", action="store_true",
                    help="不尝试用 pkexec 拉起 CAN 接口 (接口由你或 systemd 管理时用;"
                         "也用于测试)")
+    p.add_argument("--activation-url", metavar="URL",
+                   default=os.environ.get("LITEARM_ACTIVATION_URL")
+                   or activation.DEFAULT_ACTIVATION_URL,
+                   help="激活服务地址 (默认 %(default)s; 传空字符串 = 不提供在线激活;"
+                        "也可用环境变量 LITEARM_ACTIVATION_URL)")
     p.add_argument("--verbose", "-v", action="store_true", help="打印调试日志")
     return p
 
@@ -98,9 +108,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         # 早退: 与其把异常抛到 uvicorn 那一层, 不如在这里把理由说清楚。
         print(f"只允许监听本机 (127.0.0.1), 拒绝 --host {args.host!r}", file=sys.stderr)
         return 2
+    if not args.fake and not args.fake_activated:
+        # 组合无意义时明确报错, 而不是静默忽略: 用户以为"未激活的假设备"起来了,
+        # 实际上会去连真硬件 (或者连不上), 排障时这是最费时间的一种失败。
+        print("--fake-unactivated 只在 --fake 下有意义 (它说的是**假设备**的状态)",
+              file=sys.stderr)
+        return 2
     session = Session(port=args.port, fake=args.fake,
+                      fake_activated=args.fake_activated,
                       reconnect=not args.no_reconnect,
-                      disable_on_exit=not args.keep_enabled)
+                      disable_on_exit=not args.keep_enabled,
+                      activation_url=args.activation_url)
     gripper = build_gripper_session(args)
     try:
         asyncio.run(serve(session, gripper=gripper, host=args.host,

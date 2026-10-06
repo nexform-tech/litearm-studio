@@ -7,6 +7,8 @@ export type DaemonErrorInfo = {
   method?: string
   cmd?: number
   code?: number
+  /** 激活那条路的短码（`activation.py` 的 `ActivationError.reason` / `LicenseFileError.reason`）。 */
+  reason?: string
 }
 
 /** daemon 回传的 `err.kind` → i18n key（common:errors.*）。 */
@@ -29,6 +31,64 @@ const KIND_KEYS: Record<string, string> = {
   GripperCalibrationError: 'gripperCalibration',
   GripperEstoppedError: 'gripperEstopped',
   GripperBusyError: 'gripperBusy',
+  // 激活（凭据/注册）。具体原因看 `err.reason`（见下面的 REASON_KEYS）。
+  ActivationError: 'activationFailed',
+  LicenseFileError: 'licenseUnreadable',
+}
+
+/**
+ * `err.reason` → i18n key（激活那条路的短码，契约见 `docs/ACTIVATION.md`）。
+ *
+ * ⚠ 为什么不能拿 `err.msg` 当文案：那是**本地程序**写的中文，英文界面上必须换一句话。
+ * 所以判据只能是短码，不能是那句话本身。
+ */
+const REASON_KEYS: Record<string, string> = {
+  // 服务这一侧
+  unconfigured: 'activationUnconfigured',
+  unreachable: 'activationUnreachable',
+  not_found: 'activationNotFound',
+  rate_limited: 'activationRateLimited',
+  maintenance: 'activationMaintenance',
+  bad_response: 'activationBadResponse',
+  // ⚠ `server` 是**兜底码**：服务端回了我们没登记的 error code 时，daemon 一律折成它
+  //   （见 `activation._service_error` 的 `known` 集合）。最容易撞上的是服务端的
+  //   `invalid_request`（它那边表单判据与本地漂了）—— 不单列的话用户只会看到
+  //   "激活失败"，看不出该改哪个框。`code_required` 是服务端预留、今天不发的码。
+  server: 'activationServerError',
+  code_required: 'activationCodeRequired',
+  invalid_uid: 'activationInvalidUid',
+  // 这次提交本身不成立。注册信息逐项分开，是为了让操作员知道该改哪个框，
+  // 而不是收到一句笼统的"格式不对"。判据与激活网站的表单同表（`activation._CONTACT_RULES`）。
+  consent_required: 'activationConsentRequired',
+  missing_contact: 'activationMissingContact',
+  bad_name: 'activationBadName',
+  bad_phone: 'activationBadPhone',
+  bad_email: 'activationBadEmail',
+  contact_too_long: 'activationContactTooLong',
+  // 本机读到的 UID 不该非法（界面直接填设备回读的 UID）；这条给直连 WS 的客户端兜底。
+  bad_uid: 'activationInvalidUid',
+  uid_mismatch: 'licenseUidMismatch',
+  // 凭据文件读不出来。缺字段 / 字段不对 / 不是 JSON 归成同一句：用户能做的动作是同一个
+  // —— 换一份文件。只有"格式版本认不出"要单独说（那是要升级上位机，不是换文件）。
+  not_json: 'licenseUnreadable',
+  missing_field: 'licenseUnreadable',
+  bad_field: 'licenseUnreadable',
+  unsupported_format: 'licenseUnsupportedFormat',
+}
+
+/**
+ * 固件拒绝码 → i18n key（键是 `命令码:错误码`，**两个都要**）。
+ *
+ * 错误码是**逐命令定义**的，同一个数字在不同命令下意思完全不同 —— 只按 `code` 查表
+ * 必然张冠李戴（`0x10` 的 `0x08` 是"未激活"，`0x3F` 的 `0x02` 是激活的聚合档）。
+ *
+ * ⚠ 这张表**只收"用户必须看到、且必须知道下一步做什么"的码**，不是错误码全集的镜像：
+ * 全集的权威文本在 SDK 的 `errors.ERR_TEXT` 里（且它刻意不在包级公开面上），这里抄的是
+ * 面向操作员的那一句。没登记的码照旧落到通用文案 + 原始码（见 `formatArmError`）。
+ */
+const REJECTED_KEYS: Record<string, string> = {
+  // ERR{0x10,0x08} ENABLE：`ctrl_enable()` 的第一条判据就是"没激活"，重发无用、无旁路。
+  '16:8': 'notActivated',
 }
 
 /** i18n 缺失时的内置中文兜底（不依赖 i18n 初始化）。 */
@@ -49,6 +109,32 @@ const FALLBACK_ZH: Record<string, string> = {
   gripperCalibration: '夹爪标定不允许这个动作：{{message}}',
   gripperEstopped: '夹爪急停已锁存：请排除原因后按「复位急停」',
   gripperBusy: '夹爪正在执行另一项长操作（标定），请等它结束',
+  notActivated:
+    '这台机械臂尚未激活，固件拒绝使能。请到「设置 → 授权激活」复制设备 UID，向供应商换取授权凭据',
+  activationFailed: '激活失败：请稍后重试',
+  activationUnconfigured:
+    '本地程序没有配置激活服务地址：请用 --activation-url 启动',
+  activationUnreachable:
+    '连不上激活服务：请检查这台机器的网络',
+  activationNotFound:
+    '激活服务上没有这台机器的凭据：请把设备 UID 提供给供应商，拿到凭据后再试',
+  activationRateLimited: '激活服务暂时拒绝了本次请求（请求过于频繁）：请过一会儿再试',
+  activationMaintenance: '激活服务正在维护：请稍后重试',
+  activationServerError: '激活服务出错了：请稍后重试；一直失败请联系供应商',
+  activationCodeRequired: '激活服务要求提供订单号 / 激活码：请升级上位机，或联系供应商',
+  activationInvalidUid: '设备 UID 不是合法的 24 位十六进制：请重新连接机械臂后重试',
+  activationConsentRequired: '请先勾选同意发送注册信息',
+  activationMissingContact: '注册信息没填完：带 * 的字段都要填',
+  activationBadName: '姓名不符合要求：只能是文字，2–32 个字，不能含数字',
+  activationBadPhone: '手机号不符合要求：需为 11 位手机号',
+  activationBadEmail: '邮箱不符合要求：格式不正确',
+  activationContactTooLong:
+    '注册信息有一项过长：请核对姓名、手机号、单位、邮箱、微信号、地区、行业与用途说明的长度',
+  activationBadResponse: '激活服务的应答不可用：请稍后重试',
+  licenseUnreadable: '凭据文件不可用：请确认是供应商签发的 lic.json',
+  licenseUnsupportedFormat:
+    '凭据文件的格式版本比当前上位机新：请升级上位机，或换一份与它匹配的凭据',
+  licenseUidMismatch: '这份凭据不是当前这台机器的：请用发给本机 UID 的那一份',
   unknownError: '操作失败：{{message}}',
 }
 
@@ -87,7 +173,12 @@ export function formatArmError(err: unknown): string {
 
   const kind = info?.kind
   if (!msg && !kind) return ''
-  const key = kind ? KIND_KEYS[kind] : undefined
+  // 判据优先级: 固件拒绝码 > 激活的短码 > 异常类名。
+  // 拒绝码只说"被拒了"的通用情况由类名兜底，短码才说清激活失败在哪一步。
+  const key =
+    REJECTED_KEYS[`${info?.cmd}:${info?.code}`] ??
+    (info?.reason ? REASON_KEYS[info.reason] : undefined) ??
+    (kind ? KIND_KEYS[kind] : undefined)
   if (key) {
     const vars: Record<string, string> = {
       message: msg,

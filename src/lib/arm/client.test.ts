@@ -59,6 +59,23 @@ class FakeWebSocket {
 
 const { ArmClient } = await import('./client')
 
+/** 激活请求体 —— 字段就是同意书里逐项列出的那些（与激活网站的表单同集），这里逐字比对。 */
+const ACTIVATION_REQUEST = {
+  uid: '101112131415161718191a1b',
+  contact: {
+    name: '张三',
+    phone: '13800000000',
+    organization: '某大学',
+    wechatId: 'zhangsan_wx',
+    email: 'z@example.com',
+    region: '上海',
+    industry: '教育',
+    purpose: '科研教学',
+  },
+  consent: { granted: true },
+  diagnostics: { studio: '0.1.0', sdk: '2.1.0', firmware: 'Litearm1.8.0-7J' },
+}
+
 /** 建一个已通过 WS 握手、daemon 报 connected 的客户端。 */
 function connectedClient() {
   const client = new ArmClient()
@@ -191,6 +208,7 @@ describe('ArmClient (daemon WebSocket)', () => {
       [() => client.saveParams(), { m: 'save_params', p: {} }],
       [() => client.resetFactoryParams(), { m: 'reset_factory_params', p: {} }],
       [() => client.kinBench(), { m: 'kin_bench', p: {} }],
+      [() => client.license(), { m: 'license', p: {} }],
     ]
     for (const [run, expected] of cases) {
       const p = run()
@@ -224,6 +242,82 @@ describe('ArmClient (daemon WebSocket)', () => {
     expect(frame).toMatchObject({ m: 'get_ff_vec', p: { item: 7 } })
     ws.receive({ t: 'res', id: frame.id, ok: true, v: [1, 2, 3, 4, 5, 6, 7] })
     await expect(promise).resolves.toEqual([1, 2, 3, 4, 5, 6, 7])
+  })
+
+  it('license() sends the read-only command and keeps the UID the signer needs', async () => {
+    const { client, ws } = connectedClient()
+    const promise = client.license()
+    const frame = ws.lastFrame('cmd')!
+    expect(frame).toMatchObject({ m: 'license', p: {} })
+    ws.receive({
+      t: 'res',
+      id: frame.id,
+      ok: true,
+      v: {
+        supported: true,
+        state: 0,
+        stateName: 'not_activated',
+        activated: false,
+        factoryMode: false,
+        ver: 1,
+        // 未激活也回 UID —— 签发凭据用的就是这一串。
+        uid: '101112131415161718191a1b',
+        custId: 0,
+        issued: 0,
+        flags: 0,
+      },
+    })
+    await expect(promise).resolves.toMatchObject({
+      supported: true,
+      activated: false,
+      state: 0,
+      uid: '101112131415161718191a1b',
+    })
+  })
+
+  it('license() keeps "no such command" apart from "not read this time"', async () => {
+    // 三态刻意不是一个布尔：对用户说的三句话完全不同（固件太旧 / 没读到 / 记录在这里）。
+    const { client, ws } = connectedClient()
+
+    const unsupported = client.license()
+    const f1 = ws.lastFrame('cmd')!
+    ws.receive({ t: 'res', id: f1.id, ok: true, v: { supported: false } })
+    await expect(unsupported).resolves.toEqual({ supported: false })
+
+    const unreadable = client.license()
+    const f2 = ws.lastFrame('cmd')!
+    ws.receive({ t: 'res', id: f2.id, ok: true, v: { supported: null } })
+    await expect(unreadable).resolves.toEqual({ supported: null })
+
+    // 认不出的形状一律折成"没读到"：绝不猜成"已激活"（那会让一台锁着的臂看起来能用）。
+    const garbage = client.license()
+    const f3 = ws.lastFrame('cmd')!
+    ws.receive({ t: 'res', id: f3.id, ok: true, v: { uid: 'aa' } })
+    await expect(garbage).resolves.toEqual({ supported: null })
+  })
+
+  it('activate() sends the request body verbatim and returns the read-back record', async () => {
+    const { client, ws } = connectedClient()
+    const promise = client.activate(ACTIVATION_REQUEST)
+    const frame = ws.lastFrame('cmd')!
+    // ⚠ `p` 的字段集与同意书逐项列出的内容一致，**一个字段都不许多**。
+    expect(frame).toEqual({ t: 'cmd', id: frame.id, m: 'activate', p: ACTIVATION_REQUEST })
+
+    ws.receive({
+      t: 'res',
+      id: frame.id,
+      ok: true,
+      v: { supported: true, state: 1, stateName: 'activated', activated: true,
+           factoryMode: false, ver: 1, uid: ACTIVATION_REQUEST.uid,
+           custId: 1042, issued: 20260929, flags: 0 },
+    })
+    await expect(promise).resolves.toMatchObject({ supported: true, activated: true, custId: 1042 })
+  })
+
+  it('keeps the hello versions — the activation request carries them as diagnostics', () => {
+    const { client } = connectedClient()
+    // hello 帧只在握手时来一条；激活发生在很久之后，所以要能一直读到它。
+    expect(client.versions).toEqual({ daemon: '0.1.0', sdk: '2.1.0' })
   })
 
   it('rejects commands while the socket is not open', async () => {
