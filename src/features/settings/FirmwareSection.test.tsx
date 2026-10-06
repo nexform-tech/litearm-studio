@@ -141,6 +141,27 @@ describe('FirmwareSection', () => {
     expect(mocks.cancel).toHaveBeenCalledTimes(1)
   })
 
+  it('only shows the safety confirmation once an image has been picked', () => {
+    // 没选镜像时这一块无从谈起 —— "会不会失能""碰不碰许可证"都要看具体是哪份镜像，
+    // 先摆出来只会变成一段没人读的免责声明。
+    mocks.vm = baseVm({ summary: null })
+    const { unmount } = render(<FirmwareSection />)
+    expect(screen.queryByTestId('firmware-safety')).toBeNull()
+    unmount()
+
+    mocks.vm = baseVm({ summary: SUMMARY })
+    render(<FirmwareSection />)
+    expect(screen.getByTestId('firmware-safety')).toBeTruthy()
+  })
+
+  it('warns that the update itself disarms the arm', () => {
+    mocks.vm = baseVm({ summary: SUMMARY })
+    render(<FirmwareSection />)
+    // 这是这一块里最要紧的一条物理后果：确认框不能只让人确认"手臂放好了"，
+    // 还得说清"失能是我们做的"。
+    expect(screen.getByTestId('firmware-safety').textContent).toMatch(/失能|disarms/)
+  })
+
   it('says so — and refuses to start — when no controller is connected', () => {
     mocks.vm = baseVm({ connected: false, summary: SUMMARY })
     render(<FirmwareSection />)

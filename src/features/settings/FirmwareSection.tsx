@@ -1,6 +1,6 @@
 import { useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { AlertTriangle, CheckCircle2, Cpu, RefreshCw, ShieldAlert, Upload } from 'lucide-react'
+import { AlertTriangle, Ban, CheckCircle2, Cpu, RefreshCw, ShieldAlert, ShieldCheck, Upload } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -192,38 +192,52 @@ export function FirmwareSection() {
         ) : null}
 
         {/* ---- 确认 + 开始 ---- */}
-        <div className="flex flex-col gap-2 rounded-lg border border-line p-3">
-          <div className="text-[0.6875rem] font-semibold text-foreground">
-            {t('settings:firmware.safetyTitle')}
-          </div>
-          <p className="text-[0.71875rem] leading-relaxed text-muted-foreground">
-            {t('settings:firmware.safetyStop')}
-          </p>
-          <p className="text-[0.71875rem] leading-relaxed text-muted-foreground">
-            {t('settings:firmware.safetyKeep')}
-          </p>
-          {/* ⚠ 用**原生复选框**而不是 `Toggle`：这是一句"我确认……"的声明（与激活页的
-              同意书同性质），复选框才是那个形状；`Toggle` 看起来像"切换某个开关"。
-              样式沿用 `ActivationForm` 的同意书那一条，两处的确认读起来一致。 */}
-          <label
-            htmlFor="firmware-safety-arm"
-            className="flex items-start gap-2 text-[0.71875rem] leading-relaxed"
+        {/* ⚠ **选了文件才出现**：没选镜像时这一块无从谈起（"要不要失能""会不会碰许可证"
+            都要看具体是哪份镜像），先摆出来只会变成一段没人读的免责声明。
+            ⚠ 块内三层东西的权重必须**分得开**：标题（warn 色）/ 三条"会发生什么"的事实
+            （次要、可扫）/ 复选框（唯一的动作，最易读）。 */}
+        {vm.summary ? (
+          <div
+            data-testid="firmware-safety"
+            className="flex flex-col gap-2.5 rounded-lg border border-warn-line bg-warn-soft px-3 py-2.5"
           >
-            <input
-              id="firmware-safety-arm"
-              data-testid="firmware-safety-arm"
-              type="checkbox"
-              checked={supported}
-              disabled={running}
-              onChange={(e) => setSupported(e.target.checked)}
-              className="mt-0.5 size-3.5 flex-none accent-primary"
-            />
-            <span className="flex items-start gap-1.5 text-muted-foreground">
-              <AlertTriangle className="mt-0.5 size-3.5 flex-none" />
-              {t('settings:firmware.safetyArm')}
-            </span>
-          </label>
-        </div>
+            <div className="flex items-center gap-1.5 text-[0.71875rem] font-semibold text-warn">
+              <ShieldAlert className="size-3.5 flex-none" />
+              {t('settings:firmware.safetyTitle')}
+            </div>
+            <ul className="flex flex-col gap-1">
+              <li className="flex items-start gap-1.5 text-[0.6875rem] leading-relaxed text-ink-muted">
+                <AlertTriangle className="mt-[0.1875rem] size-3 flex-none" />
+                <span>{t('settings:firmware.safetyDisarm')}</span>
+              </li>
+              <li className="flex items-start gap-1.5 text-[0.6875rem] leading-relaxed text-ink-muted">
+                <Ban className="mt-[0.1875rem] size-3 flex-none" />
+                <span>{t('settings:firmware.safetyStop')}</span>
+              </li>
+              <li className="flex items-start gap-1.5 text-[0.6875rem] leading-relaxed text-ink-muted">
+                <ShieldCheck className="mt-[0.1875rem] size-3 flex-none" />
+                <span>{t('settings:firmware.safetyKeep')}</span>
+              </li>
+            </ul>
+            {/* 复选框是这一块里**唯一**的动作：与上面三条事实分开（自己的底色与描边），
+                文字用正文本色（这一块里最易读的一层），整行可点。 */}
+            <label
+              htmlFor="firmware-safety-arm"
+              className="flex cursor-pointer items-start gap-2 rounded-md border border-warn-line/60 bg-card px-2.5 py-2 text-[0.71875rem] leading-relaxed text-foreground transition-colors hover:border-warn-line"
+            >
+              <input
+                id="firmware-safety-arm"
+                data-testid="firmware-safety-arm"
+                type="checkbox"
+                checked={supported}
+                disabled={running}
+                onChange={(e) => setSupported(e.target.checked)}
+                className="mt-0.5 size-3.5 flex-none accent-primary"
+              />
+              <span>{t('settings:firmware.safetyArm')}</span>
+            </label>
+          </div>
+        ) : null}
 
         <div className="flex flex-wrap items-center gap-2">
           <Button
@@ -258,7 +272,9 @@ export function FirmwareSection() {
         </div>
 
         {/* ---- 进度 ---- */}
-        {vm.progress ? (
+        {/* `progress` 只在**真的在跑**时才非空（`useFirmwareUpgrade` 恢复状态时，已经
+            结束的 job 只恢复结果、不恢复进度），所以这里不会出现"进行中 · 完成"。 */}
+        {vm.progress && !vm.result ? (
           <div data-testid="firmware-progress" className="flex flex-col gap-1.5">
             <div className="flex items-center justify-between text-[0.71875rem]">
               <span className="font-semibold text-foreground">
