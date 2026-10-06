@@ -127,6 +127,8 @@
     "gripperBusy": "夹爪正在执行另一项长操作（标定），请等它结束",
     "activationServerError": "激活服务出错了：请稍后重试；一直失败请联系供应商",
     "activationCodeRequired": "激活服务要求提供订单号 / 激活码：请升级上位机，或联系供应商",
-    "activationInvalidUid": "设备 UID 不是合法的 24 位十六进制：请重新连接机械臂后重试"
+    "activationInvalidUid": "设备 UID 不是合法的 24 位十六进制：请重新连接机械臂后重试",
+    "activationDeviceUidUnavailable": "读不到设备的授权记录：无法确认这台机器，已停止发送。请检查 USB 链路后重试",
+    "activationFirmwareUnsupported": "这台固件没有授权功能（需要 1.8.0 及以上）：请升级固件"
   }
 }

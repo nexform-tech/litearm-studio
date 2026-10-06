@@ -127,6 +127,8 @@
     "gripperBusy": "The gripper is running another long operation (calibration); wait for it",
     "activationServerError": "The activation service returned an error: try again later, or contact your supplier if it keeps failing",
     "activationCodeRequired": "The activation service requires an order number or activation code: upgrade Studio, or contact your supplier",
-    "activationInvalidUid": "The device UID is not a valid 24-character hex string: reconnect the arm and try again"
+    "activationInvalidUid": "The device UID is not a valid 24-character hex string: reconnect the arm and try again",
+    "activationDeviceUidUnavailable": "Cannot read the arm's license record, so this machine cannot be confirmed and nothing was sent: check the USB link and retry",
+    "activationFirmwareUnsupported": "This firmware has no activation support (1.8.0 or newer is required): update the firmware"
   }
 }

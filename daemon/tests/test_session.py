@@ -1056,6 +1056,44 @@ def test_activate_refuses_a_uid_that_is_not_this_machine(
     assert ei.value.reason == "uid_mismatch"
 
 
+def test_activate_refuses_when_the_device_uid_cannot_be_read(
+        fake_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    """设备 UID 读不到时**一个请求都不发** —— 不许拿客户端填的 UID 出网。
+
+    ⚠ 退回客户端 UID 会把注册信息 (个人信息) 发到一个没人核实过的 UID 上, 而写入注定
+    失败。判据见 `docs/ACTIVATION.md` §3: UID 必须来自设备的授权记录。
+    """
+    called: list = []
+    monkeypatch.setattr(activation, "request_license",
+                        lambda *a, **k: called.append(1))
+    monkeypatch.setattr("litearm_studio_daemon.session._license_dict",
+                        lambda arm: {"supported": None})
+    with pytest.raises(activation.ActivationError) as ei:
+        fake_session.execute("activate", _payload())
+    assert ei.value.reason == "device_uid_unavailable"
+    assert called == []
+
+
+def test_activate_names_a_firmware_without_license_support(
+        fake_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    """旧固件说的是"没有授权功能、请升级", 不是"读不到、请重试"。
+
+    ⚠ 上游 SDK 的 `license()` 少传 `echo_cmd`, 旧固件的 `ERR{0x2F,0x00}` 变成超时, 于是
+    "这台根本没这功能"与"这次没读到"在当前 SDK 上长得一样 —— 只能靠固件版本区分。
+    """
+    called: list = []
+    monkeypatch.setattr(activation, "request_license",
+                        lambda *a, **k: called.append(1))
+    monkeypatch.setattr("litearm_studio_daemon.session._license_dict",
+                        lambda arm: {"supported": None})
+    fake_session._arm.firmware = "Litearm1.7.0-7J"
+    fake_session._arm.fw_version = (1, 7, 0)
+    with pytest.raises(activation.ActivationError) as ei:
+        fake_session.execute("activate", _payload())
+    assert ei.value.reason == "firmware_unsupported"
+    assert called == []
+
+
 def test_activate_says_so_when_the_service_is_not_configured() -> None:
     """未配置地址时当场说清, 而不是转圈等超时。"""
     s = Session(fake=True, activation_url="", poll_period=0.05, state_push_interval=0.05)

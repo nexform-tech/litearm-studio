@@ -130,6 +130,23 @@ describe('formatArmError (activation reasons)', () => {
     await i18n.changeLanguage('zh')
   })
 
+  it('separates an unreadable device record from an unsupported firmware', async () => {
+    // ⚠ 两条都发生在**出网之前**（daemon 拿不到设备 UID 就不发注册信息），但让操作员
+    //   做的事完全不同：查 USB 链路 vs 升级固件。合成一句"激活失败"等于没说。
+    const err = (reason: string) =>
+      daemonErr('ActivationError', '读不到设备授权记录', { reason, method: 'activate' })
+
+    await i18n.changeLanguage('zh')
+    expect(formatArmError(err('device_uid_unavailable'))).toContain('USB')
+    expect(formatArmError(err('firmware_unsupported'))).toContain('升级固件')
+
+    await i18n.changeLanguage('en')
+    expect(formatArmError(err('device_uid_unavailable'))).toContain('USB link')
+    expect(formatArmError(err('firmware_unsupported'))).toContain('1.8.0')
+
+    await i18n.changeLanguage('zh')
+  })
+
   it('names what to do with a bad licence file', async () => {
     await i18n.changeLanguage('zh')
     const file = (reason: string) => daemonErr('LicenseFileError', '凭据文件缺 mac 字段', { reason })

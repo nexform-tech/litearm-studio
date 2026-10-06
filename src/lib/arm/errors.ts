@@ -68,6 +68,11 @@ const REASON_KEYS: Record<string, string> = {
   // 本机读到的 UID 不该非法（界面直接填设备回读的 UID）；这条给直连 WS 的客户端兜底。
   bad_uid: 'activationInvalidUid',
   uid_mismatch: 'licenseUidMismatch',
+  // ⚠ 这两条是 daemon 在**出网之前**停下的两种情形：读不到授权记录（凭据没法绑到本机）
+  //   与固件根本没有授权功能。前者要用户查链路，后者要用户升级固件 —— 合成一句
+  //   "激活失败"等于把两个不同的下一步动作说成同一个。
+  device_uid_unavailable: 'activationDeviceUidUnavailable',
+  firmware_unsupported: 'activationFirmwareUnsupported',
   // 凭据文件读不出来。缺字段 / 字段不对 / 不是 JSON 归成同一句：用户能做的动作是同一个
   // —— 换一份文件。只有"格式版本认不出"要单独说（那是要升级上位机，不是换文件）。
   not_json: 'licenseUnreadable',
@@ -135,6 +140,9 @@ const FALLBACK_ZH: Record<string, string> = {
   licenseUnsupportedFormat:
     '凭据文件的格式版本比当前上位机新：请升级上位机，或换一份与它匹配的凭据',
   licenseUidMismatch: '这份凭据不是当前这台机器的：请用发给本机 UID 的那一份',
+  activationDeviceUidUnavailable:
+    '读不到设备的授权记录：无法确认这台机器，已停止发送。请检查 USB 链路后重试',
+  activationFirmwareUnsupported: '这台固件没有授权功能（需要 1.8.0 及以上）：请升级固件',
   unknownError: '操作失败：{{message}}',
 }
 
