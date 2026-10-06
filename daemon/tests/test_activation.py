@@ -240,17 +240,22 @@ def test_request_license_maps_service_errors(status, body, reason) -> None:
     assert str(status) in str(ei.value)
 
 
-@pytest.mark.parametrize("body", [
-    b"not json",
-    {"uid": UID},                                  # 缺字段的凭据
-    license_doc(uid="ff" * 12),                    # 给的是**别的机器**的凭据
+@pytest.mark.parametrize("body,expected", [
+    (b"not json", "bad_response"),                  # 不是 JSON: 服务端应答坏了
+    ({"uid": UID}, "bad_response"),                 # 缺字段: 同上
+    (license_doc(format=2), "unsupported_format"),  # 格式比本上位机新 ⇒ 升级上位机
+    (license_doc(uid="ff" * 12), "uid_mismatch"),   # 服务端发错了机器 ⇒ 找供应商核对
 ])
-def test_request_license_rejects_an_unusable_body(body) -> None:
-    """领回来的文件也要过同一道解析 —— 服务端发错文件时, 本地就拦下, 不写进设备。"""
+def test_request_license_classifies_an_unusable_body(body, expected: str) -> None:
+    """领回来的文件也要过同一道解析 —— 服务端发错文件时, 本地就拦下, 不写进设备。
+
+    ⚠ 但短码要分类: 能指出**下一步动作**的 (`unsupported_format` / `uid_mismatch`)
+    必须原样透出, 否则用户拿到的是"稍后重试"这句永远不对的话; 其余归成 bad_response。
+    """
     post, _ = fake_post(200, body)
     with pytest.raises(ActivationError) as ei:
         request_license("https://act.nexform.tech", payload(), post=post, expected_uid=UID)
-    assert ei.value.reason == "bad_response"
+    assert ei.value.reason == expected
 
 
 def test_request_license_reports_an_unreachable_service() -> None:

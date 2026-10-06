@@ -219,6 +219,14 @@ Any other status must carry:
 `invalid_uid`, `consent_required`, `rate_limited`, `maintenance`, `code_required`.
 Anything else is reported as a plain server error.
 
+A **2xx reply whose body is not a usable credential is not a server error**. Two of
+those cases name the operator's next action and are reported as themselves:
+`unsupported_format` when the file's format is newer than this build (upgrade
+Studio) and `uid_mismatch` when the service returned a credential for another board
+(check the UID with the supplier). Everything else about a bad body is reported as
+`bad_response`. Do not fold the first two into `bad_response`: "retry later" is a
+promise this path cannot keep.
+
 ### Rules
 
 - The service **stores** credentials; it does not sign them. The signing key stays
