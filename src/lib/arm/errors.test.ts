@@ -90,6 +90,31 @@ describe('formatArmError (daemon err.kind → i18n)', () => {
     )
   })
 
+  it('names the remedy for the two ACTIVATE refusals', async () => {
+    // ERR{0x3F,0x04}: 使能中。ERR{0x3F,0x02}: **聚合档** —— docs/ACTIVATION.md §7 明写
+    // 不许把它说成"凭据错误"，所以这里除了断言文案有用，还要断言它**没有**替固件下结论。
+    await i18n.changeLanguage('zh')
+    const armed = formatArmError(daemonErr('CommandRejectedError', 'ERR [3F,4]', { cmd: 63, code: 4 }))
+    expect(armed).toContain('失能')
+    expect(armed).not.toContain('错误码 4')
+
+    const rejected = formatArmError(daemonErr('CommandRejectedError', 'ERR [3F,2]', { cmd: 63, code: 2 }))
+    expect(rejected).toContain('刷新')
+    // 契约而非措辞：聚合档不能被断言成"这份凭据是假的"。四种成因共用一个码，
+    // 断言其中一种就是把"没写进去"说成"凭据无效"。
+    expect(rejected).not.toMatch(/凭据无效|凭据是假|不是本机签发的|凭据有误/)
+
+    await i18n.changeLanguage('en')
+    expect(formatArmError(
+      daemonErr('CommandRejectedError', 'ERR [3F,4]', { cmd: 63, code: 4 }))).toContain('Disarm')
+
+    // 同一个数字在别的命令下**不**套用这些文案。
+    await i18n.changeLanguage('zh')
+    expect(formatArmError(daemonErr('CommandRejectedError', 'rejected', { cmd: 16, code: 4 }))).toBe(
+      '控制器拒绝了该命令（错误码 4）',
+    )
+  })
+
   it('unwraps the daemon info carried on a rejected command Error', async () => {
     await i18n.changeLanguage('zh')
     const err = Object.assign(new Error('已有运动在途'), { err: daemonErr('MotionBusyError', '已有运动在途') })
