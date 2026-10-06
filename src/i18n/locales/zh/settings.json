@@ -112,7 +112,8 @@
     "submit": "提交并激活",
     "submitting": "正在提交…",
     "mustDisable": "固件要求失能状态才写入授权记录：请先按「失能」。",
-    "activatedJustNow": "激活成功：这台机械臂已解锁。"
+    "activatedJustNow": "激活成功：这台机械臂已解锁。",
+    "activatedUnconfirmed": "已提交，但没能回读确认：请点「刷新」看这台机械臂的授权状态。"
   },
   "toast": {
     "readFailed": "读取控制器参数失败：{{message}}",

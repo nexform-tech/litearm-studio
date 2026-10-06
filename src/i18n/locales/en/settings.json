@@ -112,7 +112,8 @@
     "submit": "Send and activate",
     "submitting": "Sending…",
     "mustDisable": "The firmware only writes the licence record while disarmed: press Disable first.",
-    "activatedJustNow": "Activated: this arm is now unlocked."
+    "activatedJustNow": "Activated: this arm is now unlocked.",
+    "activatedUnconfirmed": "Submitted, but the read-back did not confirm it: press Refresh to read this arm's activation state."
   },
   "toast": {
     "readFailed": "Failed to read controller parameters: {{message}}",
