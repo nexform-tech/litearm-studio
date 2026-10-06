@@ -116,24 +116,39 @@ export function ActivationSection() {
 
       {!vm.connected ? (
         <Notice>{t('settings:activation.offline')}</Notice>
-      ) : vm.error ? (
-        <Notice>
-          <span className="flex items-start gap-2 text-danger">
-            <ShieldAlert className="mt-0.5 size-3.5 flex-none" />
-            {vm.error}
-          </span>
-        </Notice>
-      ) : snapshot && snapshot.supported === false ? (
-        <Notice>{t('settings:activation.unsupportedHint')}</Notice>
-      ) : snapshot && snapshot.supported === null ? (
-        <Notice>{t('settings:activation.unreadableHint')}</Notice>
-      ) : record ? (
+      ) : (
         <>
-          {record.activated ? (
-            <Notice>{t('settings:activation.activatedHint')}</Notice>
-          ) : (
-            <Notice>{t('settings:activation.locked')}</Notice>
-          )}
+          {vm.error ? (
+            <Notice>
+              <span className="flex items-start gap-2 text-danger">
+                <ShieldAlert className="mt-0.5 size-3.5 flex-none" />
+                {vm.error}
+              </span>
+            </Notice>
+          ) : null}
+          {/* ⚠ 读失败**不清掉**上一次读到的记录: UID 是这一段唯一的交付物, 而它在一台机器
+              上是不变的 —— 一次链路抖动就把它从屏幕上抹掉, 等于让操作员重来一遍。但必须
+              同时标明这是**旧读数**, 不能让"已激活"看起来像刚刚确认过 (见下面的提示)。
+              没有旧记录时才只显示错误。 */}
+          {vm.error && !record ? null : snapshot && snapshot.supported === false ? (
+            <Notice>{t('settings:activation.unsupportedHint')}</Notice>
+          ) : snapshot && snapshot.supported === null ? (
+            <Notice>{t('settings:activation.unreadableHint')}</Notice>
+          ) : record ? (
+            <>
+              {vm.error ? (
+                <p
+                  data-testid="activation-stale"
+                  className="text-[0.6875rem] leading-relaxed text-muted-foreground"
+                >
+                  {t('settings:activation.staleRecord')}
+                </p>
+              ) : null}
+              {record.activated ? (
+                <Notice>{t('settings:activation.activatedHint')}</Notice>
+              ) : (
+                <Notice>{t('settings:activation.locked')}</Notice>
+              )}
 
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-[0.6875rem] font-medium text-muted-foreground">
@@ -186,6 +201,8 @@ export function ActivationSection() {
         </>
       ) : (
         <Notice>{t('common:loading')}</Notice>
+      )}
+        </>
       )}
     </Card>
   )

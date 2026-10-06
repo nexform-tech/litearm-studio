@@ -229,6 +229,10 @@ def test_request_license_refuses_before_any_network_when_unconfigured() -> None:
     (404, {"error": {"code": "not_found", "message": "没有这台机器的凭据"}}, "not_found"),
     (429, {"error": {"code": "rate_limited"}}, "rate_limited"),
     (503, {"error": {"code": "maintenance"}}, "maintenance"),
+    # 网站对"请求本身不成立"(体积/JSON/表单判据)回的就是它 —— 得单独认出来,
+    # 否则操作员看到的是"激活服务出错了", 而真正该做的是改注册信息。
+    (400, {"error": {"code": "invalid_request", "message": "注册信息填写有误"}},
+     "invalid_request"),
     (500, b"<html>500</html>", "server"),
     (418, {"error": {"code": "weird"}}, "server"),          # 不认识的码 -> 如实说"服务端"
 ])

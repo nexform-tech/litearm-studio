@@ -59,7 +59,15 @@ export function useActivation() {
         const record = await armClient.activate(request)
         setSnapshot(record)
         setError(null)
-        toast.success(t('settings:activation.activatedJustNow'))
+        // ⚠ 只有**回读确认**了才算成功。`activate` 回的 ok 只说明固件答应了 (ACK 可能被
+        //   应答 FIFO 丢掉), 而写之后的回读本身可能超时 —— 那时 daemon 回的是
+        //   `{supported: null}`, 服务端仍然是 ok。无条件弹"已解锁"会让同一个界面上同时
+        //   出现"已解锁"和"读不到"两个相反的结论, 而这一步唯一的产出就是"到底解锁没有"。
+        if (record.supported === true && record.activated) {
+          toast.success(t('settings:activation.activatedJustNow'))
+        } else {
+          toast.warning(t('settings:activation.activatedUnconfirmed'), { id: 'activation-submit' })
+        }
         return true
       } catch (err) {
         // ⚠ 失败必须让操作员看见原因：「提交了但没激活」与「提交没成功」是两件事。

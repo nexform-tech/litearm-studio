@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@/i18n'
 
@@ -51,6 +52,12 @@ vi.mock('@/lib/arm', () => ({
 
 const { SettingsPage } = await import('./SettingsPage')
 
+// 这个文件只关心"页签有没有被 URL 选中"；授权面板自身的行为由
+// `ActivationSection.test.tsx` 覆盖（真渲染它还要把整个 armClient 桩起来）。
+vi.mock('./ActivationSection', () => ({
+  ActivationSection: () => <div data-testid="activation-section" />,
+}))
+
 /**
  * 轴数只由 `get_joint_params` 的返回条数体现（daemon 侧是 `range(arm.n)`）：
  * `{1J}` 台架返回 1 条，`{7J}` 返回 7 条。
@@ -68,9 +75,22 @@ function primeArm(axes: number) {
 }
 
 /** 渲染并等到首次读取落地（负载读回值渲染出来就说明 joints 也进 state 了）。 */
-async function renderPage() {
-  render(<SettingsPage />)
+async function renderPage(entry = '/settings') {
+  render(
+    <MemoryRouter initialEntries={[entry]}>
+      <SettingsPage />
+    </MemoryRouter>,
+  )
   await screen.findByDisplayValue('1')
+}
+
+/** 同步渲染（不等读回）—— 深链用例不一定会落在负载页。 */
+function renderAt(entry: string) {
+  render(
+    <MemoryRouter initialEntries={[entry]}>
+      <SettingsPage />
+    </MemoryRouter>,
+  )
 }
 
 /** Radix 的 Tab 在 mouseDown 上换页，click 不够。 */
@@ -134,7 +154,11 @@ describe('SettingsPage axis scaling', () => {
 
   it('says nothing has been read yet while disconnected', async () => {
     mocks.connectionStatus = 'disconnected'
-    render(<SettingsPage />)
+    render(
+      <MemoryRouter initialEntries={['/settings']}>
+        <SettingsPage />
+      </MemoryRouter>,
+    )
 
     openTab(/增益与限位/)
     expect(screen.getByText('尚未读取到关节参数。')).toBeDefined()
@@ -142,5 +166,18 @@ describe('SettingsPage axis scaling', () => {
     // 重力系数与惯量系数两张表各自给一句空态。
     expect(screen.getAllByText(/前馈通道数跟随上报的轴数/)).toHaveLength(2)
     expect(screen.queryByText('J1')).toBeNull()
+  })
+
+  it('opens the tab named by ?tab=, and falls back on an unknown one', async () => {
+    // ⚠ `/settings?tab=activation` 是说明书与支持话术里反复出现的入口。在它没实现之前，
+    //   那条指引会静默落在「末端负载」页，操作员只会以为这个功能不存在。
+    renderAt('/settings?tab=activation')
+    expect(screen.getByTestId('activation-section')).toBeDefined()
+
+    cleanup()
+    // 认不出的值退回默认页签 —— 这个查询串是别人给的，拼错不该让整页打不开。
+    renderAt('/settings?tab=nonsense')
+    expect(await screen.findByDisplayValue('1')).toBeDefined()
+    expect(screen.queryByTestId('activation-section')).toBeNull()
   })
 })

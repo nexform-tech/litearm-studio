@@ -151,6 +151,20 @@ describe('ActivationSection', () => {
     await waitFor(() => expect(mocks.refresh).toHaveBeenCalled())
   })
 
+  it('keeps the last record on screen when a later read fails, and marks it stale', () => {
+    // ⚠ UID 是这一段唯一的交付物, 且在一台机器上不会变 —— 一次读失败不该把它从屏幕上
+    //   抹掉 (那等于让操作员重来一遍)。但必须标明是**旧读数**, 不能让"已激活"看起来像
+    //   刚刚确认过, 所以状态徽章仍然说"读不到"。
+    mocks.snapshot.current = RECORD
+    mocks.error.current = '与机械臂的通信失败'
+    render(<ActivationSection />)
+
+    expect(screen.getByTestId('activation-uid').textContent).toBe(UID)
+    expect(screen.getByTestId('activation-stale')).toBeTruthy()
+    expect(screen.getByText('与机械臂的通信失败')).toBeTruthy()
+    expect(screen.getByTestId('activation-status').textContent).toMatch(/读不到|Unreadable/)
+  })
+
   it('copies the UID, and reports a copy failure instead of failing silently', async () => {
     mocks.snapshot.current = RECORD
     render(<ActivationSection />)

@@ -56,6 +56,9 @@ const REASON_KEYS: Record<string, string> = {
   //   "激活失败"，看不出该改哪个框。`code_required` 是服务端预留、今天不发的码。
   server: 'activationServerError',
   code_required: 'activationCodeRequired',
+  // ⚠ 服务端说"这个请求本身不成立"（体积过大 / JSON 坏 / 注册信息不合规）。它与
+  //   `server` 的区别就是下一步动作：这条要改注册信息，那条只能等或找供应商。
+  invalid_request: 'activationInvalidRequest',
   invalid_uid: 'activationInvalidUid',
   // 这次提交本身不成立。注册信息逐项分开，是为了让操作员知道该改哪个框，
   // 而不是收到一句笼统的"格式不对"。判据与激活网站的表单同表（`activation._CONTACT_RULES`）。
@@ -94,6 +97,14 @@ const REASON_KEYS: Record<string, string> = {
 const REJECTED_KEYS: Record<string, string> = {
   // ERR{0x10,0x08} ENABLE：`ctrl_enable()` 的第一条判据就是"没激活"，重发无用、无旁路。
   '16:8': 'notActivated',
+  // ERR{0x3F,0x04} ACTIVATE：固件只在**失能**时接受写授权记录（与 save_params 同语义：
+  // 写 flash 期间电机不能在无监督下保持使能）。操作员的动作是"先失能"。
+  '63:4': 'activationMustDisable',
+  // ERR{0x3F,0x02} ACTIVATE：**聚合档** —— 已存在 / MAC 不符 / 密钥非法 / 写失败全折成
+  // 这一个码。⚠ docs/ACTIVATION.md §7 明写**不许**把它说成"凭据错误"：SDK 抛之前已经
+  // 回读过 `0x2F`，只有设备确实 `state == 0` 才会走到这里。所以文案只说"没写进去"这个
+  // 事实，并把操作员推去回读状态、核对 UID —— 不替他断言凭据是假的。
+  '63:2': 'activationWriteRejected',
 }
 
 /** i18n 缺失时的内置中文兜底（不依赖 i18n 初始化）。 */
@@ -116,6 +127,9 @@ const FALLBACK_ZH: Record<string, string> = {
   gripperBusy: '夹爪正在执行另一项长操作（标定），请等它结束',
   notActivated:
     '这台机械臂尚未激活，固件拒绝使能。请到「设置 → 授权激活」复制设备 UID，向供应商换取授权凭据',
+  activationMustDisable: '固件只在失能状态下接受写入授权记录：请先按「失能」，再重新提交',
+  activationWriteRejected:
+    '固件拒绝了这次写入（已激活过 / 凭据与本机不符 / 写入失败共用一个错误码，无法从码上区分）：请点「刷新」看授权状态；仍未激活就核对设备 UID 后重新申请凭据',
   activationFailed: '激活失败：请稍后重试',
   activationUnconfigured:
     '本地程序没有配置激活服务地址：请用 --activation-url 启动',
@@ -126,6 +140,8 @@ const FALLBACK_ZH: Record<string, string> = {
   activationRateLimited: '激活服务暂时拒绝了本次请求（请求过于频繁）：请过一会儿再试',
   activationMaintenance: '激活服务正在维护：请稍后重试',
   activationServerError: '激活服务出错了：请稍后重试；一直失败请联系供应商',
+  activationInvalidRequest:
+    '激活服务拒绝了这份注册信息：请核对带 * 的字段后重新提交（若反复出现，说明网站的字段规则已更新）',
   activationCodeRequired: '激活服务要求提供订单号 / 激活码：请升级上位机，或联系供应商',
   activationInvalidUid: '设备 UID 不是合法的 24 位十六进制：请重新连接机械臂后重试',
   activationConsentRequired: '请先勾选同意发送注册信息',

@@ -340,7 +340,10 @@ def _service_error(status: int, body: bytes) -> ActivationError:
     except ValueError:
         pass
     known = {"not_found", "invalid_uid", "consent_required", "rate_limited",
-             "maintenance", "code_required"}
+             "maintenance", "code_required",
+             # ⚠ 网站对"请求本身不成立"回的就是它 (体积过大 / JSON 坏 / 注册信息不合规)。
+             #   不认它 = 把"你的注册信息被拒"说成"服务器出错了", 两者的下一步动作不同。
+             "invalid_request"}
     reason = code if code in known else "server"
     detail = message or f"激活服务返回 HTTP {status}"
     return ActivationError(reason, f"{detail} (HTTP {status})")

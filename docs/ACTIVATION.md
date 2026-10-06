@@ -216,7 +216,10 @@ Any other status must carry:
 ```
 
 `code` maps to what the operator is told. Known values: `not_found`,
-`invalid_uid`, `consent_required`, `rate_limited`, `maintenance`, `code_required`.
+`invalid_uid`, `consent_required`, `rate_limited`, `maintenance`, `code_required`,
+and `invalid_request` - returned when the request itself does not stand (body too
+large, not JSON, or registration details that fail the service's own rules). The
+last one is a client-side problem, so it must not be reported as a server error.
 Anything else is reported as a plain server error.
 
 A **2xx reply whose body is not a usable credential is not a server error**. Two of
