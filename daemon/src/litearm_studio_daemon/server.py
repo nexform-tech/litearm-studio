@@ -14,6 +14,10 @@
   只摘掉自己的队列与监听器, `session.disconnect()` **不**在那里被调。
 * **只监听 127.0.0.1** —— 越线暴露一个能驱动机械臂的接口是安全事故, 不是配置项。
   该判据由 `run()` 强制 (它只管启动; 应用本身不知道该绑哪儿)。
+* **`/ws` 只接受同源握手** —— 浏览器对 WebSocket **不做同源限制**, 所以任何网页都能连
+  `ws://127.0.0.1:8765/ws` 并驱动机械臂。判据在 `handle_ws` 的第一行 (见
+  `origin_allowed`): 没有 Origin 头 = 非浏览器客户端, 放行; 有 Origin 就必须同源,
+  且 Host 必须是 loopback (后者挡 DNS rebinding)。
 """
 from __future__ import annotations
 
@@ -25,7 +29,8 @@ import socket
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Iterable, List, Optional
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
@@ -44,6 +49,11 @@ log = logging.getLogger("litearm_studio_daemon.server")
 #: `run()` 允许绑定的地址白名单 —— 只监听本机 (计划 2 节架构: "Studio 本地程序,
 #: 仅监听 127.0.0.1")。想开给局域网没有开关, 只能改代码 (刻意的)。
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+#: 开发期前端 (vite) 的源。生产形态下页面由本进程自己伺服, 于是 Origin 与 Host 必然
+#: 相同, 不需要这条; 只有 dev 时页面在 vite 的端口上、而 `/ws` 被代理到本进程, 两者才
+#: 可能不同 (是否改写 Host 取决于代理实现) ⇒ 显式放行, 免得把开发环境挡在门外。
+DEV_ORIGINS = frozenset({"http://localhost:5173", "http://127.0.0.1:5173"})
 
 #: 单条命令的等待上限 (秒) —— 兜底, 防止某条 SDK 调用在**命令执行器**上永久卡住
 #: (那样后续所有命令都会陪等)。取 60s: `home`/`movej` 在真机上最坏十几秒
@@ -69,6 +79,40 @@ class _Client:
 
 def _is_loopback(host: str) -> bool:
     return host in LOOPBACK_HOSTS
+
+
+def _hostname_of(netloc: str) -> str:
+    """`localhost:8765` / `[::1]:8765` → `localhost` / `::1`。"""
+    text = (netloc or "").strip().lower()
+    if text.startswith("["):
+        return text[1:].split("]", 1)[0]
+    return text.rsplit(":", 1)[0] if ":" in text else text
+
+
+def origin_allowed(origin: str, host: str, extra: Iterable[str] = ()) -> bool:
+    """跨源 WebSocket 的准入判据 —— 浏览器不做同源限制, 所以判据只能在这里。
+
+    两条一起才够, 少一条都是假修:
+
+    * **同源** (Origin 的 netloc == Host) 挡的是"别的站点直接连本机端口";
+    * **Host 必须是 loopback** 挡的是 **DNS rebinding** —— 那种攻击下 Origin 与 Host
+      都是攻击者的域名, 同源判据会**通过**, 只有 Host 白名单能拦下。
+
+    `extra` 是显式放行的源 (开发期的 vite)。判据只对**带 Origin 的握手**生效: 没有
+    Origin 头说明是非浏览器客户端 (脚本 / 原生工具) —— 浏览器一定会发, 所以放行它不
+    扩大威胁面 (本地进程本来就能直接开串口)。
+    """
+    if origin in DEV_ORIGINS or origin in extra:
+        return True
+    try:
+        parts = urlsplit(origin)
+    except ValueError:
+        return False
+    if parts.scheme not in ("http", "https") or not parts.netloc:
+        return False
+    if parts.netloc.lower() != (host or "").strip().lower():
+        return False
+    return _hostname_of(host) in LOOPBACK_HOSTS
 
 
 def _is_energy_down_frame(raw: str) -> bool:
@@ -149,13 +193,17 @@ class Daemon:
 
     def __init__(self, session: Session, *, gripper: Optional[Any] = None,
                  version: str = __version__,
-                 ui_dir: Optional[Path] = None) -> None:
+                 ui_dir: Optional[Path] = None,
+                 allow_origins: Iterable[str] = ()) -> None:
         self.session = session
         #: 夹爪会话 (§3) —— 与臂会话并列, 各推各的帧、各走各的命令白名单。
         #: `None` = 本进程没有夹爪 (非 Linux, 或 `--no-gripper`)。
         self.gripper = gripper
         self.version = version
         self.ui_dir = ui_dir
+        #: **额外**放行的跨源源 (命令行 `--allow-origin`)。`DEV_ORIGINS` 由
+        #: `origin_allowed` 自己认, 不在这里重复。
+        self.allow_origins = frozenset(allow_origins)
         self.clients: List[_Client] = []
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         #: 夹爪看门狗的心跳任务 (见 `_gripper_heartbeat_loop`)。
@@ -220,6 +268,15 @@ class Daemon:
 
     # ------------------------------------------------------------ WS 单客户端
     async def handle_ws(self, ws: WebSocket) -> None:
+        # ⚠ **先判准入再 accept**: 未 accept 就 close ⇒ Starlette 直接回 403, 不建连接。
+        #   没有 Origin 头 = 非浏览器客户端 (脚本 / 原生工具), 放行 —— 见 `origin_allowed`。
+        origin = ws.headers.get("origin")
+        if origin is not None and not origin_allowed(
+                origin, ws.headers.get("host", ""), self.allow_origins):
+            log.warning("拒绝跨源 WebSocket: origin=%r host=%r",
+                        origin, ws.headers.get("host"))
+            await ws.close(code=1008)          # 1008 = policy violation
+            return
         await ws.accept()
         client = _Client(q=asyncio.Queue(maxsize=256))
         #: 普通上行帧的**有序**队列 —— 单条 worker 顺序消费, 保证「先发的先执行」
@@ -489,14 +546,16 @@ class _SpaStaticFiles(StaticFiles):
 def create_app(session: Session, *, gripper: Optional[Any] = None,
                version: str = __version__,
                ui_dir: Optional[str] = None,
-               repo_dist: Optional[Path] = None) -> FastAPI:
+               repo_dist: Optional[Path] = None,
+               allow_origins: Iterable[str] = ()) -> FastAPI:
     """建 FastAPI 应用 (不含绑定/启动 —— 那是 `run()` 的事)。
 
     `/api/health` 返回版本与连接状态; 给了静态目录就把它挂在 `/` 上
-    (没有就跳过, 不报错)。
+    (没有就跳过, 不报错)。`allow_origins` 是**额外**放行的跨源, 见 `origin_allowed`。
     """
     resolved = resolve_ui_dir(ui_dir, repo_dist=repo_dist)
-    daemon = Daemon(session, gripper=gripper, version=version, ui_dir=resolved)
+    daemon = Daemon(session, gripper=gripper, version=version, ui_dir=resolved,
+                    allow_origins=allow_origins)
     app = FastAPI(title="LiteArm Studio Daemon", version=version, docs_url=None,
                   redoc_url=None, openapi_url=None)
     # 让 `handle_ws` 拿得到事件循环 (会话事件要从别的线程投递进来)。
@@ -587,7 +646,8 @@ def _open_browser(url: str) -> None:
 async def serve(session: Session, *, gripper: Optional[Any] = None,
                 host: str = "127.0.0.1", http_port: int = 8765,
                 ui_dir: Optional[str] = None, open_browser: bool = True,
-                version: str = __version__) -> None:
+                version: str = __version__,
+                allow_origins: Iterable[str] = ()) -> None:
     """起 uvicorn (前台阻塞到退出)。
 
     ⚠ **只监听 127.0.0.1** —— 这里强制判据, 越线直接报错退出。
@@ -601,7 +661,8 @@ async def serve(session: Session, *, gripper: Optional[Any] = None,
     port = pick_free_http_port(host, http_port)
     if port != http_port:
         print(f"[litearm-studio-daemon] 端口 {http_port} 被占用, 改用 {port}")
-    app = create_app(session, gripper=gripper, version=version, ui_dir=ui_dir)
+    app = create_app(session, gripper=gripper, version=version, ui_dir=ui_dir,
+                     allow_origins=allow_origins)
     config = uvicorn.Config(app, host=host, port=port, log_level="info",
                             ws_ping_interval=20.0, ws_ping_timeout=20.0)
     server = uvicorn.Server(config)

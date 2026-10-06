@@ -17,6 +17,7 @@ from litearm_studio_daemon.server import (
     _is_energy_down_frame,
     _is_loopback,
     create_app,
+    origin_allowed,
     pick_free_http_port,
     resolve_ui_dir,
 )
@@ -50,6 +51,110 @@ def test_cli_refuses_a_non_loopback_host(capsys) -> None:
     """越线暴露一个能驱动机械臂的接口是安全事故 —— 命令行这一层就早退。"""
     assert main(["--host", "0.0.0.0"]) == 2
     assert "只允许监听本机" in capsys.readouterr().err
+
+
+# --------------------------------------------------- 跨源 WebSocket 的准入判据
+
+@pytest.mark.parametrize("origin,host,expected", [
+    # 同源 + loopback: 生产形态 (页面由本进程伺服) 与 dev 代理都走这条
+    ("http://127.0.0.1:8765", "127.0.0.1:8765", True),
+    ("http://localhost:8765", "localhost:8765", True),
+    ("http://[::1]:8765", "[::1]:8765", True),
+    # 同源但端口不同 = 不同的源
+    ("http://127.0.0.1:8765", "127.0.0.1:8766", False),
+    # 别的站点直连本机端口
+    ("http://evil.example", "127.0.0.1:8765", False),
+    # DNS rebinding: Origin 与 Host 都是攻击者的域名 —— 同源判据会通过, 只有 Host
+    # 白名单能拦下。这一条就是这套判据存在的核心理由。
+    ("http://evil.example", "evil.example", False),
+    # 非 http(s) 的源 (沙箱 iframe / 本地文件)
+    ("null", "127.0.0.1:8765", False),
+    ("file:///tmp/x.html", "127.0.0.1:8765", False),
+    # 开发期前端 (vite) 显式放行
+    ("http://localhost:5173", "127.0.0.1:8765", True),
+])
+def test_origin_allowed(origin: str, host: str, expected: bool) -> None:
+    assert origin_allowed(origin, host) is expected
+
+
+def test_origin_allowed_honours_extra_origins() -> None:
+    """`--allow-origin` 是唯一的逃生口, 且只对它自己列出的那个源生效。"""
+    assert origin_allowed("http://localhost:8000", "127.0.0.1:8765",
+                          ["http://localhost:8000"]) is True
+    assert origin_allowed("http://localhost:8001", "127.0.0.1:8765",
+                          ["http://localhost:8000"]) is False
+
+
+def test_ws_rejects_a_cross_origin_handshake() -> None:
+    """任何网页都能连本机端口 —— 所以握手这一层就得拒。
+
+    ⚠ `TestClient.websocket_connect` 把 URL 硬编码成 `ws://testserver`, `base_url`
+    改不了 Host ⇒ 这里显式给 `host` 头, 才是"攻击者的页面连本机端口"的真实形状。
+    """
+    session, app = _client()
+    try:
+        with TestClient(app) as client:
+            with pytest.raises(WebSocketDisconnect):
+                with client.websocket_connect(
+                        "/ws", headers={"origin": "http://evil.example",
+                                        "host": "127.0.0.1:8765"}):
+                    pytest.fail("跨源握手不该建立")
+    finally:
+        session.close()
+
+
+def test_ws_rejects_a_dns_rebinding_handshake() -> None:
+    """Origin 与 Host 都是攻击者的域名 —— 只有 Host 白名单能拦住它。"""
+    session, app = _client()
+    try:
+        with TestClient(app) as client:
+            with pytest.raises(WebSocketDisconnect):
+                with client.websocket_connect(
+                        "/ws", headers={"origin": "http://evil.example",
+                                        "host": "evil.example"}):
+                    pytest.fail("DNS rebinding 的握手不该建立")
+    finally:
+        session.close()
+
+
+def test_ws_accepts_a_same_origin_handshake() -> None:
+    """本进程自己伺服的页面 (生产形态) 必须照常连上。"""
+    session, app = _client()
+    try:
+        with TestClient(app) as client:
+            with client.websocket_connect(
+                    "/ws", headers={"origin": "http://127.0.0.1:8765",
+                                    "host": "127.0.0.1:8765"}) as ws:
+                assert ws.receive_json()["t"] == "hello"
+    finally:
+        session.close()
+
+
+def test_ws_accepts_a_client_without_an_origin_header() -> None:
+    """没有 Origin = 非浏览器客户端 (脚本 / 原生工具)。浏览器一定会发, 故放行它不
+    扩大威胁面 —— 本地进程本来就能直接开串口。"""
+    session, app = _client()
+    try:
+        with TestClient(app) as client:
+            with client.websocket_connect("/ws") as ws:
+                assert ws.receive_json()["t"] == "hello"
+    finally:
+        session.close()
+
+
+def test_ws_accepts_an_explicitly_allowed_origin() -> None:
+    """`--allow-origin` 要真的穿到 `Daemon` 上, 而不只是被解析出来。"""
+    session = Session(port_finder=lambda: None)
+    app = create_app(session, version=VERSION, repo_dist=Path("/nonexistent-ui"),
+                     allow_origins=["http://localhost:8000"])
+    try:
+        with TestClient(app) as client:
+            with client.websocket_connect(
+                    "/ws", headers={"origin": "http://localhost:8000",
+                                    "host": "127.0.0.1:8765"}) as ws:
+                assert ws.receive_json()["t"] == "hello"
+    finally:
+        session.close()
 
 
 # ------------------------------------------------------------------ 端口挑选
@@ -276,6 +381,8 @@ class _YieldingWS:
     def __init__(self, daemon) -> None:
         self.daemon = daemon
         self.sent: list[dict] = []
+        #: 真实 WebSocket 有 `headers`; 准入判据要读它, 所以桩也得有 (空 = 无 Origin)。
+        self.headers: dict = {}
 
     async def accept(self) -> None:
         pass

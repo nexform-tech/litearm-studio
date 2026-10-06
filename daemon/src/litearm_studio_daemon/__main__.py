@@ -54,6 +54,11 @@ def build_parser() -> argparse.ArgumentParser:
                    or activation.DEFAULT_ACTIVATION_URL,
                    help="激活服务地址 (默认 %(default)s; 传空字符串 = 不提供在线激活;"
                         "也可用环境变量 LITEARM_ACTIVATION_URL)")
+    p.add_argument("--allow-origin", metavar="ORIGIN", action="append", default=[],
+                   help="额外放行的跨源 WebSocket 来源, 可重复 (例如 "
+                        "http://localhost:8000)。默认只接受与 Host 同源的握手; "
+                        "浏览器对 WebSocket 不做同源限制, 所以放行一个来源等于让"
+                        "该来源的页面能驱动机械臂 —— 只在你确知用途时才加。")
     p.add_argument("--verbose", "-v", action="store_true", help="打印调试日志")
     return p
 
@@ -123,7 +128,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     try:
         asyncio.run(serve(session, gripper=gripper, host=args.host,
                           http_port=args.http_port, ui_dir=args.ui_dir,
-                          open_browser=not args.no_open))
+                          open_browser=not args.no_open,
+                          allow_origins=args.allow_origin))
     except KeyboardInterrupt:
         return 0
     return 0

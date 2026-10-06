@@ -69,6 +69,20 @@ litearm-studio-daemon --port /dev/ttyACM1 --http-port 9000 --no-open
 **只监听 `127.0.0.1`**：越线暴露一个能驱动机械臂的接口是安全事故，不是配置项——
 换地址只能改代码，没有开关。
 
+**`/ws` 只接受同源握手**：浏览器对 WebSocket **不做同源限制**，所以任何网页都能连
+`ws://127.0.0.1:<port>/ws` 并驱动机械臂。守护进程因此只接受**与 Host 同源**的握手，
+且 Host 必须是 loopback（后者挡 DNS rebinding——那种攻击下 Origin 与 Host 都是攻击者的
+域名，同源判据会通过）。没有 `Origin` 头的握手一律放行：浏览器一定会发它，不发就说明是
+非浏览器客户端（脚本 / 原生工具）。
+
+开发期前端（vite，默认 5173）已显式放行；换端口或换别的源时加 `--allow-origin`：
+
+```bash
+litearm-studio-daemon --allow-origin http://localhost:8000
+```
+
+⚠ 放行一个来源 = 让那个来源的页面能驱动机械臂。只在你确知用途时才加。
+
 ### 退出行为（#14）
 
 进程收尾（Ctrl-C / 关掉控制台 / 服务停止）时会**先 `disable()` 降能量**，然后再关链路：
