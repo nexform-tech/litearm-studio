@@ -5,7 +5,6 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
-import { Toggle } from '@/components/ui/toggle'
 import { FIRMWARE_PHASE_KEYS, formatFirmwareReason } from '@/lib/arm'
 import { useFirmwareUpgrade } from './useFirmwareUpgrade'
 
@@ -203,16 +202,27 @@ export function FirmwareSection() {
           <p className="text-[0.71875rem] leading-relaxed text-muted-foreground">
             {t('settings:firmware.safetyKeep')}
           </p>
-          <Toggle
-            data-testid="firmware-safety-arm"
-            pressed={supported}
-            disabled={running}
-            onPressedChange={setSupported}
-            className="justify-start gap-2 text-[0.71875rem]"
+          {/* ⚠ 用**原生复选框**而不是 `Toggle`：这是一句"我确认……"的声明（与激活页的
+              同意书同性质），复选框才是那个形状；`Toggle` 看起来像"切换某个开关"。
+              样式沿用 `ActivationForm` 的同意书那一条，两处的确认读起来一致。 */}
+          <label
+            htmlFor="firmware-safety-arm"
+            className="flex items-start gap-2 text-[0.71875rem] leading-relaxed"
           >
-            <AlertTriangle className="size-3.5" />
-            {t('settings:firmware.safetyArm')}
-          </Toggle>
+            <input
+              id="firmware-safety-arm"
+              data-testid="firmware-safety-arm"
+              type="checkbox"
+              checked={supported}
+              disabled={running}
+              onChange={(e) => setSupported(e.target.checked)}
+              className="mt-0.5 size-3.5 flex-none accent-primary"
+            />
+            <span className="flex items-start gap-1.5 text-muted-foreground">
+              <AlertTriangle className="mt-0.5 size-3.5 flex-none" />
+              {t('settings:firmware.safetyArm')}
+            </span>
+          </label>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">

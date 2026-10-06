@@ -73,7 +73,14 @@ describe('FirmwareSection', () => {
     const start = screen.getByTestId('firmware-start') as HTMLButtonElement
     expect(start.disabled).toBe(true)
 
-    fireEvent.click(screen.getByTestId('firmware-safety-arm'))
+    // 它是一句"我确认……"的声明，所以形状必须是**复选框**（与激活页的同意书同性质），
+    // 不是看起来像"切换某个开关"的 Toggle。
+    const box = screen.getByTestId('firmware-safety-arm') as HTMLInputElement
+    expect(box.type).toBe('checkbox')
+    expect(box.checked).toBe(false)
+
+    fireEvent.click(box)
+    expect(box.checked).toBe(true)
     expect((screen.getByTestId('firmware-start') as HTMLButtonElement).disabled).toBe(false)
   })
 
