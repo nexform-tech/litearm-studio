@@ -251,6 +251,12 @@ promise this path cannot keep.
 - **Never disable the arm to satisfy the "must be disarmed" gate** (`0x3F/0x04`).
   Dropping motor power is the operator's decision, not a side effect of a licence
   submission.
+- **Activation must not freeze the arm.** The request runs outside the daemon's single
+  command thread, so movement commands keep working while the credential is being
+  fetched; only the two SDK phases (read the UID, write and read back) occupy that
+  thread. A consequence worth knowing: the arm can be enabled during the fetch, and
+  the firmware then refuses the write with `0x3F/0x04`. That is the gate working, not
+  a bug - the operator is told to disarm and retry.
 - **The transport admits only same-origin pages.** A browser does not apply the
   same-origin policy to WebSocket, so without this gate any page the operator visits
   could open `ws://127.0.0.1:<port>/ws` and drive the arm - including `activate` with
