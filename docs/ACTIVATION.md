@@ -68,6 +68,11 @@ Two rules follow.
   are different values and only the former is signed.
 - A credential is bound to one machine. The panel must show the UID prominently
   while the arm is locked, because handing it over is the operator's next action.
+- When the record cannot be read, the daemon **sends nothing**: it never falls back
+  to the UID the client supplied. Registration details filed under an unverified UID
+  would be attached to the wrong machine, and the write could not succeed anyway. The
+  operator is told to check the link and retry; a firmware older than 1.8.0 has no
+  license command at all, so the daemon names the firmware instead of the link.
 
 ## 4. Old firmware reads as `null` today
 
@@ -195,6 +200,10 @@ believe". The file name carries that information instead
   UID whose credential an operator entered in advance on the website's admin side:
   possession of the machine is not enough to obtain a credential, so no second factor
   is needed here.
+- The daemon reads the UID from the device **before** anything goes out. When that
+  read fails it refuses with `device_uid_unavailable`; when the firmware predates the
+  license command it says `firmware_unsupported` instead. Both refuse without sending
+  a byte, and neither is the same thing as a service error.
 
 ### The response
 
@@ -234,3 +243,11 @@ Anything else is reported as a plain server error.
 - **Never disable the arm to satisfy the "must be disarmed" gate** (`0x3F/0x04`).
   Dropping motor power is the operator's decision, not a side effect of a licence
   submission.
+- **The transport admits only same-origin pages.** A browser does not apply the
+  same-origin policy to WebSocket, so without this gate any page the operator visits
+  could open `ws://127.0.0.1:<port>/ws` and drive the arm - including `activate` with
+  a forged `consent.granted`. The daemon rejects a handshake whose `Origin` does not
+  match its `Host`, and requires that `Host` to be loopback, which is the part that
+  stops DNS rebinding (there, `Origin` and `Host` are both the attacker's name). A
+  handshake with no `Origin` at all is a native client rather than a page and stays
+  allowed.

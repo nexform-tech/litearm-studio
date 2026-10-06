@@ -31,7 +31,7 @@ import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import litearm
 from litearm import Arm
@@ -980,13 +980,17 @@ class Session:
                 # ⚠ 唯一出网的一条命令 (见 activation.py 的模块说明)。
                 request = activation.build_request(p)
                 device_uid = _device_uid(arm)
-                if device_uid is not None and device_uid != request["uid"]:
+                if device_uid is None:
+                    # ⚠ **不许**退回客户端填的 UID: 那会把注册信息 (个人信息) 发到一个
+                    #   没人核实过的 UID 上, 而写入注定失败 (docs/ACTIVATION.md §3:
+                    #   UID 必须来自设备的授权记录)。读不到就在这里停下, 不出网。
+                    raise activation.ActivationError(*_uid_unavailable(arm))
+                if device_uid != request["uid"]:
                     raise activation.ActivationError(
                         "uid_mismatch",
                         f"提交的 UID ({request['uid']}) 不是当前这台机器 ({device_uid})")
                 return _submit_license(arm, activation.request_license(
-                    self._activation_url, request,
-                    expected_uid=device_uid or request["uid"]))
+                    self._activation_url, request, expected_uid=device_uid))
             # 白名单与实现**各写一遍**是刻意的: 只在准入处查表的话, 表里加一条而忘了
             # 实现会静默返回 None (前端看到"成功"却什么都没发生)。
             raise UnknownCommandError(m, sorted(COMMANDS))
@@ -1112,11 +1116,34 @@ def _vector(v: Any, n: int, key: str) -> List[float]:
     return out
 
 
+#: 授权功能从 1.8.0 起 (见 `docs/ACTIVATION.md` §2)。
+_LICENSE_MIN_FW = (1, 8, 0)
+
+
+def _uid_unavailable(arm: Arm) -> Tuple[str, str]:
+    """读不到设备 UID 时的 `(reason, message)`。
+
+    ⚠ 要分两种情况: 固件**本来就没有**授权功能 (1.8.0 之前) 与**这一次没读到**。上游 SDK
+    的 `license()` 少传了 `echo_cmd`, 把旧固件回的 `ERR{0x2F,0x00}` 等成了超时 (见
+    litearm-python 的 `_wait_keys` 与 `docs/ACTIVATION.md` §4), 于是在当前 SDK 版本里
+    两者都表现成"没读到"。这里用固件版本把前者摘出来 —— 否则那台机器的用户拿到的是
+    "请检查链路后重试"这句误导话术, 而真正该做的是升级固件。
+    """
+    ver = getattr(arm, "fw_version", None)
+    if ver is not None and tuple(ver) < _LICENSE_MIN_FW:
+        return ("firmware_unsupported",
+                f"固件 {arm.firmware} 没有授权功能 (需要 "
+                f"{_LICENSE_MIN_FW[0]}.{_LICENSE_MIN_FW[1]}.{_LICENSE_MIN_FW[2]} 及以上)")
+    return ("device_uid_unavailable",
+            "读不到设备授权记录, 无法确认这份凭据属于本机 —— 请检查链路后重试")
+
+
 def _device_uid(arm: Arm) -> Optional[str]:
     """当前设备的 UID; 读不到 (固件太旧 / 本次无应答) 时 `None`。
 
-    ⚠ 读不到**不等于**不能激活: 固件要么会拒, 要么本来就没有授权功能。所以调用方在
-    `None` 时降级为"不核对机器", 由固件自己去拒一份不属于本机的凭据 (它会回 `0x3F/0x02`)。
+    ⚠ 调用方**不许**在 `None` 时退回客户端填的 UID: `activate` 会把注册信息 (个人信息)
+    发到那个 UID 上, 而写入注定失败 —— UID 必须来自设备的授权记录
+    (`docs/ACTIVATION.md` §3)。正确做法是在出网之前停下, 见 `_uid_unavailable`。
     """
     state = _license_dict(arm)
     return state["uid"] if state.get("supported") is True else None

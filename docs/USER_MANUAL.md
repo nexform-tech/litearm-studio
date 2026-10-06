@@ -356,6 +356,8 @@ See §1.4. The panel shows this machine's licence state and device UID, and is w
 | Activation says "no credential for this machine" | The supplier has not issued a credential for this device UID | Send the **device UID** (24 hex characters) from Settings → Activation to your supplier, then submit again |
 | Activation says "too many requests" | Too many submissions from this IP or for this UID in a short window | Wait a while and retry |
 | Activation says "cannot reach the activation service" | This machine has no internet access, or the activation service address is wrong | Check the local network; release builds already carry the production address |
+| Activation says "cannot read the device's licence record" | The device did not return its licence record, so **nothing was sent** — a credential must be bound to this machine's UID, and guessing one would file the registration under another machine | Check the USB link (port, power) and retry; if it keeps failing, check the firmware version |
+| Activation says "this firmware has no activation support" | The firmware predates 1.8.0 and has no licence command; on such firmware the refusal looks like a failed read to the current SDK, which is why the firmware is named here | Update the firmware to 1.8.0 or newer |
 | Activation says "disarm first" | The firmware only accepts the licence record while the arm is **disarmed** | Press **Disarm** on the control bar, then submit again |
 | Activation says "consent required" | The *Activation Registration Consent* box is not ticked | Tick it and submit again |
 | "Arm is moving, please wait" | In-flight motion in progress; mutex guard active | Normal safety behavior; wait for move completion or click STOP |
