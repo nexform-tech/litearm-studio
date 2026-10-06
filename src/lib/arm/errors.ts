@@ -56,6 +56,9 @@ const REASON_KEYS: Record<string, string> = {
   //   "激活失败"，看不出该改哪个框。`code_required` 是服务端预留、今天不发的码。
   server: 'activationServerError',
   code_required: 'activationCodeRequired',
+  // ⚠ 服务端说"这个请求本身不成立"（体积过大 / JSON 坏 / 注册信息不合规）。它与
+  //   `server` 的区别就是下一步动作：这条要改注册信息，那条只能等或找供应商。
+  invalid_request: 'activationInvalidRequest',
   invalid_uid: 'activationInvalidUid',
   // 这次提交本身不成立。注册信息逐项分开，是为了让操作员知道该改哪个框，
   // 而不是收到一句笼统的"格式不对"。判据与激活网站的表单同表（`activation._CONTACT_RULES`）。
@@ -126,6 +129,8 @@ const FALLBACK_ZH: Record<string, string> = {
   activationRateLimited: '激活服务暂时拒绝了本次请求（请求过于频繁）：请过一会儿再试',
   activationMaintenance: '激活服务正在维护：请稍后重试',
   activationServerError: '激活服务出错了：请稍后重试；一直失败请联系供应商',
+  activationInvalidRequest:
+    '激活服务拒绝了这份注册信息：请核对带 * 的字段后重新提交（若反复出现，说明网站的字段规则已更新）',
   activationCodeRequired: '激活服务要求提供订单号 / 激活码：请升级上位机，或联系供应商',
   activationInvalidUid: '设备 UID 不是合法的 24 位十六进制：请重新连接机械臂后重试',
   activationConsentRequired: '请先勾选同意发送注册信息',
