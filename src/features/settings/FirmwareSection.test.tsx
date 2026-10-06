@@ -141,12 +141,14 @@ describe('FirmwareSection', () => {
     expect(mocks.cancel).toHaveBeenCalledTimes(1)
   })
 
-  it('only shows the safety confirmation once an image has been picked', () => {
-    // 没选镜像时这一块无从谈起 —— "会不会失能""碰不碰许可证"都要看具体是哪份镜像，
-    // 先摆出来只会变成一段没人读的免责声明。
+  it('shows the safety confirmation even before an image is picked', () => {
+    // 三条事实对任何一份镜像都成立，操作员可以先读完再决定选哪份；等选完才冒出来，
+    // 反而像"选完就必须点下去"。
     mocks.vm = baseVm({ summary: null })
     const { unmount } = render(<FirmwareSection />)
-    expect(screen.queryByTestId('firmware-safety')).toBeNull()
+    expect(screen.getByTestId('firmware-safety')).toBeTruthy()
+    // 但"开始升级"仍然不可用 —— 没有镜像可烧。
+    expect((screen.getByTestId('firmware-start') as HTMLButtonElement).disabled).toBe(true)
     unmount()
 
     mocks.vm = baseVm({ summary: SUMMARY })

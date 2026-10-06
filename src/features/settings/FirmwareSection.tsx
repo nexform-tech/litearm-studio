@@ -192,52 +192,51 @@ export function FirmwareSection() {
         ) : null}
 
         {/* ---- 确认 + 开始 ---- */}
-        {/* ⚠ **选了文件才出现**：没选镜像时这一块无从谈起（"要不要失能""会不会碰许可证"
-            都要看具体是哪份镜像），先摆出来只会变成一段没人读的免责声明。
+        {/* ⚠ 这一块**始终**显示，不等选文件：三条事实（会失能、急停不可达、许可证不被动）
+            对任何一份镜像都成立，操作员可以在选文件之前先读完、再决定要不要动手；等到
+            选完文件才冒出来，反而像是"选完就必须点下去"。
             ⚠ 块内三层东西的权重必须**分得开**：标题（warn 色）/ 三条"会发生什么"的事实
             （次要、可扫）/ 复选框（唯一的动作，最易读）。 */}
-        {vm.summary ? (
-          <div
-            data-testid="firmware-safety"
-            className="flex flex-col gap-2.5 rounded-lg border border-warn-line bg-warn-soft px-3 py-2.5"
-          >
-            <div className="flex items-center gap-1.5 text-[0.71875rem] font-semibold text-warn">
-              <ShieldAlert className="size-3.5 flex-none" />
-              {t('settings:firmware.safetyTitle')}
-            </div>
-            <ul className="flex flex-col gap-1">
-              <li className="flex items-start gap-1.5 text-[0.6875rem] leading-relaxed text-ink-muted">
-                <AlertTriangle className="mt-[0.1875rem] size-3 flex-none" />
-                <span>{t('settings:firmware.safetyDisarm')}</span>
-              </li>
-              <li className="flex items-start gap-1.5 text-[0.6875rem] leading-relaxed text-ink-muted">
-                <Ban className="mt-[0.1875rem] size-3 flex-none" />
-                <span>{t('settings:firmware.safetyStop')}</span>
-              </li>
-              <li className="flex items-start gap-1.5 text-[0.6875rem] leading-relaxed text-ink-muted">
-                <ShieldCheck className="mt-[0.1875rem] size-3 flex-none" />
-                <span>{t('settings:firmware.safetyKeep')}</span>
-              </li>
-            </ul>
-            {/* 复选框是这一块里**唯一**的动作：与上面三条事实分开（自己的底色与描边），
-                文字用正文本色（这一块里最易读的一层），整行可点。 */}
-            <label
-              htmlFor="firmware-safety-arm"
-              className="flex cursor-pointer items-start gap-2 rounded-md border border-warn-line/60 bg-card px-2.5 py-2 text-[0.71875rem] leading-relaxed text-foreground transition-colors hover:border-warn-line"
-            >
-              <input
-                id="firmware-safety-arm"
-                data-testid="firmware-safety-arm"
-                type="checkbox"
-                checked={supported}
-                disabled={running}
-                onChange={(e) => setSupported(e.target.checked)}
-                className="mt-0.5 size-3.5 flex-none accent-primary"
-              />
-              <span>{t('settings:firmware.safetyArm')}</span>
-            </label>
+        <div
+          data-testid="firmware-safety"
+          className="flex flex-col gap-2.5 rounded-lg border border-warn-line bg-warn-soft px-3 py-2.5"
+        >
+          <div className="flex items-center gap-1.5 text-[0.71875rem] font-semibold text-warn">
+            <ShieldAlert className="size-3.5 flex-none" />
+            {t('settings:firmware.safetyTitle')}
           </div>
-        ) : null}
+          <ul className="flex flex-col gap-1">
+            <li className="flex items-start gap-1.5 text-[0.6875rem] leading-relaxed text-ink-muted">
+              <AlertTriangle className="mt-[0.1875rem] size-3 flex-none" />
+              <span>{t('settings:firmware.safetyDisarm')}</span>
+            </li>
+            <li className="flex items-start gap-1.5 text-[0.6875rem] leading-relaxed text-ink-muted">
+              <Ban className="mt-[0.1875rem] size-3 flex-none" />
+              <span>{t('settings:firmware.safetyStop')}</span>
+            </li>
+            <li className="flex items-start gap-1.5 text-[0.6875rem] leading-relaxed text-ink-muted">
+              <ShieldCheck className="mt-[0.1875rem] size-3 flex-none" />
+              <span>{t('settings:firmware.safetyKeep')}</span>
+            </li>
+          </ul>
+          {/* 复选框是这一块里**唯一**的动作：与上面三条事实分开（自己的底色与描边），
+              文字用正文本色（这一块里最易读的一层），整行可点。 */}
+          <label
+            htmlFor="firmware-safety-arm"
+            className="flex cursor-pointer items-start gap-2 rounded-md border border-warn-line/60 bg-card px-2.5 py-2 text-[0.71875rem] leading-relaxed text-foreground transition-colors hover:border-warn-line"
+          >
+            <input
+              id="firmware-safety-arm"
+              data-testid="firmware-safety-arm"
+              type="checkbox"
+              checked={supported}
+              disabled={running}
+              onChange={(e) => setSupported(e.target.checked)}
+              className="mt-0.5 size-3.5 flex-none accent-primary"
+            />
+            <span>{t('settings:firmware.safetyArm')}</span>
+          </label>
+        </div>
 
         <div className="flex flex-wrap items-center gap-2">
           <Button
