@@ -24,6 +24,8 @@ litearm-python ──USB CDC (1d50:606f)──> STM32 ──CAN──> 电机
 
 - Python 3.10+
 - `fastapi` / `uvicorn`（随本包安装）
+- `pyusb` + `libusb-package`（随本包安装）—— 固件升级的 USB 烧录引擎。
+  **Windows 上另外需要 ST 的 WinUSB 驱动**（这是系统驱动，不是 Python 包，见「固件升级」一节）。
 - **`litearm`（litearm-python）不在 PyPI 上**，必须先克隆并安装它：
 
 ```bash
@@ -226,6 +228,41 @@ litearm-studio-daemon --fake --fake-unactivated
 翻成未激活的那台，于是注册表单、同意书勾选、以及按「使能」时固件回的那句
 `ERR{0x10,0x08}` 都能在没有机械臂的情况下走一遍。`--fake-unactivated` 只在 `--fake` 下
 有意义，命令行会拒掉单独使用它。
+
+## 固件升级（USB DFU）
+
+把控制器固件（`.hex` / `.bin`）写进 STM32H723。走**免探针**路径：应用态发
+`CMD_ENTER_DFU (0x15)` → 板子重启进 ROM bootloader（`0483:DF11`）→ 内置的 pyusb/DfuSe
+引擎擦写并读回校验 → 复位回应用 → 重建会话。界面在「设置 → 固件升级」。
+
+| 命令 | 要会话吗 | 说明 |
+| --- | --- | --- |
+| `firmware_inspect` | 不要 | 上传镜像字节（base64），离线解析并给出摘要与 token |
+| `firmware_upgrade` | 要 | 确认后开跑；**立即返回** job 号，进度与终局走广播帧 |
+| `firmware_status` | 不要 | 当前快照（界面重开/重连后据此把进度条接回去） |
+| `firmware_cancel` | 不要 | 请求取消（进入擦写相位后无效） |
+
+下行新增两类帧：`firmware_progress {job, phase, done, total, detail}` 与
+`firmware_result {job, ok, reason, msg, version, port, warning}`。`reason` 是短码，
+界面文案按它选（同激活那条纪律：`msg` 是守护进程写的中文）。
+
+几条必须知道的：
+
+- **升级会把设备交出去**，所以进度不走命令应答：烧录可能几十秒（超过
+  `COMMAND_TIMEOUT_S`），而且进 bootloader 之后**没有机械臂会话**，普通命令一律以
+  「未连接」被拒 —— `firmware_status` / `firmware_cancel` 因此是**会话无关**的。
+- **升级期间不起自愈。** 串口一消失就会判链路死并启动 60s 自动重连，那会跟烧录器
+  抢同一个 USB 设备。`_note_link_lost` 在升级期间直接让位，由升级线程负责把设备接回来。
+- **默认拒绝覆盖扇区 6+7**（许可证 + 出厂标定，只存在于设备、擦掉不可恢复）：
+  `image.inspect` 先拦一道，引擎的 `param_policy="abort"` 再拦一道。
+- **升级前自动失能**（跳转停 TIM3 ⇒ 电机 100ms 后松开）。有重力负载的臂会下垂，
+  所以界面要求操作员确认"手臂已放稳或有支撑"—— 这是界面**无法验证**的一件事，
+  只能让人确认；升级期间急停也不可达（设备在 bootloader 里）。
+- **Windows 需要 ST 的 WinUSB 驱动**；Linux 需要 udev 规则，或用 `libusb-package`
+  自带的库（`dfu/engine.py` 优先用它 —— pyusb 的自动查找在 Windows 上会静默失败）。
+- `--fake` 下注入的是一个**同形的假引擎**，整条流水线（相位顺序、进度、失败收尾）
+  都能在没有硬件时走一遍 —— 但**烧录结果本身**只能在真机验，判据见
+  [`FIRMWARE-UPGRADE-PLAN.md`](../../FIRMWARE-UPGRADE-PLAN.md) §5.3。
 
 ## 对计划文档的偏离与补充
 
