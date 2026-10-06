@@ -6,10 +6,11 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { NumberField } from '@/components/ui/number-field'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Download, RefreshCw, Save, Scale, ShieldCheck, Upload, Activity, Grip, KeyRound, Zap } from 'lucide-react'
+import { Download, RefreshCw, Save, Scale, ShieldCheck, Upload, Activity, Grip, KeyRound, Zap, HardDriveDownload } from 'lucide-react'
 import { useSettingsState, type SettingsState } from './useSettingsState'
 import { GripperSection } from './GripperSection'
 import { ActivationSection } from './ActivationSection'
+import { FirmwareSection } from './FirmwareSection'
 
 function Section({
   title,
@@ -310,7 +311,7 @@ function DiagnosticsSection({ vm }: { vm: SettingsState }) {
 }
 
 /** 页签 id —— 与下面每个 `TabsTrigger value` 一一对应。 */
-const TAB_IDS = ['payload', 'gravity', 'joints', 'diagnostics', 'gripper', 'activation'] as const
+const TAB_IDS = ['payload', 'gravity', 'joints', 'diagnostics', 'gripper', 'activation', 'firmware'] as const
 const DEFAULT_TAB = 'payload'
 
 /**
@@ -360,7 +361,7 @@ export function SettingsPage() {
         </div>
 
         <Tabs defaultValue={initialTab(searchParams)} className="w-full space-y-4">
-          <TabsList className="grid h-11 w-full grid-cols-2 rounded-xl bg-muted/60 p-1 md:grid-cols-6">
+          <TabsList className="grid h-11 w-full grid-cols-2 rounded-xl bg-muted/60 p-1 md:grid-cols-7">
             <TabsTrigger value="payload" className="gap-1.5 rounded-lg text-xs font-semibold">
               <Scale className="size-3.5" />
               {t('settings:tabs.payload')}
@@ -385,6 +386,10 @@ export function SettingsPage() {
               <KeyRound className="size-3.5" />
               {t('settings:tabs.activation')}
             </TabsTrigger>
+            <TabsTrigger value="firmware" className="gap-1.5 rounded-lg text-xs font-semibold">
+              <HardDriveDownload className="size-3.5" />
+              {t('settings:tabs.firmware')}
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="payload" className="focus-visible:outline-none">
@@ -404,6 +409,9 @@ export function SettingsPage() {
           </TabsContent>
           <TabsContent value="activation" className="focus-visible:outline-none">
             <ActivationSection />
+          </TabsContent>
+          <TabsContent value="firmware" className="focus-visible:outline-none">
+            <FirmwareSection />
           </TabsContent>
         </Tabs>
       </div>

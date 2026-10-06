@@ -52,10 +52,13 @@ vi.mock('@/lib/arm', () => ({
 
 const { SettingsPage } = await import('./SettingsPage')
 
-// 这个文件只关心"页签有没有被 URL 选中"；授权面板自身的行为由
-// `ActivationSection.test.tsx` 覆盖（真渲染它还要把整个 armClient 桩起来）。
+// 这个文件只关心"页签有没有被 URL 选中"；两个面板自身的行为由各自的
+// `*.test.tsx` 覆盖（真渲染它们还要把整个 armClient 桩起来）。
 vi.mock('./ActivationSection', () => ({
   ActivationSection: () => <div data-testid="activation-section" />,
+}))
+vi.mock('./FirmwareSection', () => ({
+  FirmwareSection: () => <div data-testid="firmware-section" />,
 }))
 
 /**
@@ -175,9 +178,15 @@ describe('SettingsPage axis scaling', () => {
     expect(screen.getByTestId('activation-section')).toBeDefined()
 
     cleanup()
+    // 固件升级同样要有 URL 入口 —— 支持话术会让人直接跳过去。
+    renderAt('/settings?tab=firmware')
+    expect(screen.getByTestId('firmware-section')).toBeDefined()
+
+    cleanup()
     // 认不出的值退回默认页签 —— 这个查询串是别人给的，拼错不该让整页打不开。
     renderAt('/settings?tab=nonsense')
     expect(await screen.findByDisplayValue('1')).toBeDefined()
     expect(screen.queryByTestId('activation-section')).toBeNull()
+    expect(screen.queryByTestId('firmware-section')).toBeNull()
   })
 })

@@ -1,7 +1,19 @@
 import type { CommandError } from './socket'
 import { DaemonSocket } from './socket'
+import {
+  fileToBase64,
+  normalizeFirmwareProgress,
+  normalizeFirmwareResult,
+  normalizeFirmwareStatus,
+} from './firmware'
+import type {
+  FirmwareImageSummary,
+  FirmwareProgress,
+  FirmwareResult,
+  FirmwareStatus,
+} from './firmware'
 
-export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'error'
+export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'error' | 'upgrading'
 
 /** daemon `conn` 帧的连接信息（计划 3.1）。 */
 export type ConnInfo = {
@@ -233,6 +245,11 @@ export class ArmClient {
   private stateListeners = new Set<Listener>()
   private stateFastListeners = new Set<Listener>()
   private motionListeners = new Set<Listener>()
+  // 固件升级的进度/终局走**广播帧**（不是 RPC 应答）—— 烧录可能几十秒，超过
+  // daemon 的命令超时，而且进 DFU 之后没有会话可问。所以这里与 `state` 同形：
+  // 一组订阅者，帧到了就通知。
+  private firmwareProgressListeners = new Set<(p: FirmwareProgress) => void>()
+  private firmwareResultListeners = new Set<(r: FirmwareResult) => void>()
 
   /** `hello` 帧只来一条，存下来供激活时填写诊断信息（见 `versions`）。 */
   private _hello: HelloInfo | null = null
@@ -249,6 +266,14 @@ export class ArmClient {
     this.socket.onFrame('conn', (msg) => this._applyConn(msg))
     this.socket.onFrame('hello', (msg) => this._applyHello(msg))
     this.socket.onFrame('state', (msg) => this._applyState(msg.state as RobotState | null | undefined))
+    this.socket.onFrame('firmware_progress', (msg) => {
+      const p = normalizeFirmwareProgress(msg)
+      for (const l of [...this.firmwareProgressListeners]) l(p)
+    })
+    this.socket.onFrame('firmware_result', (msg) => {
+      const r = normalizeFirmwareResult(msg)
+      for (const l of [...this.firmwareResultListeners]) l(r)
+    })
     this.socket.onLifecycle((s) => {
       if (s === 'connecting' || s === 'reconnecting' || s === 'error' || s === 'disconnected') {
         // 传输层一动，臂这边的状态就作废：daemon 会在下一次握手时重发 `conn`/`state`，
@@ -441,6 +466,63 @@ export class ArmClient {
     return normalizeLicense(await this._sendCmd('activate', { ...request }))
   }
 
+  // ─────────────────────────── 固件升级（USB DFU） ───────────────────────────
+  //
+  // 三步：**校验镜像 → 确认 → 开始**。校验单独一步是刻意的 —— 操作员要在动手之前
+  // 看见"这是哪个版本、多大、会不会碰到许可证扇区"，而校验失败必须发生在**任何
+  // 硬件动作之前**（见 daemon `session._inspect_image`）。
+  //
+  // ⚠ 开始之后**不要**等这个 Promise 出结果：它只回一个 job 号，真正的进度与终局
+  // 走 `onFirmwareProgress` / `onFirmwareResult`。
+
+  /** 离线校验一份镜像（浏览器选的文件**整体上传**给守护进程；前端不解析 HEX）。 */
+  async firmwareInspect(file: File): Promise<FirmwareImageSummary> {
+    const data = await fileToBase64(file)
+    return (await this._sendCmd('firmware_inspect', {
+      name: file.name,
+      data,
+    })) as FirmwareImageSummary
+  }
+
+  /**
+   * 开始升级 —— `token` 来自 {@link firmwareInspect}。
+   *
+   * `confirm` 是硬门禁（守护进程判，不是界面禁用按钮）：升级会先失能，机械臂失去
+   * 支撑会下垂。
+   */
+  async firmwareUpgrade(token: string): Promise<{ job: string; phase: string }> {
+    return (await this._sendCmd('firmware_upgrade', {
+      token,
+      confirm: true,
+    })) as { job: string; phase: string }
+  }
+
+  /** 当前升级快照 —— 页面重开/重连之后靠它把进度条接回去。 */
+  async firmwareStatus(): Promise<FirmwareStatus> {
+    return normalizeFirmwareStatus(await this._sendCmd('firmware_status'))
+  }
+
+  /** 请求取消。**只在可取消的相位生效**：进了擦写就无效（擦一半比烧完更糟）。 */
+  async firmwareCancel(): Promise<{ cancelled: boolean }> {
+    return (await this._sendCmd('firmware_cancel')) as { cancelled: boolean }
+  }
+
+  /** 订阅进度帧。返回退订函数。 */
+  onFirmwareProgress(cb: (p: FirmwareProgress) => void): () => void {
+    this.firmwareProgressListeners.add(cb)
+    return () => {
+      this.firmwareProgressListeners.delete(cb)
+    }
+  }
+
+  /** 订阅终局帧。返回退订函数。 */
+  onFirmwareResult(cb: (r: FirmwareResult) => void): () => void {
+    this.firmwareResultListeners.add(cb)
+    return () => {
+      this.firmwareResultListeners.delete(cb)
+    }
+  }
+
   // ───────────────── 参数 / 标定 / 自检（设置页用，计划 §5「直接接线」） ─────────────────
   // ⚠ 前馈 item 编号不是猜的（见 daemon `session.py` 与 SDK `arm.py`）：
   //   4 = 载荷质量, 5 = 质心(sub 0..2), 6 = 重力向量(sub 0..2),
@@ -556,9 +638,14 @@ export class ArmClient {
         ? 'connected'
         : conn.status === 'connecting'
           ? 'connecting'
-          : conn.status === 'error'
-            ? 'error'
-            : 'disconnected'
+          : conn.status === 'upgrading'
+            // ⚠ 升级期间设备在 ROM bootloader 里，daemon 报的就是这个状态。单独一档
+            //   而不是并进 `disconnected`：那会让顶栏说"已断开"，操作员以为掉线了，
+            //   而真相是**我们自己**把设备交出去烧录。
+            ? 'upgrading'
+            : conn.status === 'error'
+              ? 'error'
+              : 'disconnected'
     this._setStatus(mapped)
   }
 

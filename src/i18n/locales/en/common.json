@@ -17,6 +17,7 @@
   "connecting": "Connecting...",
   "reconnecting": "Reconnecting...",
   "disconnected": "Disconnected",
+  "upgrading": "Updating firmware",
   "disconnect": "Disconnect",
   "stop": "Stop current motion (E-Stop)",
   "stopSim": "Sim mode: does not control the real robot",
@@ -132,6 +133,22 @@
     "activationCodeRequired": "The activation service requires an order number or activation code: upgrade Studio, or contact your supplier",
     "activationInvalidUid": "The device UID is not a valid 24-character hex string: reconnect the arm and try again",
     "activationDeviceUidUnavailable": "Cannot read the arm's license record, so this machine cannot be confirmed and nothing was sent: check the USB link and retry",
-    "activationFirmwareUnsupported": "This firmware has no activation support (1.8.0 or newer is required): update the firmware"
+    "activationFirmwareUnsupported": "This firmware has no activation support (1.8.0 or newer is required): update the firmware",
+    "upgradeBusy": "A firmware update is running: the device is in the bootloader, wait for it to finish (or cancel) before doing anything else",
+    "firmwareUpgradeRefused": "The update did not start: {{message}}",
+    "firmwareImageRejected": "This firmware image cannot be used: {{message}}",
+    "firmwareUpgradeFailed": "Firmware update failed: {{message}}",
+    "firmwareImageUnreadable": "This image cannot be read: it is neither valid Intel HEX nor a .bin. Ask your supplier for the official .hex",
+    "firmwareImageNotAtBase": "The image does not start at 0x08000000, which is the only place the application runs from: check that you picked the firmware and not another segment",
+    "firmwareImageTooLarge": "The image is larger than the controller's 1 MB of flash: check that you picked the right file",
+    "firmwareImageCoversProtected": "The image covers the sectors holding the licence and the factory calibration, which cannot be restored once erased: this image must not be used; ask your supplier for the correct firmware",
+    "firmwareConfirmRequired": "Not confirmed: the update disarms the arm first, and an unsupported arm will sag",
+    "firmwareEngineUnavailable": "This machine has no usable USB flashing engine: {{message}} (pyusb and libusb are required; on Windows the ST WinUSB driver is needed too)",
+    "firmwareArmEnabled": "The arm did not disarm, so the update was stopped: entering the bootloader while armed lets the motors go and the arm sags",
+    "firmwareDfuNotEntered": "The controller did not accept the request to enter the bootloader (the registration was revoked or never executed): the arm is unchanged, confirm it is disarmed and retry",
+    "firmwareDfuAbsent": "No DFU device (0483:DF11) appeared after entering the bootloader: check the USB cable; Windows needs the ST WinUSB driver",
+    "firmwareFlashFailed": "Flashing failed: {{message}}. The affected sectors were erased back to blank where possible, so you can retry; repeated failures need an SWD probe",
+    "firmwareReconnectFailed": "The firmware was written and verified by read-back, but the controller could not be reconnected: {{message}}",
+    "firmwareCancelled": "The update was cancelled (cancelling has no effect once flashing has started)"
   }
 }
