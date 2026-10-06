@@ -366,6 +366,28 @@ def test_cancel_before_the_flash_stops_the_pipeline() -> None:
         s.close()
 
 
+def test_status_says_whether_the_job_is_still_running(session) -> None:
+    """界面靠 `running` 区分"这次还在跑"与"上一次已经结束"。
+
+    ⚠ 两者都带着最后一条进度的相位（结束那次是 `done`）。少了这个字段，页面重开时
+    会看到"升级进行中 · 完成"这种自相矛盾的话 —— 这不是文案问题，是状态不足。
+    """
+    assert session.execute("firmware_status", {})["running"] is False
+
+    session._upgrade_job = "fw-test"
+    session._upgrade_progress = {"phase": "done", "done": 0, "total": 0, "detail": ""}
+    session._upgrade_result = {"job": "fw-test", "ok": True}
+    try:
+        assert session.execute("firmware_status", {})["running"] is False   # 已结束
+        session._upgrading = True
+        assert session.execute("firmware_status", {})["running"] is True    # 还在跑
+    finally:
+        session._upgrading = False
+        session._upgrade_job = None
+        session._upgrade_progress = None
+        session._upgrade_result = None
+
+
 def test_status_reports_the_engine_so_the_ui_can_warn_early() -> None:
     s = Session(fake=True, dfu_engine=_NoEngine())
     try:

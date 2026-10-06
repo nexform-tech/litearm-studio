@@ -1207,16 +1207,24 @@ class Session:
         return {**summary.to_dict(), "token": token}
 
     def _upgrade_status(self) -> dict:
-        """当前升级快照 —— 界面重连之后靠它把进度条接回去。"""
+        """当前升级快照 —— 界面重连之后靠它把进度条接回去。
+
+        ⚠ `running` 是**必需的**，不是可有可无的装饰：没有它，界面分不清"这次还在跑"
+        与"上一次已经结束" —— 两者都带着最后一条进度的相位（结束那次是 `done`），
+        于是刷新页面会看到"升级进行中 · 完成"这种自相矛盾的话。
+        """
         ready = bool(self._dfu_engine.available())
         engine = self._dfu_engine.backend_status()
         with self._lock:
             job = self._upgrade_job
             progress = dict(self._upgrade_progress or {})
             result = self._upgrade_result
+            running = self._upgrading
         if job is None:
-            return {"job": None, "engine": engine, "engineReady": ready}
+            return {"job": None, "engine": engine, "engineReady": ready,
+                    "running": False}
         return {"job": job, "engine": engine, "engineReady": ready,
+                "running": running,
                 "phase": progress.get("phase"),
                 "done": progress.get("done", 0),
                 "total": progress.get("total", 0),

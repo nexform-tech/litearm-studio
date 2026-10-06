@@ -49,8 +49,10 @@ export function useFirmwareUpgrade() {
     try {
       const st = await armClient.firmwareStatus()
       setEngine({ ready: st.engineReady, label: st.engine })
-      // 页面重开/重连之后，若守护进程那边还有一次升级在跑，把进度条接回去。
-      if (st.job) {
+      // ⚠ **只**恢复"还在跑"的那一次。已经结束的 job 一律不恢复 —— 上一次升级的结果
+      //   不该在页面打开时冒出来：它不是这次发生的事，露出来只会让人以为刚跑完。
+      //   （守护进程会把上一个 job 连同它的 `done` 相位一直留着，所以这里必须自己筛。）
+      if (st.job && st.running) {
         setJob(st.job)
         setProgress({
           job: st.job,
@@ -59,7 +61,7 @@ export function useFirmwareUpgrade() {
           total: st.total ?? 0,
           detail: st.detail ?? '',
         })
-        if (st.result) setResult(st.result)
+        setResult(null)
       }
     } catch (err) {
       // 守护进程没起来时不弹错：这一段是"顺手问一下"，不是用户动作。

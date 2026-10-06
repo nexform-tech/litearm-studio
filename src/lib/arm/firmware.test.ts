@@ -41,7 +41,7 @@ describe('firmware normalize', () => {
 
   it('reports a null job when nothing is running, and keeps engine readiness', () => {
     expect(normalizeFirmwareStatus({ engine: 'pyusb', engineReady: false }))
-      .toEqual({ job: null, engine: 'pyusb', engineReady: false })
+      .toEqual({ job: null, engine: 'pyusb', engineReady: false, running: false })
   })
 
   it('nests the result inside a status snapshot', () => {

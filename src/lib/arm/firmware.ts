@@ -58,6 +58,14 @@ export type FirmwareStatus = {
   engine: string
   /** 引擎能不能用。**开跑之前**就要能看到，否则跳进 DFU 才发现没引擎最难收场。 */
   engineReady: boolean
+  /**
+   * 这次升级**还在跑**吗。
+   *
+   * ⚠ 必需字段：没有它，界面分不清"这次还在跑"与"上一次已经结束" —— 两者都带着
+   * 最后一条进度的相位（结束那次是 `done`），于是刷新页面会看到
+   * "升级进行中 · 完成" 这种自相矛盾的话。
+   */
+  running?: boolean
   phase?: string | null
   done?: number
   total?: number
@@ -105,12 +113,14 @@ export function normalizeFirmwareStatus(raw: unknown): FirmwareStatus {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
   const job = nullableStr(r.job)
   if (!job) {
-    return { job: null, engine: str(r.engine), engineReady: r.engineReady === true }
+    return { job: null, engine: str(r.engine), engineReady: r.engineReady === true,
+             running: false }
   }
   return {
     job,
     engine: str(r.engine),
     engineReady: r.engineReady === true,
+    running: r.running === true,
     phase: nullableStr(r.phase),
     done: num(r.done),
     total: num(r.total),

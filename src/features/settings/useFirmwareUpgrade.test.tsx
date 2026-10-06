@@ -66,6 +66,7 @@ describe('useFirmwareUpgrade', () => {
     mocks.onResult = null
     mocks.firmwareStatus.mockResolvedValue({
       job: null, engine: 'libusb-package: /x/libusb-1.0.so', engineReady: true,
+      running: false,
     })
     mocks.firmwareInspect.mockResolvedValue(SUMMARY)
     mocks.firmwareUpgrade.mockResolvedValue({ job: 'fw-1', phase: 'validate' })
@@ -186,11 +187,33 @@ describe('useFirmwareUpgrade', () => {
 
   it('picks a running job back up so a reloaded page keeps its progress bar', async () => {
     mocks.firmwareStatus.mockResolvedValue({
-      job: 'fw-9', engine: 'e', engineReady: true, phase: 'flash',
+      job: 'fw-9', engine: 'e', engineReady: true, running: true, phase: 'flash',
       done: 5, total: 10, detail: '写入', result: null,
     })
     const { result } = renderHook(() => useFirmwareUpgrade())
     await waitFor(() => expect(result.current.job).toBe('fw-9'))
     expect(result.current.progress?.phase).toBe('flash')
+    expect(result.current.running).toBe(true)
+  })
+
+  it('does not restore a finished job — no stale result, no stale progress', async () => {
+    // ⚠ 守护进程会把**上一个** job 一直留着（连它的 `done` 相位和结果一起）。页面重开
+    //   时若照单全收：轻则冒出"升级进行中 · 完成"这种自相矛盾的话，重则让操作员以为
+    //   刚刚发生了一次升级。所以只恢复"还在跑"的那一次，结束的一律不要。
+    mocks.firmwareStatus.mockResolvedValue({
+      job: 'fw-8', engine: 'e', engineReady: true, running: false, phase: 'done',
+      done: 10, total: 10, detail: '完成',
+      result: {
+        job: 'fw-8', ok: true, reason: null, msg: '升级完成并通过读回校验',
+        version: 'Litearm1.9.0-7J', port: '/dev/ttyACM0', warning: null,
+      },
+    })
+    const { result } = renderHook(() => useFirmwareUpgrade())
+    await waitFor(() => expect(result.current.engine).not.toBeNull())
+
+    expect(result.current.result).toBeNull()
+    expect(result.current.progress).toBeNull()
+    expect(result.current.running).toBe(false)
+    expect(result.current.job).toBeNull()
   })
 })
