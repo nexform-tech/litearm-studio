@@ -3,8 +3,8 @@ title: "LiteArm Studio"
 subtitle: "User Manual"
 title-meta: "LiteArm Studio User Manual"
 author: "NEXFORM ROBOTICS"
-version: "v1.0"
-date: "September 8, 2026"
+version: "v1.1"
+date: "October 6, 2026"
 ---
 
 # LiteArm Studio User Manual
@@ -16,41 +16,77 @@ date: "September 8, 2026"
 
 ### 1.1 Overview
 
-LiteArm Studio is the graphical host software designed for LiteArm 7-DoF (J1–J7) robotic arms. Connecting to the backend control service (`litearm-server`), it provides real-time motion control, trajectory teaching, status monitoring, and system management.
+LiteArm Studio is the graphical host software for LiteArm 7-DoF (J1–J7) robotic arms. It provides real-time motion control, trajectory teaching, status monitoring, and system management.
+
+The software is **one local program** (`litearm-studio-daemon`) plus **one browser UI**: the program owns the arm's USB serial port and serves the UI, which talks to it over the loopback interface. **There is no backend server, and no IP address to configure.**
+
+```
+Browser window (React UI, served by the local program)
+   │ HTTP → static assets, /api/health
+   │ WS   → state push / commands
+   ▼
+litearm-studio-daemon (listens on 127.0.0.1 only)
+   ▼
+STM32 firmware ──USB CDC (1d50:606f)──> CAN ──> motors
+```
 
 | Core Module | Key Features |
 | :--- | :--- |
 | Control | 3D pose monitoring & simulation, joint angle control, Cartesian jog & linear interpolation, mode switching, one-click homing |
 | Trajectory | Zero-gravity manual lead-through teaching, trajectory library, multi-speed & loop playback, safe takeover |
-| Logs & Telemetry | Joint telemetry sampling & recording, session details & CSV export, backend runtime log search |
-| Settings | End-effector payload calibration, mounting orientation & gravity scaling, safety limits, servo gains, end-effector device mounting, and system maintenance |
+| Telemetry | Joint telemetry sampling & recording, session details, CSV export |
+| Settings | End-effector payload, gravity & inertia, gains & limits, diagnostics, gripper & bus, activation |
+| Activation | Read the licence state and device UID; submit registration details to obtain this machine's credential and write it to the device |
 
-### 1.2 Desktop Application Packages
+### 1.2 Install and run
 
-LiteArm Studio is distributed as pre-packaged standalone desktop applications:
+Download the executable for your platform and verify it against the `.sha256` published next to it:
 
-- Windows: Run the native setup wizard (`LiteArm Studio-Setup-<version>.exe`) to install and launch;
-- Linux / Ubuntu: Standard Debian package (`.deb`) or standalone executable (`.AppImage`).
-
-### 1.3 Connecting to the Backend Service
-
-Upon launch, the software attempts to connect to the configured backend endpoint (default port `7449`). The connection badge at the top left provides instant feedback on link status:
-
-| Badge Status | Display & Color | Description |
+| Platform | File | How to run |
 | :--- | :--- | :--- |
-| Connected | Green Dot · `Connected · <IP:Port>` | Connection is healthy. Full control and monitoring are active. |
-| Connecting / Reconnecting | Gray/Flashing · `Connecting…` | Connecting in progress, or automatically attempting reconnect after disconnect. |
-| Disconnected / Error | Red Dot · `Connect Failed · <Reason>` | Service not running, CAN interface down, or invalid IP/port configured. |
+| Windows | `litearm-studio-<version>-windows.exe` | Double-click |
+| Linux | `litearm-studio-<version>-linux` | `chmod +x`, then run |
 
-![Controller Connection Settings Dialog](images/en/02_header_endpoint_modal.png)
+The program is self-contained: it needs no Python install and no browser tab opened by hand — it opens a window itself (in `--app=` mode when a Chromium-based browser is present, otherwise a normal tab). It prints the address it listens on, `http://127.0.0.1:8765/` by default; if that port is taken it picks the next free one and prints it — **use the printed address**.
 
-#### Configuring Connection Endpoint
+> [!IMPORTANT]
+> **On Linux the current user must be allowed to open the serial port** (the device node normally belongs to the `dialout` group), otherwise the UI opens but cannot reach the arm:
+> ```bash
+> sudo usermod -aG dialout "$USER"   # takes effect after you log in again
+> ```
+> Alternatively add a udev rule for VID:PID `1d50:606f` with mode `0666`.
 
-1. Click the connection badge on the left of the top status bar to open the "Controller Connection Settings" dialog;
-2. Enter the backend service IP Address and Port (default port is `7449`):
-   - Single-Machine Mode: The service runs locally; keep IP as `127.0.0.1` and port `7449`;
-   - Dedicated Host Mode: The service runs on an independent IPC or compute box; enter its LAN IP address;
-3. Click "Connect" or press Enter. The configuration is saved locally and restored automatically on subsequent launches.
+### 1.3 Connecting to the arm
+
+On start, the local program **finds the arm's USB CDC device automatically** (VID:PID `1d50:606f`) and opens a session as soon as it appears. The badge on the left of the top bar reports the state:
+
+| Badge | Display | Meaning |
+| :--- | :--- | :--- |
+| Connected | Green dot · `<port> · <firmware>` | Session established; control and monitoring available |
+| Connecting / Reconnecting | Gray / flashing · `Connecting…` | Session being established; the link retries automatically after a drop |
+| Connect failed | Red dot · `Connect failed` | Device not found, firmware version mismatch, or link failure |
+
+The **Connect / Disconnect** buttons on the top bar open or close the session by hand. **There is no IP address or port to fill in**; if the device appears at a non-default path, pass `--port`.
+
+### 1.4 Activation (required on first use)
+
+> [!IMPORTANT]
+> An unactivated arm **refuses to enable** (the firmware answers `ERR{0x10,0x08}`) while every other command keeps working. Complete this section before first use.
+
+Open **Settings → Activation**. The panel shows this machine's licence state and device UID.
+
+1. While unactivated the panel reads **Not activated** and lists the **device UID** (24 hex characters). Press **Copy** and give that string to your supplier.
+2. The supplier issues a credential for this machine's UID.
+3. Fill in the registration form — **name, phone, organization, email and region are required**; WeChat ID, industry and purpose are optional — and read and accept the *Activation Registration Consent*.
+4. **Disarm the arm first**: the firmware only accepts the licence record while the arm is disarmed, otherwise the submission is rejected with "disarm first".
+5. Press **Submit and activate**. The program sends the registration details together with the device UID to the activation service, receives this machine's credential, writes it to the device, and reads it back to confirm.
+
+Once it succeeds the panel reads **Activated** and lists the customer ID, issue date and record version, and the firmware will accept `enable`.
+
+- **The credential is bound to one machine**: a different arm needs a credential issued for its own UID.
+- **The record is written once and cannot be erased**: the UI offers no "deactivate"; clearing it means returning the unit to the factory and erasing the licence sector with a debug probe (SWD).
+- Activation is the **only action in the whole application that uses the network**. The consent document lists every field that is sent; no internal addresses or host names are collected.
+- If the panel reads **Unreadable** or **Unsupported**: press Refresh for the former; the latter means the firmware predates 1.8.0 and must be upgraded.
 
 #### Real-time Health Metrics
 
@@ -236,90 +272,66 @@ Telemetry recording begins automatically upon connection, saving 10 Hz samples o
 
 Click "Export CSV" to download the full time-series telemetry data as a `.csv` file for analysis in MATLAB, Python (Pandas), or Excel.
 
-### 4.3 Backend Runtime Logs
+### 4.3 Link Diagnostics
 
-Switch to the "Controller Logs" tab to stream diagnostic logs from `litearm-server`:
-
-![Backend Runtime Logs](images/en/15_controller_logs.png)
-
-- Log Levels: Labeled DEBUG, INFO, WARNING, ERROR, CRITICAL;
-- Keyword Filter: Search for terms like `gripper`, `motion`, or `fault` for instant filtering;
-- Auto-Refresh: Polls for new logs every 5 seconds; toggle with "Pause" or click "Refresh".
+The current version has no separate "Controller Logs" page. For link health, use **Settings → Diagnostics → Firmware self-test**: it runs a kinematics self-test and reports the link diagnostic counters (CRC errors, dropped FIFO frames) — those are the first numbers to move when the USB link misbehaves. Overall runtime metrics live in the top bar (control frequency, maximum joint temperature, fault state).
 
 ---
 
 ## 5. System & Algorithm Settings
 
-The Settings page provides dynamics calibration, safety limits, servo gains, and maintenance tools.
+The Settings page is organised into six tabs: **Payload / Gravity & Inertia / Gains & Limits / Diagnostics / Gripper & Bus / Activation** (activation is covered in §1.4).
 
-### 5.1 Payload & Mounting Calibration
+### 5.1 Payload
 
-Accurate payload and mounting calibration is required for gravity compensation and lead-through teaching.
+Configure the tool/workpiece mass and centre of mass used by the firmware's gravity feed-forward.
 
-![Payload and Mounting Calibration](images/en/16_settings_payload.png)
+![Payload](images/en/16_settings_payload.png)
 
-- End-Effector Payload:
-  - Enter tool and workpiece Mass (kg);
-  - Enter center-of-mass offset (X, Y, Z) in meters relative to the tool flange;
-  - Presets: `No Load`, `0.25 kg`, `0.5 kg`; click "Apply & Save Payload".
-- Mounting Pose & Gravity Calibration:
-  - Base Euler Angles (Base RPY): Presets for `Standard (0,0,0)`, `Inverted (π,0,0)`, and `Side Wall (0,π/2,0)`, with fine-tuning for Roll, Pitch, and Yaw (rad); click "Update Mounting Pose";
-  - Joint Gravity Scale: Adjust gravity compensation scale per joint J1–J7 (range 0–10, default 1.0); changes take effect with a smooth 2-second ramp; click "Restore All 1.0" to reset.
+- **Mass** (kg) and **centre of mass X / Y / Z** (metres, relative to the tool flange), corresponding to feed-forward items 4 and 5;
+- ⚠ The firmware **silently clamps** these values (mass to ≥ 0, centre of mass to ±1 m) instead of rejecting them, so the "effective" line on the panel is the truth — it is what was read back after writing.
 
 ---
 
-### 5.2 Safety Limits & Boundaries
+### 5.2 Gravity & Inertia
 
-Inspect and configure physical boundaries and collision thresholds.
-
-![Safety and Limit Settings](images/en/17_settings_safety.png)
-
-- Joint Limits & Zero Offsets: Configure lower limit, upper limit (rad), and zero offset per joint J1–J7;
-- Cartesian Limits & Collision Protection: Set maximum linear velocity, angular velocity, linear acceleration, angular acceleration ceilings, and collision sensitivity;
-- Limits are enforced by firmware and dynamics configuration to prevent mechanical overtravel and collision.
+- **Per-joint gravity scale**: the feed-forward gain for each joint; `1.0` is the firmware default;
+- **Per-joint inertia scale**: the inertia term on the same feed-forward channels;
+- **Gravity direction**: the gravity unit vector in the base frame (feed-forward scalar item 6);
+- ⚠ The firmware's feed-forward vector is fixed at **7 channels**. When the arm reports fewer axes, the panel draws only the existing channels, but **saving still writes all 7 values**.
 
 ---
 
-### 5.3 Servo Driver Gains & Fault Clearing
+### 5.3 Gains & Limits
 
-Gain tuning and diagnostic tools for all seven servo drivers:
+![Gains and Limits](images/en/18_settings_gains.png)
 
-![Servo Gains and Fault Clear](images/en/18_settings_gains.png)
-
-- PD Gains: Displays position proportional gain Kp and derivative damping gain Kd per axis, with stiffness presets for Compliant (0.6x), Standard (1.0x), and High Stiffness (1.5x);
-- Restore Factory PD Gains: Resets gains to calibrated defaults in case of vibration or insufficient stiffness;
-- Fault Clearing & E-Stop Release: Broadcasts clear-fault commands to drivers, or releases software lock states.
+- **Per-joint gains and soft limits**: MIT stiffness / damping / torque clamp for each joint, plus the soft limits `q_min` / `q_max` (rad) that set the slider range on the control page;
+- **Persist to flash**: the firmware only allows flash writes while the arm is **disarmed**; it refuses while enabled;
+- **Restore factory**: resets every parameter to the factory default. This cannot be undone.
 
 ---
 
-### 5.4 End-Effector Device Management
+### 5.4 Gripper & Bus
 
-Manage attached end-effector tools and communication bus binding:
+Configure the LiteGrip gripper on this CAN channel: **channel, CAN ID, mounting orientation, calibration file and measured travel**.
 
-![End-Effector Device Management](images/en/20_settings_end_effector.png)
-
-- Device Selection: Supports electric parallel grippers and multi-DoF dexterous hands;
-- Bus Interface Binding: Select the SocketCAN interface (e.g. `can0`);
-- Mount & Lifecycle: Click "Mount & Start" to launch the background daemon, or "Unmount Device" when swapping tools.
+- Calibration comes from one of two sources: the **nominal template** (shipped with the SDK; it only declares the mounting orientation and nominal geometry and has never been measured on this machine — so millimetre targets are refused until you run a zero calibration) or a **measured calibration**;
+- The mounting orientation must match the actual wiring; the panel says so explicitly when the declared and actual orientations disagree;
+- The per-channel **travel record** is what every millimetre reading on screen is computed from; it must survive a restart.
 
 ---
 
-### 5.5 System Monitoring & Service Maintenance
+### 5.5 Diagnostics
 
-Monitors host hardware vitals and manages background daemon services:
+- **Firmware self-test**: runs a kinematics self-test and reports the **link diagnostic counters** (CRC errors, dropped FIFO frames) — the first numbers to move when the USB link misbehaves;
+- Overall runtime metrics live in the **top bar**: control frequency, maximum joint temperature and fault state.
 
-![System Monitoring and Daemon Management](images/en/19_settings_system.png)
+---
 
-- Hardware Vitals:
-  - Host CPU utilization percentage;
-  - RAM memory usage;
-  - Free disk storage;
-  - Motherboard temperature (warns above 70°C);
-  - System uptime;
-- Restart Backend Service:
-  - Restarts the `litearm-server` daemon on the host;
-  - The connection disconnects briefly and reconnects automatically within seconds;
-  - Note: The arm reinitializes and enters hold state upon service restart. Only perform this when the robot is stationary and in a safe configuration.
+### 5.6 Activation
+
+See §1.4. The panel shows this machine's licence state and device UID, and is where you submit the registration details to activate it.
 
 ---
 
@@ -327,7 +339,7 @@ Monitors host hardware vitals and manages background daemon services:
 
 ### 6.1 Operational Safety Rules
 
-1. Pre-Motion Check: Verify clear workspace and ensure no obstacles or personnel are present before enabling;
+1. Pre-Motion Check: Confirm the arm is connected (the top bar shows **port · firmware**), **already activated** (see §1.4), and free of faults, before enabling;
 2. Drop Prevention: Always support the arm manually before disabling power;
 3. Zero-Gravity Drag: Guide smoothly without violent whipping; keep hands clear of joint pinch points;
 4. Emergency Stop (STOP): Use software STOP for immediate motion abort; cut power supply immediately in critical danger;
@@ -339,10 +351,16 @@ Monitors host hardware vitals and manages background daemon services:
 
 | Issue | Probable Cause | Recommended Action |
 | :--- | :--- | :--- |
-| Top bar shows "Connect Failed" | 1. Local `litearm-server` service not running or failed<br>2. USB-CAN adapter disconnected or `can0` down<br>3. Incorrect endpoint IP/Port (direct CAN default is `127.0.0.1:7449`) | 1. Check service status: `sudo systemctl status litearm-server-bin`<br>2. Check USB-CAN adapter and power wiring<br>3. Click badge, verify IP (`127.0.0.1`) and port `7449`<br>4. (If over LAN) Check network ping and firewall port `7449` |
+| Top bar shows "Connect Failed" | 1. Arm not powered, or the USB cable is loose<br>2. The device did not enumerate as `1d50:606f`<br>3. On Linux the current user lacks serial permission<br>4. Another process holds the serial port | 1. Check the USB cable and controller power<br>2. Confirm enumeration: `lsusb` should list `1d50:606f` on Linux, a COM port on Windows<br>3. On Linux, add the user to `dialout` and log in again (see §1.2)<br>4. Close the other program, or pass `--port` explicitly |
+| **"Enable" does nothing / not activated** | The arm is not activated. The firmware checks the licence as the **first** predicate of `enable` and refuses with `ERR{0x10,0x08}`; retrying changes nothing | Complete §1.4: give the device UID to your supplier, then submit the credential. Everything except `enable` works while unactivated |
+| Activation says "no credential for this machine" | The supplier has not issued a credential for this device UID | Send the **device UID** (24 hex characters) from Settings → Activation to your supplier, then submit again |
+| Activation says "too many requests" | Too many submissions from this IP or for this UID in a short window | Wait a while and retry |
+| Activation says "cannot reach the activation service" | This machine has no internet access, or the activation service address is wrong | Check the local network; release builds already carry the production address |
+| Activation says "disarm first" | The firmware only accepts the licence record while the arm is **disarmed** | Press **Disarm** on the control bar, then submit again |
+| Activation says "consent required" | The *Activation Registration Consent* box is not ticked | Tick it and submit again |
 | "Arm is moving, please wait" | In-flight motion in progress; mutex guard active | Normal safety behavior; wait for move completion or click STOP |
 | Red fault indicator: "Joint N Fault" | Collision obstruction, overcurrent, or driver overtemperature (>80°C) | 1. Clear physical obstructions and allow cooling<br>2. Click "Clear Fault" on control bar<br>3. If persistent, support arm, disable, and re-enable |
-| "Controller in fault state" | Safety protection triggered (overspeed, boundary limit, communication timeout) | System-level safety protection triggered; support arm, disable and re-enable, or restart backend service |
+| "Controller in fault state" | Safety protection triggered (overspeed, boundary limit, communication timeout) | System-level safety protection triggered; support the arm, disable and re-enable. If it does not recover, restart the local program |
 | Gripper shows "Disconnected" | Cable loose, device offline, or power drop | 1. Check end-effector aviation connector<br>2. Reconnect arm in Studio to trigger auto-reconnect<br>3. Click "Clear Fault" in Gripper panel |
 | Trajectory list empty | 1. In Simulation mode<br>2. No files saved on backend host | 1. Switch to "Real" mode and connect<br>2. Record a new trajectory |
 | No telemetry recorded | Arm is not in "Connected" status | Telemetry starts automatically upon live connection |
