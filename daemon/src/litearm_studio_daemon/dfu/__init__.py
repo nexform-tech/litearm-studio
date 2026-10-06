@@ -18,14 +18,14 @@ from .image import (APP_BASE, FLASH_END, ImageError, ImageSummary, inspect,
 from .job import (PHASES, PHASE_DETACH, PHASE_DISARM, PHASE_DONE,
                   PHASE_ENTER_DFU, PHASE_FLASH, PHASE_RECONNECT, PHASE_VALIDATE,
                   PHASE_WAIT_DFU, Progress, Result, UpgradeError, UpgradeHooks,
-                  run_upgrade)
+                  run_upgrade, REASON_DFU_PERMISSION)
 
 __all__ = [
     "engine", "fake", "APP_BASE", "FLASH_END", "ImageError", "ImageSummary",
     "inspect", "extract_fw_version", "PHASES", "PHASE_VALIDATE", "PHASE_DISARM",
     "PHASE_ENTER_DFU", "PHASE_WAIT_DFU", "PHASE_FLASH", "PHASE_DETACH",
     "PHASE_RECONNECT", "PHASE_DONE", "UpgradeError", "UpgradeHooks", "Progress",
-    "Result", "run_upgrade", "engine_status",
+    "Result", "run_upgrade", "engine_status", "REASON_DFU_PERMISSION",
 ]
 
 

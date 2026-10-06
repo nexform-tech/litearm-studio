@@ -373,3 +373,85 @@ def test_status_reports_the_engine_so_the_ui_can_warn_early() -> None:
         assert st["engineReady"] is False and "pyusb" in st["engine"]
     finally:
         s.close()
+
+
+# ================================================================== 存在 ≠ 可用
+
+def test_waiting_tolerates_a_device_that_is_not_openable_yet() -> None:
+    """⚠ 真机演练抓到的竞态：**设备存在 ≠ 设备可用**。
+
+    设备一 attach，内核先建出 `/dev/bus/usb/...`（默认 `root:root 0644`），udev
+    **随后才** chmod 成 0666。pyusb 靠 sysfs 枚举，在这个窗口里已经 `find_device()`
+    得到它 —— 于是 `open()` 拿到 `[Errno 13] Access denied`。
+
+    只等"枚举出来"就会把这几十毫秒的窗口当成故障。这里钉住"继续等，然后成功"。
+    """
+    engine = fake_engine.FakeEngine(steps=2, deny_open_times=2)
+    s = Session(fake=True, dfu_engine=engine)
+    try:
+        assert s.connect() is True and _wait(lambda: s.connected)
+        frames = []
+        s.add_listener(frames.append)
+        token = _inspect(s)["token"]
+        s.execute("firmware_upgrade", {"token": token, "confirm": True})
+        assert _wait(lambda: any(f.get("t") == "firmware_result" for f in frames))
+        result = [f for f in frames if f.get("t") == "firmware_result"][-1]
+        assert result["ok"] is True, result
+        # 前两次创建出来的设备被拒绝（模拟节点还没 chmod 好），第三次才开成功 ——
+        # 所以"造了 3 个"正是"它等过、而不是一撞到 EACCES 就放弃"的证据。
+        assert engine.devices_made == 3, engine.devices_made
+        assert engine.last.left is True
+    finally:
+        s.close()
+
+
+def test_a_device_the_user_cannot_open_is_named_as_a_permission_problem(
+        monkeypatch) -> None:
+    """一直打不开 ⇒ 短码要是 `dfu_permission_denied`，不是笼统的 `flash_failed`。
+
+    判据必须是 `errno`（引擎把 libusb 的 `USBError` 包成了 `DfuError`），不是消息文本
+    —— 操作员看到"没权限"才会去加 udev 规则，看到"烧录失败"只会重试。
+    """
+    from litearm_studio_daemon import session as session_mod
+
+    monkeypatch.setattr(session_mod, "DFU_APPEAR_TIMEOUT_S", 0.5)
+    engine = fake_engine.FakeEngine(steps=2, deny_open_times=10 ** 6)
+    s = Session(fake=True, dfu_engine=engine)
+    try:
+        assert s.connect() is True and _wait(lambda: s.connected)
+        frames = []
+        s.add_listener(frames.append)
+        token = _inspect(s)["token"]
+        s.execute("firmware_upgrade", {"token": token, "confirm": True})
+        assert _wait(lambda: any(f.get("t") == "firmware_result" for f in frames))
+        result = [f for f in frames if f.get("t") == "firmware_result"][-1]
+        assert result["ok"] is False
+        assert result["reason"] == "dfu_permission_denied", result
+    finally:
+        s.close()
+
+
+def test_a_non_permission_open_failure_is_not_reported_as_absent() -> None:
+    """别的错要**照原样抛**，不许被并进"没等到设备" —— 那会把真故障藏起来。"""
+
+    class _Broken:
+        def available(self):
+            return True
+
+        def backend_status(self):
+            return "假件"
+
+        def find_device(self):
+            return object()
+
+        def DfuDevice(self, dev=None, transfer_size=None):
+            raise ValueError("别的错")
+
+    s = Session(fake=True, dfu_engine=_Broken())
+    try:
+        s._upgrading = True
+        with pytest.raises(ValueError, match="别的错"):
+            s._dfu_wait(lambda: False)
+    finally:
+        s._upgrading = False
+        s.close()

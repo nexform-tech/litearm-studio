@@ -102,6 +102,9 @@ const REASON_KEYS: Record<string, string> = {
   not_connected: 'notConnected',
   dfu_not_entered: 'firmwareDfuNotEntered',
   dfu_device_absent: 'firmwareDfuAbsent',
+  // ⚠ 这一条要**单独说**：设备明明在 bootloader 里，只是当前用户打不开它。操作员的
+  //   下一步是加 udev 规则，而不是"重试"或"检查 USB 线"。
+  dfu_permission_denied: 'firmwareDfuPermission',
   flash_failed: 'firmwareFlashFailed',
   reconnect_failed: 'firmwareReconnectFailed',
   cancelled: 'firmwareCancelled',
@@ -202,6 +205,8 @@ const FALLBACK_ZH: Record<string, string> = {
     '控制器没有接受进入 bootloader 的请求（登记被撤销或未执行）：机械臂原样可用，确认已失能后重试',
   firmwareDfuAbsent:
     '进入 bootloader 后没有找到 DFU 设备（0483:DF11）：请检查 USB 线；Windows 上需要 ST 的 WinUSB 驱动',
+  firmwareDfuPermission:
+    '打不开 DFU 设备（权限不足）：板子已经在 bootloader 里，但当前用户没有权限访问它。Linux 上需要一条 udev 规则：SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="df11", MODE="0666"',
   firmwareFlashFailed:
     '烧录失败：{{message}}。设备已被尽量擦回空白，可以直接重试；若反复失败需要 SWD 探针救机',
   firmwareReconnectFailed:

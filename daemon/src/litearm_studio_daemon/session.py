@@ -1359,20 +1359,47 @@ class Session:
         log.info("固件升级: 设备已交棒进 ROM bootloader")
 
     def _dfu_wait(self, is_cancelled: Callable[[], bool]) -> None:
-        """等 `0483:DF11` 枚举出来, 并把引擎会话建好 (全程复用同一个包装对象)。"""
+        """等 `0483:DF11` **可用**（不只是"存在"）, 并把引擎会话**开好**。
+
+        ⚠ **"存在" ≠ "可用"** —— 这是真机演练抓到的。设备一 attach，内核先建出
+        `/dev/bus/usb/001/00X`（默认 `root:root 0644`），**udev 随后才**按规则 chmod
+        成 0666。而 pyusb 靠 sysfs 枚举，在这个窗口里已经能 `find_device()` 到它 ——
+        于是 `open()` 拿到 `[Errno 13] Access denied`，现象是"设备明明在 DFU，却报没权限"。
+
+        所以这里不能只等"枚举出来"，必须**真开一次**；开不了就继续等（udev 只慢几十毫秒）。
+        这个竞态与 WSL 无关：任何 Linux 主机上刚热插拔完都可能撞上。
+        """
         if not self._dfu_engine.available():
             raise dfu.UpgradeError("engine_unavailable",
                                    self._dfu_engine.backend_status())
         deadline = time.monotonic() + DFU_APPEAR_TIMEOUT_S
+        denied = False
         while time.monotonic() < deadline:
             if is_cancelled():
                 raise dfu.UpgradeError("cancelled", "已取消")
             dev = self._dfu_engine.find_device()
             if dev is not None:
+                session = self._dfu_engine.DfuDevice(dev)
+                try:
+                    session.open()
+                except Exception as e:                             # noqa: BLE001
+                    # 权限还没到位 ⇒ 继续等下一轮；别的错直接抛出去（别把真故障说成"没等到设备"）。
+                    if not _is_permission_error(e):
+                        raise
+                    denied = True
+                    time.sleep(0.2)
+                    continue
                 with self._lock:
-                    self._dfu_session = self._dfu_engine.DfuDevice(dev)
+                    self._dfu_session = session
                 return
             time.sleep(0.2)
+        if denied:
+            raise dfu.UpgradeError(
+                dfu.REASON_DFU_PERMISSION,
+                "DFU 设备在, 但当前用户打不开它 (打开时报 Access denied)。"
+                "Linux 上需要一条 udev 规则："
+                'SUBSYSTEM=="usb", ATTR{idVendor}=="0483", '
+                'ATTR{idProduct}=="df11", MODE="0666"')
         raise dfu.UpgradeError(
             "dfu_device_absent",
             f"等 {DFU_APPEAR_TIMEOUT_S:.0f}s 没等到 DFU 设备 (0483:DF11) —— "
@@ -1384,7 +1411,8 @@ class Session:
             session = self._dfu_session
         if session is None:
             raise dfu.UpgradeError("dfu_device_absent", "没有可用的 DFU 设备")
-        session.open()
+        # ⚠ 会话在 `_dfu_wait` 里**已经开好**了（见那里的"存在≠可用"）。这里再
+        #   `open()` 一次不但多余，还会把那个竞态重新引回来。
         # ⚠ `param_policy="abort"`: `image.inspect` 已经拦过一道, 这里让引擎**自己**
         #   再拦一道。许可证 (扇区 6) 与出厂标定 (扇区 7) 只存在于设备上, 擦掉不可
         #   恢复 —— 两道判据都留着, 因为这一处的代价是不可逆的。
@@ -1427,6 +1455,23 @@ class Session:
             f"固件已写入并通过读回校验, 但 {UPGRADE_RECONNECT_WINDOW_S:.0f}s 内没能"
             f"重新连上 ({attempts} 次): {last or '没有发现 STM32 CDC 设备'} —— "
             f"断电重上电即可")
+
+
+def _is_permission_error(exc: BaseException) -> bool:
+    """异常链里有没有 `EACCES` —— 用来把"打不开设备"与"设备没到"分开。
+
+    ⚠ 判据是 `errno`，**不是**消息文本：引擎会把 libusb 的 `USBError` 包成
+    `DfuError`（`raise ... from e`），所以顺着 `__cause__`/`__context__` 找 errno 是
+    可靠的；去匹配 `"Access denied"` 这种字符串，换一个 libusb 版本/语言就失效。
+    """
+    seen: set[int] = set()
+    e: Optional[BaseException] = exc
+    while e is not None and id(e) not in seen:
+        seen.add(id(e))
+        if getattr(e, "errno", None) == 13:
+            return True
+        e = e.__cause__ or e.__context__
+    return False
 
 
 class _DfuHooks:

@@ -258,8 +258,20 @@ litearm-studio-daemon --fake --fake-unactivated
 - **升级前自动失能**（跳转停 TIM3 ⇒ 电机 100ms 后松开）。有重力负载的臂会下垂，
   所以界面要求操作员确认"手臂已放稳或有支撑"—— 这是界面**无法验证**的一件事，
   只能让人确认；升级期间急停也不可达（设备在 bootloader 里）。
-- **Windows 需要 ST 的 WinUSB 驱动**；Linux 需要 udev 规则，或用 `libusb-package`
-  自带的库（`dfu/engine.py` 优先用它 —— pyusb 的自动查找在 Windows 上会静默失败）。
+- **Windows 需要 ST 的 WinUSB 驱动**（系统驱动，不是 Python 包）。Linux 上要两条 udev
+  规则 —— **两条都要**，因为它们匹配的是两个不同的 USB 身份：
+  ```bash
+  # 应用态 CDC（串口）
+  SUBSYSTEM=="tty", ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="606f", MODE="0666"
+  # ROM DFU bootloader
+  SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="df11", MODE="0666"
+  ```
+  少了第二条，现象是"板子明明已经在 DFU 里，却报 `Access denied`"。`dfu/engine.py`
+  优先用 `libusb-package` 自带的库（pyusb 的自动查找在 Windows 上会静默失败）。
+- ⚠ **"设备存在 ≠ 设备可用"**：设备一 attach，内核先建出 `/dev/bus/usb/...`（默认
+  `root:root 0644`），**udev 随后才**按规则 chmod。所以 `_dfu_wait` 不是"等枚举到"，
+  而是**真开一次**、开不了继续等（实测撞到过：`find_device()` 成功、`open()` 却 EACCES）。
+  一直开不了会报 `dfu_permission_denied`，而不是笼统的"烧录失败"。
 - `--fake` 下注入的是一个**同形的假引擎**，整条流水线（相位顺序、进度、失败收尾）
   都能在没有硬件时走一遍 —— 但**烧录结果本身**只能在真机验，判据见
   [`FIRMWARE-UPGRADE-PLAN.md`](../../FIRMWARE-UPGRADE-PLAN.md) §5.3。

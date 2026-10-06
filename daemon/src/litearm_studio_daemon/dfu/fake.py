@@ -17,18 +17,33 @@ class FakeDfuError(Exception):
     """与 `engine.DfuError` 同义 —— 假的烧录失败。"""
 
 
+class FakePermissionError(Exception):
+    """模拟 libusb 的 `EACCES`（真机上是 udev 还没来得及 chmod 设备节点）。
+
+    带 `errno=13`，与 `usb.core.USBError` 同形 —— 所以 `_is_permission_error` 那条
+    判据在假件上也是真的在跑，不是"只有真机才走得到"的死代码。
+    """
+
+    def __init__(self, message: str = "[Errno 13] Access denied (insufficient permissions)"):
+        super().__init__(message)
+        self.errno = 13
+
+
 class FakeDfuDevice:
     """一个假 DFU 设备：按 `steps` 推进度，可选在某一步失败。"""
 
     def __init__(self, dev: object = None, *, fail: Optional[str] = None,
                  steps: int = 8, step_delay: float = 0.0,
-                 total_override: Optional[int] = None):
+                 total_override: Optional[int] = None,
+                 deny_open: bool = False):
         self.dev = dev
         #: `"flash"` = 烧录时报错；`None` = 成功。故意只支持一种失败，够用即可。
         self.fail = fail
         self.steps = max(1, int(steps))
         self.step_delay = float(step_delay)
         self.total_override = total_override
+        #: 第一次 `open()` 是否报 EACCES（模拟"设备在、节点还没 chmod 好"）。
+        self.deny_open = deny_open
         self.opened = False
         self.left = False
         self.policy: Optional[str] = None
@@ -37,6 +52,9 @@ class FakeDfuDevice:
         self.base: Optional[int] = None
 
     def open(self) -> "FakeDfuDevice":
+        if self.deny_open:
+            self.deny_open = False          # 只拒绝第一次 —— 模拟 udev 随后 chmod 好
+            raise FakePermissionError()
         self.opened = True
         return self
 
@@ -73,14 +91,19 @@ class FakeEngine:
     DfuError = FakeDfuError
 
     def __init__(self, *, fail: Optional[str] = None, steps: int = 8,
-                 step_delay: float = 0.0, present: bool = True):
+                 step_delay: float = 0.0, present: bool = True,
+                 deny_open_times: int = 0):
         self.fail = fail
         self.present = present
         self.steps = steps
         self.step_delay = step_delay
-        #: 最后一次 `DfuDevice(...)` 造出来的设备 —— 测试断言它 `opened`/`left`。
+        #: 头 `n` 次 `open()` 报 EACCES —— 模拟"设备已经枚举出来, 但 udev 还没 chmod
+        #: 好节点"。真机演练撞到过：`find_device()` 成功、`open()` 却 Access denied。
+        self.deny_open_times = deny_open_times
+        self._denied = 0
+        #: 造过几个 `DfuDevice` —— 用来钉"存在≠可用"那次重试。
         self.last: Optional[FakeDfuDevice] = None
-        self.flash_calls = 0
+        self.devices_made = 0
 
     def available(self) -> bool:
         return True
@@ -92,7 +115,10 @@ class FakeEngine:
         return object() if self.present else None
 
     def DfuDevice(self, dev=None, transfer_size=None) -> FakeDfuDevice:  # noqa: N802
+        deny = self._denied < self.deny_open_times
+        if deny:
+            self._denied += 1
         self.last = FakeDfuDevice(dev, fail=self.fail, steps=self.steps,
-                                  step_delay=self.step_delay)
-        self.flash_calls += 1
+                                  step_delay=self.step_delay, deny_open=deny)
+        self.devices_made += 1
         return self.last

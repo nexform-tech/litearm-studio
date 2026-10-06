@@ -147,6 +147,7 @@
     "firmwareArmEnabled": "The arm did not disarm, so the update was stopped: entering the bootloader while armed lets the motors go and the arm sags",
     "firmwareDfuNotEntered": "The controller did not accept the request to enter the bootloader (the registration was revoked or never executed): the arm is unchanged, confirm it is disarmed and retry",
     "firmwareDfuAbsent": "No DFU device (0483:DF11) appeared after entering the bootloader: check the USB cable; Windows needs the ST WinUSB driver",
+    "firmwareDfuPermission": "Cannot open the DFU device (permission denied): the board is in the bootloader, but this user cannot access it. On Linux it needs a udev rule: SUBSYSTEM==\"usb\", ATTR{idVendor}==\"0483\", ATTR{idProduct}==\"df11\", MODE=\"0666\"",
     "firmwareFlashFailed": "Flashing failed: {{message}}. The affected sectors were erased back to blank where possible, so you can retry; repeated failures need an SWD probe",
     "firmwareReconnectFailed": "The firmware was written and verified by read-back, but the controller could not be reconnected: {{message}}",
     "firmwareCancelled": "The update was cancelled (cancelling has no effect once flashing has started)"
