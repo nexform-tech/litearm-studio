@@ -87,6 +87,37 @@ class MotionBusyError(DaemonError):
         self.method = method
 
 
+class UpgradeBusyError(DaemonError):
+    """固件升级在途 —— 除固件命令与降能量动作外, 一切都拒绝
+    (`kind` = `UpgradeBusyError`)。
+
+    为什么不排队: 升级会把设备从应用态**交出去**（进 ROM bootloader），这段时间里
+    SDK 的 `Arm` 已经进了终态。让别的命令排进来，操作员看到的是"命令卡住了"，
+    而不是"现在不能下命令"。
+    """
+
+    def __init__(self, method: str):
+        super().__init__(
+            f"固件升级进行中, 拒绝 {method} —— 设备已交给 ROM bootloader, "
+            f"升级期间只有固件操作与降能量动作可用")
+        self.method = method
+
+
+class FirmwareUpgradeError(DaemonError):
+    """升级**开始之前**就被本地拒绝 (`kind` = `FirmwareUpgradeError`)。
+
+    与流水线内部的失败分开：那些走 `firmware_result` 广播帧（升级已经开跑了），
+    这一条走普通的 `err` 应答（什么都没发生）。
+
+    `reason` 是面向界面的短码 —— 界面文案只能按它选，不能按 `str(e)` 选（后者是
+    中文，英文界面要换一句话）。取值见 `dfu.job` 的 `REASON_*`。
+    """
+
+    def __init__(self, reason: str, message: str):
+        super().__init__(message)
+        self.reason = reason
+
+
 class GripperNotConnectedError(DaemonError):
     """A ``gripper.*`` command arrived before a gripper session exists.
 

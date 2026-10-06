@@ -27,7 +27,10 @@
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import logging
+import secrets
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -38,7 +41,10 @@ from litearm import Arm
 
 from . import statemap
 from . import activation
-from .errors import MotionBusyError, NotConnectedCommandError, UnknownCommandError
+from . import dfu
+from .errors import (FirmwareUpgradeError, MotionBusyError,
+                     NotConnectedCommandError, UpgradeBusyError,
+                     UnknownCommandError)
 
 log = logging.getLogger("litearm_studio_daemon.session")
 
@@ -118,6 +124,39 @@ MOTION_COMMANDS = frozenset({"home", "movej", "movel"})
 #: (`_note_zero_g`), 与状态轮询共享状态, 不放进这条并行通道。
 ENERGY_DOWN_COMMANDS = frozenset({"estop", "disable"})
 
+#: 固件升级（USB DFU）相关命令 —— 与臂的命令空间分开看。
+FIRMWARE_COMMANDS = frozenset({"firmware_inspect", "firmware_upgrade",
+                               "firmware_status", "firmware_cancel"})
+
+#: **不依赖机械臂会话**的命令。DFU 期间恰恰没有会话（设备在 ROM bootloader 里），
+#: 而"看一眼进度""取消"必须仍然可用 —— 否则升级一开始，界面就再也问不动守护进程了。
+#: ⚠ `firmware_upgrade` **不**在这里: 它要先失能、再交棒, 必须有活着的会话。
+SESSION_FREE_COMMANDS = frozenset({"firmware_inspect", "firmware_status",
+                                   "firmware_cancel"})
+
+#: 等 `0483:DF11` 枚举出来的上限 (秒)。固件侧从登记到交棒的上界是 100ms, 但 USB
+#: **重枚举**要时间 —— 这里等的是枚举, 不是等固件。
+DFU_APPEAR_TIMEOUT_S = 10.0
+
+#: 烧完等 CDC 回来并重建会话的上限 (秒)。刻意短于自愈窗口 (60s): 这一步失败要
+#: **尽快**告诉操作员"镜像已经写进去了, 只是没接回来", 而不是让他对着进度条干等。
+UPGRADE_RECONNECT_WINDOW_S = 30.0
+
+#: 失能之后等状态帧确认 `enabled == False` 的上限 (秒)。
+#:
+#: ⚠ 不能只发 `disable()` 就往 DFU 跳: SDK 的 `enter_dfu()` 会**现读一帧状态**做
+#: 使能态预检, 而那一位要等固件的下一帧才更新。不确认就跳, 会随机撞上
+#: `ERR{0x15,0x03}`, 表现为"升级偶发失败"。
+UPGRADE_DISARM_TIMEOUT_S = 3.0
+
+#: 上传镜像的 base64 上限 (字节)。1MB Flash 的固件 base64 后约 1.4MB, 4MB 已是余量。
+#: 超限要**回一条可读的错误**, 不能让 WS 层直接掐断 —— 掐断的话界面只会看到断连。
+MAX_IMAGE_B64 = 4 * 1024 * 1024
+
+#: 记住的已校验镜像份数 (按上传顺序淘汰)。升级只用最后一次上传, 但留几份便于
+#: 操作员在"选错了"之后退回去重试, 不必重新上传 (一个大文件 base64 要几 MB)。
+KEEP_INSPECTED_IMAGES = 3
+
 #: 命令白名单 —— (方法名 → 中文说明)。**唯一**的准入判据: 表里没有的一律
 #: `UnknownCommandError`, 不接受任意方法调用 (计划 3.2)。
 COMMANDS: Dict[str, str] = {
@@ -154,6 +193,16 @@ COMMANDS: Dict[str, str] = {
     # ---- 激活 (写入; 在线领凭据) ----
     "activate": "把注册信息提交给激活服务, 拿回本机凭据并写入设备 "
                 "(唯一出网的一条命令; 须失能态)",
+    # ---- 固件升级 (USB DFU; 路线 A) ----
+    # ⚠ 这四条**不走** `_run_command`: 升级会把设备从应用态交出去 (进 ROM
+    #   bootloader), 而 `_executor` 是给"还在应用态的臂"准备的单线程串行域。
+    #   见 `_begin_upgrade` / `_run_upgrade`。
+    "firmware_inspect": "离线解析并校验一份固件镜像 (.hex/.bin), 返回摘要与 token "
+                        "(不碰设备; 覆盖受保护区 6+7 的镜像直接拒绝)",
+    "firmware_upgrade": "开始固件升级: 失能 → 进 DFU → 擦写+读回校验 → 复位 → 重连 "
+                        "(进度与结果走 firmware_progress / firmware_result 帧)",
+    "firmware_status": "查当前升级进度快照 (会话无关; 界面重连后用它恢复)",
+    "firmware_cancel": "请求取消升级 (只在可取消的相位生效; 进入擦写后无效)",
 }
 
 
@@ -206,7 +255,8 @@ class Session:
                  reconnect_window: float = RECONNECT_WINDOW_S,
                  disable_on_exit: bool = True,
                  activation_url: str = activation.DEFAULT_ACTIVATION_URL,
-                 sdk_version: str = litearm.__version__) -> None:
+                 sdk_version: str = litearm.__version__,
+                 dfu_engine: Any = None) -> None:
         #: 构造时给的端口 —— 空 = 连接时用 `port_finder` (= SDK `find_cdc_port`) 自动发现。
         #: ⚠ `--port` 只是**覆盖**自动发现 (计划 2 节「设备发现」), 所以这里允许 None。
         self._port = port or None
@@ -261,6 +311,28 @@ class Session:
         #: `_open` 在收尾时比对代次, 对不上就丢弃这次连接。没有它, 用户在握手期间按
         #: 「断开」会被握手完成后的 `_open` 覆盖成 `connected` (上一版的真 bug)。
         self._connect_gen = 0
+
+        #: 烧录引擎。`--fake` 下自动换成同形的假件（升级流程因此**没有硬件也能走通**,
+        #: 界面与相位顺序都能验）；测试可以显式注入。生产走 `dfu.engine`。
+        self._dfu_engine = dfu_engine or (dfu.fake.FakeEngine() if self._fake
+                                          else dfu.engine)
+        #: 升级在途。**它是一条安全闸**: 见 `_note_link_lost` 与 `execute`。
+        self._upgrading = False
+        #: 升级线程 —— 收尾时要知道它还在不在。
+        self._upgrade_thread: Optional[threading.Thread] = None
+        #: 当前(或最近一次)升级的标识与相位快照, 供 `firmware_status` 恢复界面。
+        self._upgrade_job: Optional[str] = None
+        self._upgrade_progress: Optional[dict] = None
+        self._upgrade_result: Optional[dict] = None
+        #: 取消请求 —— 每个 job 一个新 Event。
+        self._upgrade_cancel = threading.Event()
+        #: 已校验镜像 (token → (blob, summary)), 按上传顺序淘汰。
+        self._images: Dict[str, Tuple[bytes, "dfu.ImageSummary"]] = {}
+        self._image_order: List[str] = []
+        #: 当前 DFU 设备会话 (`DfuDevice` 包装) —— 从"等枚举到"一直用到"复位"。
+        #: ⚠ 必须**同一个包装对象**贯穿: 引擎的 `leave()` 与 `flash()` 是同一会话上
+        #:   的两步, 中途重建包装会把已释放的 libusb 资源再交回去。
+        self._dfu_session: Any = None
 
         self._listeners: List[Callable[[dict], None]] = []
         #: **所有** SDK 调用都在这条单线程上跑 ⇒ 天然串行 (计划 2 节原则 3)。
@@ -539,6 +611,12 @@ class Session:
         名僵了近三个小时)。真正的端口名由自愈重新解析出来后重新填上。
         """
         with self._lock:
+            # ⚠ 升级在途时链路"消失"是**我们主动把设备交出去的**, 不是掉线。这时起
+            #   自愈线程去重连, 会跟烧录器抢同一个 USB 设备; 而升级线程自己负责把
+            #   设备接回来 (见 `_upgrade_reconnect`)。这是本功能最容易踩的一处:
+            #   少了这条, 升级必然与自愈打架。
+            if self._upgrading:
+                return False
             if self._arm is not arm or self._status != "connected":
                 return False
             self._arm = None
@@ -853,8 +931,20 @@ class Session:
         与守护进程对"现在还能不能指挥这台臂"必须给同一个答案。
         """
         params = dict(p or {})
+
+        # 会话无关的命令 —— **排在连接判定之前**。DFU 期间设备在 ROM bootloader 里,
+        # 恰恰没有会话, 而"校验镜像 / 看进度 / 取消"必须仍然可用。
+        if m in SESSION_FREE_COMMANDS:
+            return self._run_session_free(m, params)
+
         with self._lock:
             arm = self._arm
+            # ⚠ 升级在途时**先**给 `UpgradeBusyError`, 再谈连接态: 那段时间
+            #   `_status` 已经是 `upgrading`, 落到 NotConnected 会把"现在不能下命令"
+            #   说成"你没连设备" —— 操作员据此会去点「连接」, 而那正是最不该做的事。
+            #   降能量动作(急停/失能)例外, 与运动互斥同一条纪律。
+            if self._upgrading and m not in ENERGY_DOWN_COMMANDS:
+                raise UpgradeBusyError(m)
             if arm is None or self._status != "connected":
                 raise NotConnectedCommandError("会话未连接 —— 请先连接设备")
             if m not in COMMANDS:
@@ -870,6 +960,10 @@ class Session:
             if m == "activate":
                 # ⚠ 激活**不占**命令执行器等网络, 见 `_activate` 的两段式说明。
                 return self._activate(arm, params)
+            if m == "firmware_upgrade":
+                # ⚠ 升级**不占**命令执行器, 也不在这里阻塞: 它返回后进程就交给
+                #   ROM bootloader 了, 进度与结果只能走广播帧 (见 `_begin_upgrade`)。
+                return self._begin_upgrade(arm, params)
             # ⚠ 降能量方向的动作走**另一条**执行器: 与在途运动并行, 不排队等它结束
             # (见 `ENERGY_DOWN_COMMANDS`)。这是「急停永远可达」的落点 —— 只在准入处
             # 豁免运动互斥是不够的, 那样它仍会排在阻塞十几秒的 movej 后面。
@@ -1061,6 +1155,309 @@ class Session:
                           "state": doc})
             except Exception:  # noqa: BLE001
                 log.debug("零重力状态事件推送失败", exc_info=True)
+
+    # ------------------------------------------------------------------ 固件升级
+    # 这一段的形状与别的命令**刻意不同**, 三条理由:
+    #   1. 它跨两个会话 (应用态 CDC → ROM bootloader → 又是应用态), 所以不能用
+    #      `_executor` 那条"给还在应用态的臂准备"的单线程域;
+    #   2. 它可能跑几十秒 (擦 128KB 扇区 + 写 + 读回), 超过 `COMMAND_TIMEOUT_S`,
+    #      所以命令**立即返回**, 进度与结果走广播帧;
+    #   3. 它会把设备交出去, 而 `_status` 在那段时间不再是 connected —— 于是
+    #      "看进度/取消"必须是不依赖会话的命令 (见 `SESSION_FREE_COMMANDS`)。
+
+    def _run_session_free(self, m: str, p: dict) -> Any:
+        """不依赖机械臂会话的三条 —— 在连接判定之前被分派 (见 `execute`)。"""
+        if m == "firmware_inspect":
+            return self._inspect_image(p)
+        if m == "firmware_status":
+            return self._upgrade_status()
+        if m == "firmware_cancel":
+            return self._cancel_upgrade()
+        raise UnknownCommandError(m, sorted(COMMANDS))
+
+    def _inspect_image(self, p: dict) -> dict:
+        """离线校验一份上传的镜像 → 摘要 + token。**不碰设备**。
+
+        分成"先校验、再升级"两步是刻意的: 操作员要在动手之前看见
+        "这是哪个版本、多大、会不会碰到许可证扇区", 而校验失败必须发生在
+        **任何硬件动作之前**。
+        """
+        data = p.get("data")
+        if not isinstance(data, str) or not data:
+            raise dfu.ImageError("image_unreadable", "请求里没有镜像数据 (p.data)")
+        if len(data) > MAX_IMAGE_B64:
+            raise dfu.ImageError(
+                "image_too_large",
+                f"上传的镜像太大 ({len(data)} B base64, 上限 {MAX_IMAGE_B64} B) —— "
+                f"固件不可能超过 1 MB Flash")
+        try:
+            raw = base64.b64decode(data, validate=True)
+        except (binascii.Error, ValueError) as e:
+            raise dfu.ImageError("image_unreadable", f"镜像数据不是合法 base64: {e}")
+        name = str(p.get("name") or "firmware").strip() or "firmware"
+        blob, summary = dfu.inspect(name, raw)
+        token = secrets.token_urlsafe(12)
+        with self._lock:
+            self._images[token] = (blob, summary)
+            self._image_order.append(token)
+            while len(self._image_order) > KEEP_INSPECTED_IMAGES:
+                self._images.pop(self._image_order.pop(0), None)
+        log.info("固件镜像已校验: %s (%d B, 版本 %s)",
+                 summary.name, summary.size, summary.version or "未识别")
+        return {**summary.to_dict(), "token": token}
+
+    def _upgrade_status(self) -> dict:
+        """当前升级快照 —— 界面重连之后靠它把进度条接回去。"""
+        ready = bool(self._dfu_engine.available())
+        engine = self._dfu_engine.backend_status()
+        with self._lock:
+            job = self._upgrade_job
+            progress = dict(self._upgrade_progress or {})
+            result = self._upgrade_result
+        if job is None:
+            return {"job": None, "engine": engine, "engineReady": ready}
+        return {"job": job, "engine": engine, "engineReady": ready,
+                "phase": progress.get("phase"),
+                "done": progress.get("done", 0),
+                "total": progress.get("total", 0),
+                "detail": progress.get("detail", ""),
+                "result": result}
+
+    def _cancel_upgrade(self) -> dict:
+        """请求取消。**只在相位之间与等待类相位生效** —— 见 `job.run_upgrade`。"""
+        with self._lock:
+            active = self._upgrading
+        if not active:
+            return {"cancelled": False, "reason": "not_running"}
+        self._upgrade_cancel.set()
+        return {"cancelled": True}
+
+    def _begin_upgrade(self, arm: Arm, p: dict) -> dict:
+        """校验请求 → 起升级线程 → **立刻返回** (进度走广播帧)。"""
+        token = str(p.get("token") or "")
+        with self._lock:
+            if self._upgrading:
+                raise UpgradeBusyError("firmware_upgrade")
+            entry = self._images.get(token)
+        if entry is None:
+            raise FirmwareUpgradeError(
+                "image_unreadable",
+                "这份镜像不在已校验列表里 (可能已过期) —— 请重新选择文件")
+        if p.get("confirm") is not True:
+            raise FirmwareUpgradeError(
+                "confirm_required",
+                "缺少确认标记 (p.confirm) —— 升级会先失能, 机械臂失去支撑会下垂")
+        ready = bool(self._dfu_engine.available())
+        if not ready:
+            # ⚠ 在**任何硬件动作之前**说清缺什么。等跳进 DFU 才发现没引擎, 板子
+            #   已经停在 bootloader 里了, 那种失败最难收场。
+            raise FirmwareUpgradeError("engine_unavailable",
+                                       self._dfu_engine.backend_status())
+
+        blob, summary = entry
+        job = f"fw-{secrets.token_hex(4)}"
+        with self._lock:
+            self._upgrading = True
+            self._upgrade_job = job
+            self._upgrade_progress = {"phase": dfu.PHASE_VALIDATE, "done": 0,
+                                      "total": summary.size, "detail": ""}
+            self._upgrade_result = None
+            self._upgrade_cancel = threading.Event()
+            self._dfu_session = None
+            # 顶栏据此显示"正在升级"; `connected` 也随之转 False —— 那是对的,
+            # 设备马上就不在应用态了。
+            self._status = "upgrading"
+            self._last_error = None
+        self._broadcast({"t": "conn", **self.arm_info()})
+
+        th = threading.Thread(target=self._run_upgrade,
+                              args=(blob, summary.base, summary, job),
+                              name="litearm-dfu", daemon=True)
+        with self._lock:
+            self._upgrade_thread = th
+        th.start()
+        log.info("固件升级开始: job=%s 镜像=%s (%d B)",
+                 job, summary.name, summary.size)
+        return {"job": job, "phase": dfu.PHASE_VALIDATE}
+
+    def _run_upgrade(self, blob: bytes, base: int, summary: Any, job: str) -> None:
+        """升级线程主体 —— **不许让异常逃出去** (逃出去就只剩一条 WS 断连)。"""
+        def emit(progress: "dfu.Progress") -> None:
+            doc = progress.to_dict(job)
+            with self._lock:
+                self._upgrade_progress = doc
+            self._broadcast({"t": "firmware_progress", **doc})
+
+        try:
+            result = dfu.run_upgrade(blob=blob, base=base, summary=summary,
+                                     hooks=_DfuHooks(self), emit=emit,
+                                     is_cancelled=self._upgrade_cancel.is_set)
+        except Exception as e:                                 # noqa: BLE001
+            # `run_upgrade` 自己已经把一切折成 `Result`; 这一层是"连兜底都炸了"的
+            # 最后一道 —— 宁可报一句笼统的失败, 也不能让线程带着栈死掉。
+            log.exception("固件升级线程异常结束")
+            result = dfu.Result(False, "flash_failed", f"{type(e).__name__}: {e}")
+
+        doc = result.to_dict(job)
+        with self._lock:
+            self._upgrading = False
+            self._upgrade_result = doc
+            self._upgrade_thread = None
+            if not result.ok and self._arm is None:
+                # 没接回来 ⇒ 会话停在 error 态, 前端顶栏该变红并说明原因。
+                self._status = "error"
+                self._last_error = f"固件升级失败: {result.message}"
+        log.info("固件升级结束: job=%s ok=%s reason=%s", job, result.ok, result.reason)
+        self._broadcast({"t": "firmware_result", **doc})
+        self._broadcast({"t": "conn", **self.arm_info()})
+
+    # ---- `dfu.UpgradeHooks` 的实际动作 (由 `_DfuHooks` 适配) ----
+    #
+    # ⚠ 这一段抛的是 `dfu.UpgradeError`（**流水线内部**的失败类型），不是本模块的
+    #   `FirmwareUpgradeError`（那是"还没开跑就被拒"的类型，走 `err` 应答）。
+    #   两者同名不同类，选错的话 `job.run_upgrade` 的 `except UpgradeError` 接不住，
+    #   结果会退化成笼统的 `flash_failed` —— 短码丢失，界面说不出是哪一步坏的。
+
+    def _upgrade_arm(self) -> Arm:
+        with self._lock:
+            arm = self._arm
+        if arm is None:
+            raise dfu.UpgradeError("not_connected", "会话未连接 —— 请先连接设备")
+        return arm
+
+    def _dfu_disarm(self) -> None:
+        """失能, 并**等状态帧确认**。见 `UPGRADE_DISARM_TIMEOUT_S`。"""
+        arm = self._upgrade_arm()
+        self._sdk_call(arm, lambda: arm.disable(), "firmware_upgrade")
+        deadline = time.monotonic() + UPGRADE_DISARM_TIMEOUT_S
+        while time.monotonic() < deadline:
+            st = self._sdk_call(arm, lambda: arm.get_state(refresh=True).value,
+                                "firmware_upgrade")
+            if st is None or not bool(getattr(st, "enabled", False)):
+                # 读不到状态帧就**不拦**: 门禁的权威在固件 (`enabled || enable_pending`
+                # 一律回 0x03), 本地预检只为可读性。
+                return
+            time.sleep(0.05)
+        raise dfu.UpgradeError(
+            "arm_enabled",
+            f"机械臂在 {UPGRADE_DISARM_TIMEOUT_S:.0f}s 内没有失能 —— 不冒险进入 DFU "
+            f"(跳转会停 TIM3, 电机 100ms 松开, 有重力负载会下垂)")
+
+    def _dfu_enter(self) -> None:
+        """发 `0x15` 并等设备真的离开 CDC, 然后把本会话的 `Arm` 放掉。"""
+        arm = self._upgrade_arm()
+        # `enter_dfu()` 成功返回时设备**已经**从 CDC 消失, 且该 `Arm` 进终态。
+        self._sdk_call(arm, lambda: arm.enter_dfu(), "firmware_upgrade")
+        with self._lock:
+            self._arm = None
+            self._resolved_port = None
+            # 最后一帧好数据也要清掉: 设备已经不在应用态了。
+            self._state = None
+            self._state_dict = None
+            self._state_stamp = 0.0
+            self._last_emit_key = None
+        log.info("固件升级: 设备已交棒进 ROM bootloader")
+
+    def _dfu_wait(self, is_cancelled: Callable[[], bool]) -> None:
+        """等 `0483:DF11` 枚举出来, 并把引擎会话建好 (全程复用同一个包装对象)。"""
+        if not self._dfu_engine.available():
+            raise dfu.UpgradeError("engine_unavailable",
+                                   self._dfu_engine.backend_status())
+        deadline = time.monotonic() + DFU_APPEAR_TIMEOUT_S
+        while time.monotonic() < deadline:
+            if is_cancelled():
+                raise dfu.UpgradeError("cancelled", "已取消")
+            dev = self._dfu_engine.find_device()
+            if dev is not None:
+                with self._lock:
+                    self._dfu_session = self._dfu_engine.DfuDevice(dev)
+                return
+            time.sleep(0.2)
+        raise dfu.UpgradeError(
+            "dfu_device_absent",
+            f"等 {DFU_APPEAR_TIMEOUT_S:.0f}s 没等到 DFU 设备 (0483:DF11) —— "
+            f"检查 USB 线; Windows 上还需要 ST 的 WinUSB 驱动")
+
+    def _dfu_flash(self, blob: bytes, base: int,
+                   on_progress: Callable[[int, int, str], None]) -> None:
+        with self._lock:
+            session = self._dfu_session
+        if session is None:
+            raise dfu.UpgradeError("dfu_device_absent", "没有可用的 DFU 设备")
+        session.open()
+        # ⚠ `param_policy="abort"`: `image.inspect` 已经拦过一道, 这里让引擎**自己**
+        #   再拦一道。许可证 (扇区 6) 与出厂标定 (扇区 7) 只存在于设备上, 擦掉不可
+        #   恢复 —— 两道判据都留着, 因为这一处的代价是不可逆的。
+        session.flash(blob, base, progress=on_progress,
+                      param_policy="abort", verify=True)
+
+    def _dfu_detach(self) -> None:
+        with self._lock:
+            session, self._dfu_session = self._dfu_session, None
+        if session is not None:
+            session.leave(reset=True)
+
+    def _dfu_reconnect(self, is_cancelled: Callable[[], bool]) -> Tuple[str, str]:
+        """等 CDC 回来并以**新 `Arm`** 重建会话 —— 旧的那个已进终态, 不可复用。"""
+        with self._lock:
+            gen = self._connect_gen
+            hint = self._resolved_port or self._port
+        deadline = time.monotonic() + UPGRADE_RECONNECT_WINDOW_S
+        attempts = 0
+        last = ""
+        while time.monotonic() < deadline:
+            if is_cancelled():
+                raise dfu.UpgradeError("cancelled", "已取消 (镜像已写入)")
+            if self._stop.is_set():
+                raise dfu.UpgradeError("cancelled", "守护进程正在收尾")
+            attempts += 1
+            for target in self._recover_candidates(hint):
+                try:
+                    arm = self._dial(target)
+                except Exception as e:  # noqa: BLE001 - 设备还没回来是**预期结局**
+                    last = f"{target}: {type(e).__name__}: {e}"
+                    continue
+                if self._commit_link(arm, target, gen):
+                    log.info("升级后链路已恢复: port=%s (第 %d 次尝试)", target, attempts)
+                    return target, getattr(arm, "firmware", "") or ""
+                raise dfu.UpgradeError("reconnect_failed", "重建会话时被断开/收尾")
+            self._stop.wait(self._reconnect_period)
+        raise dfu.UpgradeError(
+            "reconnect_failed",
+            f"固件已写入并通过读回校验, 但 {UPGRADE_RECONNECT_WINDOW_S:.0f}s 内没能"
+            f"重新连上 ({attempts} 次): {last or '没有发现 STM32 CDC 设备'} —— "
+            f"断电重上电即可")
+
+
+class _DfuHooks:
+    """把 `Session` 的 `_dfu_*` 动作适配成 `dfu.UpgradeHooks`。
+
+    单独一个适配器而不是让 `Session` 直接实现那几个方法名: `disarm` / `flash` /
+    `detach` 这些名字看起来像臂的命令, 挂在 `Session` 的公开面上会让人以为可以
+    随手调用 —— 它们只在升级流水线的相位里有意义。
+    """
+
+    def __init__(self, session: "Session"):
+        self._s = session
+
+    def disarm(self) -> None:
+        self._s._dfu_disarm()
+
+    def enter_dfu(self) -> None:
+        self._s._dfu_enter()
+
+    def wait_for_dfu(self, is_cancelled: Callable[[], bool]) -> None:
+        self._s._dfu_wait(is_cancelled)
+
+    def flash(self, blob: bytes, base: int,
+              on_progress: Callable[[int, int, str], None]) -> None:
+        self._s._dfu_flash(blob, base, on_progress)
+
+    def detach(self) -> None:
+        self._s._dfu_detach()
+
+    def reconnect(self, is_cancelled: Callable[[], bool]) -> Tuple[str, str]:
+        return self._s._dfu_reconnect(is_cancelled)
 
 
 # ---------------------------------------------------------------------- 参数校验
