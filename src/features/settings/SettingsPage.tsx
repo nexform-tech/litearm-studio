@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useSearchParams } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -308,8 +309,27 @@ function DiagnosticsSection({ vm }: { vm: SettingsState }) {
   )
 }
 
+/** 页签 id —— 与下面每个 `TabsTrigger value` 一一对应。 */
+const TAB_IDS = ['payload', 'gravity', 'joints', 'diagnostics', 'gripper', 'activation'] as const
+const DEFAULT_TAB = 'payload'
+
+/**
+ * 从 URL 的 `?tab=` 取初始页签。
+ *
+ * ⚠ 认不出的值**退回默认**，不报错也不白屏：这个查询串是别人给的（说明书、聊天记录、
+ * 书签），拼错一个字母不该让整页打不开。`/settings?tab=activation` 是文档与支持话术里
+ * 反复出现的入口 —— 界面上「未激活」那条提示指的就是授权激活。
+ */
+function initialTab(params: URLSearchParams): string {
+  const wanted = params.get('tab')
+  return wanted !== null && (TAB_IDS as readonly string[]).includes(wanted)
+    ? wanted
+    : DEFAULT_TAB
+}
+
 export function SettingsPage() {
   const { t } = useTranslation(['common', 'settings'])
+  const [searchParams] = useSearchParams()
   const vm = useSettingsState()
 
   return (
@@ -339,7 +359,7 @@ export function SettingsPage() {
           </div>
         </div>
 
-        <Tabs defaultValue="payload" className="w-full space-y-4">
+        <Tabs defaultValue={initialTab(searchParams)} className="w-full space-y-4">
           <TabsList className="grid h-11 w-full grid-cols-2 rounded-xl bg-muted/60 p-1 md:grid-cols-6">
             <TabsTrigger value="payload" className="gap-1.5 rounded-lg text-xs font-semibold">
               <Scale className="size-3.5" />
