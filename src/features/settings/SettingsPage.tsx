@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useSearchParams } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
@@ -315,7 +315,7 @@ const TAB_IDS = ['payload', 'gravity', 'joints', 'diagnostics', 'gripper', 'acti
 const DEFAULT_TAB = 'payload'
 
 /**
- * 从 URL 的 `?tab=` 取初始页签。
+ * 从 URL 的 `?tab=` 取页签。
  *
  * ⚠ 认不出的值**退回默认**，不报错也不白屏：这个查询串是别人给的（说明书、聊天记录、
  * 书签），拼错一个字母不该让整页打不开。`/settings?tab=activation` 是文档与支持话术里
@@ -330,8 +330,32 @@ function initialTab(params: URLSearchParams): string {
 
 export function SettingsPage() {
   const { t } = useTranslation(['common', 'settings'])
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const vm = useSettingsState()
+  const tab = initialTab(searchParams)
+
+  /**
+   * 切页签 → **写回 URL**。
+   *
+   * ⚠ 只读不写是不够的：那样 `?tab=` 只是 `defaultValue` 的初值，操作员切到
+   * 「固件升级」再刷新会掉回默认页签，看上去像那次切换根本没生效。
+   *
+   * `replace: true`：页签是同一个页面的视图切换，不该往历史里堆 —— 否则按「返回」
+   * 得在页签之间走一遍才离得开设置页。
+   */
+  const selectTab = useCallback(
+    (next: string) => {
+      setSearchParams(
+        (prev) => {
+          const params = new URLSearchParams(prev)
+          params.set('tab', next)
+          return params
+        },
+        { replace: true },
+      )
+    },
+    [setSearchParams],
+  )
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-muted/10 p-6">
@@ -360,7 +384,7 @@ export function SettingsPage() {
           </div>
         </div>
 
-        <Tabs defaultValue={initialTab(searchParams)} className="w-full space-y-4">
+        <Tabs value={tab} onValueChange={selectTab} className="w-full space-y-4">
           <TabsList className="grid h-11 w-full grid-cols-2 rounded-xl bg-muted/60 p-1 md:grid-cols-7">
             <TabsTrigger value="payload" className="gap-1.5 rounded-lg text-xs font-semibold">
               <Scale className="size-3.5" />

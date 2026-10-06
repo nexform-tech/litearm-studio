@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, useLocation } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@/i18n'
 
@@ -91,6 +91,21 @@ async function renderPage(entry = '/settings') {
 function renderAt(entry: string) {
   render(
     <MemoryRouter initialEntries={[entry]}>
+      <SettingsPage />
+    </MemoryRouter>,
+  )
+}
+
+/** 把当前 URL 的查询串渲染出来 —— 用来断言"切页签有没有写回地址栏"。 */
+function LocationProbe() {
+  const location = useLocation()
+  return <div data-testid="location-search">{location.search}</div>
+}
+
+function renderWithUrl(entry: string) {
+  render(
+    <MemoryRouter initialEntries={[entry]}>
+      <LocationProbe />
       <SettingsPage />
     </MemoryRouter>,
   )
@@ -188,5 +203,24 @@ describe('SettingsPage axis scaling', () => {
     expect(await screen.findByDisplayValue('1')).toBeDefined()
     expect(screen.queryByTestId('activation-section')).toBeNull()
     expect(screen.queryByTestId('firmware-section')).toBeNull()
+  })
+
+  it('writes the selected tab back into ?tab=, so a refresh keeps it', async () => {
+    // ⚠ 只"读"不"写"是不够的：那样 `?tab=` 只是首次挂载的初值（`defaultValue`），
+    //   操作员切到「固件升级」再刷新会掉回默认页签 —— 看上去像那次切换没生效。
+    primeArm(7)
+    renderWithUrl('/settings')
+    await screen.findByDisplayValue('1')
+    expect(screen.getByTestId('location-search').textContent).toBe('')
+
+    openTab(/固件升级/)
+    await waitFor(() =>
+      expect(screen.getByTestId('location-search').textContent).toBe('?tab=firmware'))
+    expect(screen.getByTestId('firmware-section')).toBeDefined()
+
+    openTab(/授权激活/)
+    await waitFor(() =>
+      expect(screen.getByTestId('location-search').textContent).toBe('?tab=activation'))
+    expect(screen.getByTestId('activation-section')).toBeDefined()
   })
 })
