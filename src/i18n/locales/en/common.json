@@ -122,6 +122,7 @@
     "licenseUnsupportedFormat": "The license file is newer than this host application: upgrade it, or use a license that matches",
     "licenseUidMismatch": "This license belongs to a different machine: use the one issued for this arm's UID",
     "gripperNotConnected": "Gripper is not connected: connect it on the gripper page first",
+    "gripperNotEnabled": "Gripper is not enabled — press Enable on the gripper panel first",
     "gripperLinkError": "The gripper's CAN interface is unavailable: {{message}}",
     "gripperFaultActive": "The gripper drive reports a fault: {{message}} — clear it once the cause is gone",
     "gripperCalibration": "The gripper's calibration does not allow this: {{message}}",

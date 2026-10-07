@@ -146,7 +146,11 @@ describe('useGripperPanel', () => {
     const { result } = renderHook(() => useGripperPanel())
     expect(result.current.canControl).toBe(false)
     // 断言的是"说出了原因"，不是某一语言的措辞（i18n 语言由环境决定）。
-    expect(result.current.disabledReason).toBe(i18n.t('common:errors.notEnabled'))
+    expect(result.current.disabledReason).toBe(i18n.t('common:errors.gripperNotEnabled'))
+    // 夹爪的使能位与机械臂无关：一段夹爪自己的话，不是机械臂的 (#55)。
+    expect(result.current.disabledReason).not.toBe(i18n.t('common:errors.notEnabled'))
+    expect(result.current.disabledReason).not.toContain('机械臂')
+    expect(result.current.disabledReason).not.toContain('Robot arm')
   })
 
   it('locks motion behind a latched stop and says so', () => {
