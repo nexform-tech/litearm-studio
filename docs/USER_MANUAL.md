@@ -209,7 +209,7 @@ Supports spatial pose adjustments referenced to the end-effector tool:
   - Tool: Dynamic reference aligned with tool TCP orientation;
 - Translation Pad (a cross): the top pair is `Z+ / Z−` (up/down), the vertical axis is `X+ / X−` (forward/back) and the horizontal axis is `Y+ / Y−` (left/right). Long-press for continuous linear moves; stop on release. Step size 1 / 5 / 10 / 25 / 50 mm, chosen on the title row;
 - Rotation Pad (the same cross): the top pair is `RZ+ / RZ−`, the vertical axis is `RY− / RY+` and the horizontal axis is `RX+ / RX−`. Long-press to rotate around the TCP; stop on release. Step size 1 / 5 / 10 / 15 / 30°;
-- Side by side: the jog pads sit on the left and the target-pose movel form on the right, with no sub-mode tabs to switch between; the form wraps below the pads when the window is too narrow;
+- Two cards side by side: the end-effector trim card on the left holds the jog pads and the target-pose movel card on the right holds the absolute pose inputs, with no sub-mode tabs to switch between;
 - Reference frame: `Base Frame / Tool Frame` lives on the title row and already says which frame is in use, so the separate origin badge is gone.
 
 #### Linear Move to Target Pose
