@@ -10,8 +10,8 @@ import soloZh from './locales/zh/solo.json'
 import soloEn from './locales/en/solo.json'
 import settingsZh from './locales/zh/settings.json'
 import settingsEn from './locales/en/settings.json'
-import telemetryZh from './locales/zh/telemetry.json'
-import telemetryEn from './locales/en/telemetry.json'
+import logsZh from './locales/zh/logs.json'
+import logsEn from './locales/en/logs.json'
 import gripperZh from './locales/zh/gripper.json'
 import gripperEn from './locales/en/gripper.json'
 
@@ -22,7 +22,7 @@ export const resources = {
     nav: navZh,
     solo: soloZh,
     settings: settingsZh,
-    telemetry: telemetryZh,
+    logs: logsZh,
     gripper: gripperZh,
   },
   en: {
@@ -30,7 +30,7 @@ export const resources = {
     nav: navEn,
     solo: soloEn,
     settings: settingsEn,
-    telemetry: telemetryEn,
+    logs: logsEn,
     gripper: gripperEn,
   },
 } as const
@@ -42,7 +42,7 @@ i18n
     resources,
     fallbackLng: 'zh',
     defaultNS,
-    ns: ['common', 'nav', 'solo', 'settings', 'telemetry', 'gripper'],
+    ns: ['common', 'nav', 'solo', 'settings', 'logs', 'gripper'],
     interpolation: {
       escapeValue: false,
     },

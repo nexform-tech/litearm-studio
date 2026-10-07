@@ -1,8 +1,8 @@
 {
   "control": "Control",
   "controlTitle": "Robot Arm Console",
-  "log": "Telemetry",
-  "logTitle": "Telemetry Records",
+  "log": "Logs",
+  "logTitle": "Logs",
   "settings": "Settings",
   "settingsTitle": "Controller Parameters",
   "connect": "Connect",
