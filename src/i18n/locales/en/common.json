@@ -100,6 +100,7 @@
     "commandRejected": "The controller rejected the command{{code}}",
     "motionTimeout": "Motion timed out: the controller did not finish within the expected time, please check robot status",
     "badMessage": "Protocol error talking to the local daemon: {{message}}",
+    "portChangeWhileConnected": "The arm is already connected on another serial port: press Disconnect, then connect the new port",
     "stopFailed": "Emergency stop was not delivered: {{message}}",
     "jogFailed": "Jog did not run: {{message}}",
     "notEnabled": "Robot arm is not enabled — enable it before commanding motion",

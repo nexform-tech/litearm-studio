@@ -100,6 +100,7 @@
     "commandRejected": "控制器拒绝了该命令{{code}}",
     "motionTimeout": "运动超时：控制器未在预期时间内完成动作，请检查机械臂状态",
     "badMessage": "与本地程序的通信协议错误：{{message}}",
+    "portChangeWhileConnected": "机械臂已连接在另一个串口上：换口请先按「断开」，再选新口连接",
     "stopFailed": "急停指令未能送达：{{message}}",
     "jogFailed": "点动未执行：{{message}}",
     "notEnabled": "机械臂未使能 —— 请先使能再操作",

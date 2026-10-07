@@ -1,5 +1,6 @@
 import type { CommandError } from './socket'
 import { DaemonSocket } from './socket'
+import { formatArmError } from './errors'
 import {
   fileToBase64,
   normalizeFirmwareProgress,
@@ -267,7 +268,7 @@ export class ArmClient {
     //   口再点连接，这次选择会存在 `_pendingPort` 里，等到这一帧才发出去 —— 否则那次
     //   选择会被静默丢掉，daemon 连的是自动发现到的另一台。
     this.socket.onOpen(() => {
-      this.socket.sendFrame(this._connectFrame())
+      this._sendConnectFrame()
     })
     this.socket.onFrame('conn', (msg) => this._applyConn(msg))
     this.socket.onFrame('hello', (msg) => this._applyHello(msg))
@@ -363,7 +364,7 @@ export class ArmClient {
     // 原地重发一次就是重试。拆掉重开不会多试任何东西，还会顺手弄断共用这条 socket 的
     // 夹爪会话。
     if (this.socket.open) {
-      this.socket.sendFrame(this._connectFrame())
+      this._sendConnectFrame()
       return
     }
     this.socket.connect()
@@ -384,6 +385,25 @@ export class ArmClient {
   /** 打开 socket 时自动发的 connect 帧 —— 带上操作员选过的口（如果有）。 */
   private _connectFrame(): { t: 'connect'; port?: string } {
     return this._pendingPort ? { t: 'connect', port: this._pendingPort } : { t: 'connect' }
+  }
+
+  /**
+   * 发一条 `connect` 帧并**接住它的应答**（`sendRequest` 补 `id` 并注册在途请求）。
+   *
+   * ⚠ 帧必须带 `id`：daemon 拒绝这次连接时（例如已在另一个口上，换口要先断开）只回一条
+   * `ok:false` 的 `res`，**不会**再发 `conn` 帧。不认领这条应答，那次拒绝在界面上就完全
+   * 不可见 —— 顶栏还停在旧状态，操作员以为点了没反应。这里把它落到既有的
+   * `status === 'error'` + `lastError` 通道（顶栏读的就是这两个），不另造错误通道。
+   *
+   * ⚠ socket 已经关掉时的拒绝不走这里：那条是传输层的事（`disconnect()` 会拒掉在途
+   * 请求），由 `onLifecycle` 把它报成「已断开」，覆盖成「连接失败」是错的。
+   */
+  private _sendConnectFrame() {
+    void this.socket.sendRequest(this._connectFrame()).catch((err: unknown) => {
+      if (!this.socket.open) return
+      this.socket.setLastError(formatArmError(err) || String(err))
+      this._setStatus('error')
+    })
   }
 
   /** 断开：通知 daemon 断开机械臂，并关闭本地 WebSocket。 */

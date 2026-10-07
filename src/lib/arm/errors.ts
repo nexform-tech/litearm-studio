@@ -24,6 +24,8 @@ const KIND_KEYS: Record<string, string> = {
   CommandRejectedError: 'commandRejected',
   MotionTimeoutError: 'motionTimeout',
   BadMessage: 'badMessage',
+  // 设备选择：已连着时指了另一个口，daemon 拒了这次 connect 的 `res`（不是 `conn` 帧）。
+  PortChangeWhileConnectedError: 'portChangeWhileConnected',
   // 夹爪 (§4.3)。daemon 的类名与这里的键一一对应。
   GripperNotConnectedError: 'gripperNotConnected',
   GripperLinkError: 'gripperLinkError',
@@ -145,6 +147,8 @@ const FALLBACK_ZH: Record<string, string> = {
   commandRejected: '控制器拒绝了该命令{{code}}',
   motionTimeout: '运动超时：控制器未在预期时间内完成动作，请检查机械臂状态',
   badMessage: '与本地程序的通信协议错误：{{message}}',
+  portChangeWhileConnected:
+    '机械臂已连接在另一个串口上：换口请先按「断开」，再选新口连接',
   gripperNotConnected: '夹爪未连接：请先在夹爪页连接',
   gripperLinkError: '夹爪的 CAN 接口不可用：{{message}}',
   gripperFaultActive: '夹爪驱动报故障：{{message}}，请排除原因后清除故障',
