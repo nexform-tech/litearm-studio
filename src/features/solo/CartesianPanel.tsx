@@ -154,13 +154,13 @@ export function CartesianPanel({
   }
 
   return (
-    /* 左右两张卡：右卡固定 13rem，左卡吃掉其余宽度。卡片**贴合内容高度**，多出来的
-       竖向空间留给关节列表（见 SoloConsole）：把卡片拉满列高只会让点动盘四周全是空白。
+    /* 左右两张卡：右卡固定 13rem，左卡吃掉其余宽度。卡片给一个明确的高度下限
+       （比"贴合内容"高一截，盘面才不至于挤成一条），剩下的竖向空间留给关节列表。
        注：根字号是流式的 clamp(13px, 1.522vh, 36px)，所以 13rem 在 900px 高的
        窗口下约 178px，不是 208px。 */
     <div className="grid flex-none grid-cols-[minmax(0,1fr)_13rem] items-stretch gap-3">
       {/* 左：方向点动 */}
-      <Card className="gap-3 rounded-[0.875rem] px-4 py-3.5">
+      <Card className="gap-3 rounded-[0.875rem] px-4 py-3.5 min-h-[25rem]">
         <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2 border-b pb-2.5">
           <div className="flex items-center gap-1.5 text-[0.90625rem] font-semibold text-foreground">
             <Compass className="size-4 text-primary" />
@@ -191,11 +191,11 @@ export function CartesianPanel({
           </div>
         </div>
 
-        <div className="flex items-center justify-center gap-6 py-1" style={disabledStyle}>
-          <div className="w-full min-w-0 max-w-[16rem]">
+        <div className="flex min-h-0 flex-1 items-stretch justify-center gap-6 py-1" style={disabledStyle}>
+          <div className="w-full min-w-0 max-w-[18rem]">
             <DirectionPad cells={transCells} onPress={onJogPress} onRelease={onJogRelease} />
           </div>
-          <div className="w-full min-w-0 max-w-[16rem]">
+          <div className="w-full min-w-0 max-w-[18rem]">
             <DirectionPad cells={rotCells} onPress={onJogPress} onRelease={onJogRelease} />
           </div>
         </div>
@@ -220,7 +220,8 @@ export function CartesianPanel({
           {t('solo:cartesian.syncCurrentPose')}
         </Button>
 
-        <div className="grid grid-cols-2 gap-x-2 gap-y-2" style={disabledStyle}>
+        {/* 输入组在两段之间居中：上边是标题与同步、下边是 movel 动作 */}
+        <div className="my-auto grid grid-cols-2 gap-x-2 gap-y-2" style={disabledStyle}>
           <PoseField label="X (m)" value={targetX} step="0.005" onChange={setTargetX} />
           <PoseField label="Y (m)" value={targetY} step="0.005" onChange={setTargetY} />
           <PoseField label="Z (m)" value={targetZ} step="0.005" onChange={setTargetZ} />
