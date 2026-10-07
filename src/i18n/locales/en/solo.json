@@ -7,16 +7,22 @@
     "joint": "Joint",
     "cartesian": "Cartesian"
   },
+  "pose": {
+    "title": "Status",
+    "jointLabel": "Joint {{n}}"
+  },
   "controlBar": {
     "clearFault": "Clear Error",
     "readyPose": "Ready Pose",
     "readyPoseTitle": "Move to recommended ready pose Home",
     "zeroPose": "Zero Pose",
     "zeroPoseTitle": "Move to zero pose (all axes 0 rad)",
-    "speed": "Speed"
+    "speed": "Speed",
+    "speedDown": "Decrease speed",
+    "speedUp": "Increase speed"
   },
   "cartesian": {
-    "title": "Cartesian Space",
+    "title": "End-effector Trim",
     "baseFrame": "Base Frame",
     "toolFrame": "Tool Frame",
     "simHint": "Sim mode only supports joint space operations",
@@ -24,11 +30,12 @@
     "poseUnavailable": "No cartesian pose: this firmware has no cartesian planning",
     "jogSubMode": "Directional Jog",
     "targetSubMode": "Target Pose movel",
-    "origin": "Origin",
     "transStep": "Trans Step",
     "rotStep": "Rot Step",
-    "transTitle": "Translation · mm",
-    "rotTitle": "Rotation · deg",
+    "transTitle": "Translate",
+    "rotTitle": "Rotate",
+    "transUnit": "(mm)",
+    "rotUnit": "(deg)",
     "targetPoseTitle": "Target position [X, Y, Z] (m) & Orientation [Roll, Pitch, Yaw] (rad)",
     "syncCurrentPose": "⇠ Sync Current Pose",
     "movelBtn": "Linear motion to target pose (movel)",
@@ -51,9 +58,7 @@
       "rotBaseZ": "Rot Base Z",
       "rotToolX": "Rot Tool X",
       "rotToolY": "Rot Tool Y",
-      "rotToolZ": "Rot Tool Z",
-      "pose": "Pose",
-      "toolPose": "Tool Pose"
+      "rotToolZ": "Rot Tool Z"
     }
   },
   "jointSpace": {
@@ -68,6 +73,7 @@
     "axes": "Axes",
     "focus": "Focus",
     "topView": "Top View",
+    "expand": "Expand",
     "loading": "Loading 3D model…"
   }
 }

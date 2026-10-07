@@ -8,11 +8,50 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { MoveRight, RefreshCw, Compass } from 'lucide-react'
 
+/** 步长选择器：标题行右侧的「平移: 10 mm / 旋转: 5 °」。 */
+function StepPicker({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string
+  value: string
+  options: readonly string[]
+  onChange: (v: string) => void
+}) {
+  return (
+    <div className="flex items-center gap-1">
+      <span className="text-[0.75rem] text-muted-foreground">{label}:</span>
+      <Select value={value} onValueChange={onChange}>
+        <SelectTrigger size="sm" className="h-7 font-mono text-[0.8125rem] font-semibold">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map((s) => (
+            <SelectItem key={s} value={s}>
+              {s}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  )
+}
+
+/**
+ * 末端点位微调 —— 图稿的形态：一张卡，标题行右侧放两个步长选择器，卡内是两个
+ * 十字点动盘（平移 / 旋转），盘中间那格写明这个盘是干什么的。
+ *
+ * 现有但图稿没有的两个功能收进标题行，不占正文高度：方向点动 / 目标位姿 movel
+ * 子模式、基坐标系 / 工具坐标系切换。参考坐标系已经由这个切换器表达，所以不再
+ * 单独显示 BASE_LINK / TOOL0 徽标。
+ */
 export function CartesianPanel({
   simMode = false,
+  /** 固件未编译笛卡尔规划（`conn.cart === false`）：整块面板不可用。 */
   cartUnsupported = false,
   frames,
-  frameOrigin,
   transCells,
   rotCells,
   onJogPress,
@@ -27,10 +66,8 @@ export function CartesianPanel({
   onSyncCurrentPose,
 }: {
   simMode?: boolean
-  /** 固件未编译笛卡尔规划（`conn.cart === false`）：整块面板不可用。 */
   cartUnsupported?: boolean
   frames: SegItem[]
-  frameOrigin: string
   transCells: PadCell[]
   rotCells: PadCell[]
   onJogPress: (label: string) => void
@@ -58,6 +95,7 @@ export function CartesianPanel({
   // 面板主体不可用的两种原因：仿真模式（不下发指令）与固件缺少笛卡尔规划。
   // 头部控件仍然可点，便于在不可用时查看坐标系/步长设置。
   const inactive = simMode || cartUnsupported
+  const disabledStyle = inactive ? { opacity: 0.45, pointerEvents: 'none' as const } : undefined
 
   const handleSyncPose = async () => {
     if (!onSyncCurrentPose) return
@@ -89,20 +127,25 @@ export function CartesianPanel({
 
   return (
     <Card className="min-h-[16.25rem] flex-1 gap-3 rounded-[0.875rem] px-4 py-3.5">
-      <div className="flex flex-wrap items-center gap-2.5 gap-y-2">
-        <div className="text-[0.90625rem] font-semibold text-foreground">{t('solo:cartesian.title')}</div>
+      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2 border-b pb-2.5">
+        <div className="flex items-center gap-1.5 text-[0.90625rem] font-semibold text-foreground">
+          <Compass className="size-4 text-primary" />
+          {t('solo:cartesian.title')}
+        </div>
         {simMode ? (
-          <div className="rounded-full bg-warn-soft px-2 py-0.5 text-[0.6875rem] font-medium text-warn">
+          <span className="rounded-full bg-warn-soft px-2 py-0.5 text-[0.6875rem] font-medium text-warn">
             {t('solo:cartesian.simHint')}
-          </div>
+          </span>
         ) : cartUnsupported ? (
-          <div className="rounded-full bg-warn-soft px-2 py-0.5 text-[0.6875rem] font-medium text-warn">
+          <span className="rounded-full bg-warn-soft px-2 py-0.5 text-[0.6875rem] font-medium text-warn">
             {t('solo:cartesian.unsupportedHint')}
-          </div>
+          </span>
         ) : null}
 
+        <div className="flex-1" />
+
         {/* 子模式切换：点动 vs 绝对目标 */}
-        <div className="flex rounded-lg bg-muted/60 p-0.5 text-xs">
+        <div className="flex rounded-lg bg-muted/60 p-0.5 text-[0.71875rem]">
           <button
             type="button"
             onClick={() => setSubMode('jog')}
@@ -128,61 +171,30 @@ export function CartesianPanel({
             <SegmentedControl
               items={frames}
               containerStyle={{ display: 'flex', gap: '0.1875rem', background: 'var(--line-soft)', borderRadius: '0.5625rem', padding: '0.1875rem' }}
-              itemStyle={{ padding: '0.3125rem 0.75rem', borderRadius: '0.4375rem', fontSize: '0.78125rem', color: 'var(--ink-subtle)', fontWeight: 500 }}
+              itemStyle={{ padding: '0.25rem 0.625rem', borderRadius: '0.4375rem', fontSize: '0.75rem', color: 'var(--ink-subtle)', fontWeight: 500 }}
               activeItemStyle={{ background: 'var(--seg-active)', color: 'var(--ink)', fontWeight: 600, boxShadow: '0 0.0625rem 0.125rem rgba(16,24,40,.08)' }}
             />
-            <div className="flex items-center gap-1.5 rounded-lg border bg-muted/40 px-2.5 py-[0.3125rem]">
-              <div className="text-[0.71875rem] text-muted-foreground">{t('solo:cartesian.origin')}</div>
-              <div className="font-mono text-xs font-semibold text-ink-muted">{frameOrigin}</div>
-            </div>
-            <div className="flex-1" />
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs text-muted-foreground">{t('solo:cartesian.transStep')}</span>
-              <Select value={transStep} onValueChange={setTransStep}>
-                <SelectTrigger size="sm" className="font-mono text-[0.8125rem] font-semibold">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {transSteps.map((s) => (
-                    <SelectItem key={s} value={s}>
-                      {s}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs text-muted-foreground">{t('solo:cartesian.rotStep')}</span>
-              <Select value={rotStep} onValueChange={setRotStep}>
-                <SelectTrigger size="sm" className="font-mono text-[0.8125rem] font-semibold">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {rotSteps.map((s) => (
-                    <SelectItem key={s} value={s}>
-                      {s}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <div className="h-5 w-px bg-line" />
+            <div className="flex items-center gap-x-2.5">
+              <StepPicker label={t('solo:cartesian.transTitle')} value={transStep} options={transSteps} onChange={setTransStep} />
+              <StepPicker label={t('solo:cartesian.rotTitle')} value={rotStep} options={rotSteps} onChange={setRotStep} />
             </div>
           </>
         )}
       </div>
 
       {subMode === 'jog' ? (
-        <div className="flex min-h-0 flex-1 gap-3" style={inactive ? { opacity: 0.45, pointerEvents: 'none' } : undefined}>
-          <div className="flex min-h-0 flex-1 flex-col gap-2.5 rounded-xl border bg-muted/40 p-3.5">
-            <div className="text-xs font-bold tracking-wide text-ink-muted">{t('solo:cartesian.transTitle')}</div>
+        /* 盘面宽度收到 15.5rem 并居中：图稿里两个盘是紧凑的一对，而不是铺满整张卡 */
+        <div className="flex min-h-0 flex-1 items-center justify-center gap-8 py-1" style={disabledStyle}>
+          <div className="w-full min-w-0 max-w-[15.5rem]">
             <DirectionPad cells={transCells} onPress={onJogPress} onRelease={onJogRelease} />
           </div>
-          <div className="flex min-h-0 flex-1 flex-col gap-2.5 rounded-xl border bg-muted/40 p-3.5">
-            <div className="text-xs font-bold tracking-wide text-ink-muted">{t('solo:cartesian.rotTitle')}</div>
+          <div className="w-full min-w-0 max-w-[15.5rem]">
             <DirectionPad cells={rotCells} onPress={onJogPress} onRelease={onJogRelease} />
           </div>
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col gap-3 rounded-xl border bg-muted/20 p-3.5" style={inactive ? { opacity: 0.45, pointerEvents: 'none' } : undefined}>
+        <div className="flex min-h-0 flex-1 flex-col gap-3 rounded-xl border bg-muted/20 p-3.5" style={disabledStyle}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
               <Compass className="size-4 text-primary" />

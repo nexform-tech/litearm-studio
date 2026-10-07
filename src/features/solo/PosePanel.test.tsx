@@ -22,10 +22,10 @@ describe('PosePanel', () => {
   it('shows the joint and Cartesian readings side by side in a single card', () => {
     render(<PosePanel jointPose={joint} cartPose={cart} />)
 
-    expect(screen.getByText(i18n.t('common:currentPose'))).toBeTruthy()
+    expect(screen.getByText(i18n.t('solo:pose.title'))).toBeTruthy()
     // 两栏同时可见：关节角与 TCP 位姿不再靠页签二选一。
-    for (let i = 1; i <= 7; i++) expect(screen.getByText(`J${i}`)).toBeTruthy()
-    for (const row of cart) expect(screen.getByText(row.k)).toBeTruthy()
+    for (let n = 1; n <= 7; n++) expect(screen.getByText(i18n.t('solo:pose.jointLabel', { n }))).toBeTruthy()
+    for (const row of cart) expect(screen.getByText(`${row.k}:`)).toBeTruthy()
     expect(screen.getByText('0.3241')).toBeTruthy()
     expect(screen.getByText('1.5701')).toBeTruthy()
   })
@@ -34,8 +34,8 @@ describe('PosePanel', () => {
     render(<PosePanel jointPose={joint} cartPose={null} />)
 
     expect(screen.getByText(i18n.t('solo:cartesian.poseUnavailable'))).toBeTruthy()
-    expect(screen.queryByText('RX')).toBeNull()
+    expect(screen.queryByText('RX:')).toBeNull()
     // 关节读数不受影响。
-    expect(screen.getByText('J7')).toBeTruthy()
+    expect(screen.getByText(i18n.t('solo:pose.jointLabel', { n: 7 }))).toBeTruthy()
   })
 })

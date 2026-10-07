@@ -74,7 +74,6 @@
     "pause": "暂停",
     "resume": "继续"
   },
-  "currentPose": "当前位姿",
   "units": {
     "deg": "°",
     "rad": "rad",

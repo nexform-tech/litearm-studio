@@ -136,7 +136,7 @@ The Solo Control page provides real-time 3D pose monitoring, state readouts, joi
   - Real Mode: Model strictly reflects live joint positions broadcast from the robot;
   - Sim Mode: Preview motions in the interface without issuing commands to the arm;
 - Navigation Controls: Left-drag to rotate view 360°, scroll wheel to zoom, right-drag to pan;
-- Toolbar Actions:
+- Toolbar Actions (on the title row, next to the Real/Sim switch):
   - Axes: Toggle coordinate frames on joints and base;
   - Focus: Recenter camera on the robot;
   - Top View: Jump to top-down orthographic view;
@@ -144,10 +144,10 @@ The Solo Control page provides real-time 3D pose monitoring, state readouts, joi
 
 ### 3.2 Pose Monitor
 
-Joint and Cartesian readings share one "Current Pose" card, with both columns visible at once:
+Joint and Cartesian readings share one "Status" card, with both columns visible at once and six decimals each:
 
-- Joint Space (left column): Real-time angles for all seven axes J1–J7 (rad);
-- Cartesian Space (right column): Tool Center Point (TCP) spatial coordinates (`X, Y, Z` in meters) and Euler angles (`Roll, Pitch, Yaw` in radians) relative to the base coordinate frame;
+- Joint Space (left column): Real-time angles for joints 1–7 (rad);
+- Cartesian Space (right column): Tool Center Point (TCP) spatial coordinates (`X:`, `Y:`, `Z:` in meters) and Euler angles (`RX:`, `RY:`, `RZ:` in radians) relative to the base coordinate frame;
 - When the firmware has no Cartesian planner the right column says so instead of showing an invented pose.
 
 ### 3.3 Live Telemetry Curve
@@ -182,7 +182,7 @@ Consolidates global robot controls and operating mode selection:
 
 - Position Mode: Standard closed-loop servo control mode, high-stiffness position hold, precisely executing joint micro-stepping or Cartesian trajectory commands;
 - Drag Mode: Enables dynamic gravity compensation and zero-force teaching algorithms; motors cancel arm gravity in real time, allowing smooth manual lead-through by hand;
-- Global Speed Scale: Slider adjusting global speed ceiling from 1% to 100% across all motions (mapped to underlying driver and planner speed scaling).
+- Global Speed Scale: Its own row; the `−` / `+` stepper at the right end of the slider nudges it by 1%. Range 1%–100% across all motions (mapped to underlying driver and planner speed scaling).
 
 ---
 
@@ -196,7 +196,7 @@ Consolidates global robot controls and operating mode selection:
 
 ---
 
-### 3.6 Cartesian Space Control
+### 3.6 End-effector Trim (Cartesian Space)
 
 Supports spatial pose adjustments referenced to the end-effector tool:
 
@@ -207,8 +207,9 @@ Supports spatial pose adjustments referenced to the end-effector tool:
 - Reference Frame:
   - Base: Grounded to the robot mounting base;
   - Tool: Dynamic reference aligned with tool TCP orientation;
-- Translation Pad: Long-press `Forward / Backward / Left / Right / Up / Down` buttons for continuous linear moves; stop on release. Step sizes: 1 / 5 / 10 / 25 / 50 mm;
-- Rotation Pad: Long-press rotation buttons (around X / Y / Z axes) to rotate around TCP; stop on release. Step sizes: 1 / 5 / 10 / 15 / 30°.
+- Translation Pad (a cross): the top pair is `Z+ / Z−` (up/down), the vertical axis is `X+ / X−` (forward/back) and the horizontal axis is `Y+ / Y−` (left/right). Long-press for continuous linear moves; stop on release. Step size 1 / 5 / 10 / 25 / 50 mm, chosen on the title row;
+- Rotation Pad (the same cross): the top pair is `RZ+ / RZ−`, the vertical axis is `RY− / RY+` and the horizontal axis is `RX+ / RX−`. Long-press to rotate around the TCP; stop on release. Step size 1 / 5 / 10 / 15 / 30°;
+- Sub-mode and reference frame: `Directional Jog / Target Pose movel` and `Base Frame / Tool Frame` live on the title row. The frame switch already says which frame is in use, so the separate origin badge is gone.
 
 #### Linear Move to Target Pose
 

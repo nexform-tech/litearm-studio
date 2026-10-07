@@ -40,8 +40,12 @@ export function ControlBar({
 }) {
   const { t } = useTranslation(['common', 'solo'])
 
+  // 速度滑条只接受 (0,1]：0% 会被服务端拒绝，所以步进器把下限钳在 1。
+  const nudge = (delta: number) => setSpeed(Math.min(100, Math.max(1, speed + delta)))
+
   return (
-    <Card className="flex-none flex-col gap-2 rounded-[0.875rem] px-[0.8125rem] py-[0.6875rem]">
+    <Card className="flex-none flex-col gap-2.5 rounded-[0.875rem] px-[0.8125rem] py-[0.6875rem]">
+      {/* 第一行：使能与三个一次性动作，模式切换靠右 */}
       <div className="flex flex-wrap items-center gap-2.5">
         <Toggle
           pressed={enabled}
@@ -84,20 +88,49 @@ export function ControlBar({
           </Button>
         </div>
 
-        <Separator orientation="vertical" className="h-7" />
+        <div className="ml-auto flex items-center gap-2.5">
+          <Separator orientation="vertical" className="h-7" />
+          <SegmentedControl
+            items={modes}
+            containerStyle={{ display: 'flex', gap: '0.1875rem', background: 'var(--line-soft)', borderRadius: '0.6875rem', padding: '0.1875rem' }}
+            itemStyle={{ padding: '0.5rem 0.8125rem', borderRadius: '0.5rem', fontSize: '0.84375rem', color: 'var(--ink-subtle)', fontWeight: 500 }}
+            activeItemStyle={{ background: 'var(--seg-active)', color: 'var(--ink)', fontWeight: 650, boxShadow: '0 0.0625rem 0.125rem rgba(16,24,40,.1)' }}
+          />
+        </div>
+      </div>
 
-        <SegmentedControl
-          items={modes}
-          containerStyle={{ display: 'flex', gap: '0.1875rem', background: 'var(--line-soft)', borderRadius: '0.6875rem', padding: '0.1875rem' }}
-          itemStyle={{ padding: '0.5rem 0.8125rem', borderRadius: '0.5rem', fontSize: '0.84375rem', color: 'var(--ink-subtle)', fontWeight: 500 }}
-          activeItemStyle={{ background: 'var(--seg-active)', color: 'var(--ink)', fontWeight: 650, boxShadow: '0 0.0625rem 0.125rem rgba(16,24,40,.1)' }}
+      {/* 第二行：速度值独占一行，滑条 + 步进器 */}
+      <div className="flex items-center gap-[0.5625rem]">
+        <div className="text-[0.84375rem] font-semibold text-ink-strong">{t('solo:controlBar.speed')}</div>
+        <Slider
+          value={[speed]}
+          min={1}
+          max={100}
+          onValueChange={([v]) => setSpeed(v)}
+          className="min-w-0 flex-1"
         />
-
-        <div className="ml-auto flex items-center gap-[0.5625rem]">
-          <div className="text-[0.84375rem] font-semibold text-ink-strong">{t('solo:controlBar.speed')}</div>
-          {/* 最小 1%：pylitearm 的 speed 只接受 (0,1]，0% 会被服务端拒绝 */}
-          <Slider value={[speed]} min={1} max={100} onValueChange={([v]) => setSpeed(v)} className="w-[9.375rem]" />
-          <div className="w-[3.125rem] text-right font-mono text-base font-bold text-foreground">{speed}%</div>
+        <div className="flex flex-none items-center overflow-hidden rounded-[0.5625rem] border border-line-strong">
+          <button
+            type="button"
+            aria-label={t('solo:controlBar.speedDown')}
+            title={t('solo:controlBar.speedDown')}
+            onClick={() => nudge(-1)}
+            className="h-8 w-8 cursor-pointer text-[1rem] leading-none text-muted-foreground transition-colors hover:bg-[var(--hover)] hover:text-foreground"
+          >
+            −
+          </button>
+          <div className="w-[3.25rem] text-center font-mono text-[0.875rem] font-bold text-foreground">
+            {speed}%
+          </div>
+          <button
+            type="button"
+            aria-label={t('solo:controlBar.speedUp')}
+            title={t('solo:controlBar.speedUp')}
+            onClick={() => nudge(1)}
+            className="h-8 w-8 cursor-pointer text-[1rem] leading-none text-muted-foreground transition-colors hover:bg-[var(--hover)] hover:text-foreground"
+          >
+            +
+          </button>
         </div>
       </div>
 

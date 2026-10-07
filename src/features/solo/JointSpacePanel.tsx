@@ -172,6 +172,10 @@ function JointRow({
       >
         +
       </Button>
+      {/* 百分比读数：滑条量程是软限位，弧度只说明"现在在哪"，百分比说明"还差多少" */}
+      <div className="w-[2.5rem] flex-none text-right font-mono text-[0.75rem] text-muted-foreground">
+        {Math.round(shown)}%
+      </div>
       <div className="w-[4.5rem] rounded-[0.4375rem] border bg-muted/40 px-2 py-1 text-right font-mono text-[0.8125rem] text-foreground">
         {radOfPct(shown, joint.key)}
       </div>

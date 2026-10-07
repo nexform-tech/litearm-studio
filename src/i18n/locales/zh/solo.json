@@ -7,16 +7,22 @@
     "joint": "关节",
     "cartesian": "笛卡尔"
   },
+  "pose": {
+    "title": "状态",
+    "jointLabel": "关节 {{n}}"
+  },
   "controlBar": {
     "clearFault": "清错",
     "readyPose": "就绪姿态",
     "readyPoseTitle": "移动至推荐工作就绪姿态 Home",
     "zeroPose": "回零位",
     "zeroPoseTitle": "移动至零位 (各轴 0 rad)",
-    "speed": "速度"
+    "speed": "速度",
+    "speedDown": "降低速度",
+    "speedUp": "提高速度"
   },
   "cartesian": {
-    "title": "笛卡尔空间",
+    "title": "末端点位微调",
     "baseFrame": "基坐标系",
     "toolFrame": "工具坐标系",
     "simHint": "仿真模式仅支持关节空间操作",
@@ -24,11 +30,12 @@
     "poseUnavailable": "无笛卡尔位姿：当前固件未编译笛卡尔规划",
     "jogSubMode": "方向点动",
     "targetSubMode": "目标位姿 movel",
-    "origin": "原点",
     "transStep": "平移步长",
     "rotStep": "旋转步长",
-    "transTitle": "平移 · mm",
-    "rotTitle": "旋转 · deg",
+    "transTitle": "平移",
+    "rotTitle": "旋转",
+    "transUnit": "(mm)",
+    "rotUnit": "(deg)",
     "targetPoseTitle": "目标位置 [X, Y, Z] (m) 与姿态角 [Roll, Pitch, Yaw] (rad)",
     "syncCurrentPose": "⇠ 同步当前位姿",
     "movelBtn": "直线运动到目标位姿 (movel)",
@@ -51,9 +58,7 @@
       "rotBaseZ": "绕基Z",
       "rotToolX": "绕工具X",
       "rotToolY": "绕工具Y",
-      "rotToolZ": "绕工具Z",
-      "pose": "姿态",
-      "toolPose": "工具姿态"
+      "rotToolZ": "绕工具Z"
     }
   },
   "jointSpace": {
@@ -68,6 +73,7 @@
     "axes": "坐标系",
     "focus": "聚焦",
     "topView": "俯视",
+    "expand": "放大",
     "loading": "3D 模型加载中…"
   }
 }

@@ -330,7 +330,8 @@ export function useSoloState() {
 
   // 仿真模式始终展示虚拟姿态；实机模式已连接时展示同步的实际关节角；
   // 未连接时也展示滑条对应的角度，避免读数与滑条不一致。
-  const jointVals = jointPct.map((pct, i) => toRad(pct, i).toFixed(3))
+  // 位姿卡给到 6 位小数：关节角差 0.001 rad、TCP 差 0.0001 m 在示教时都看得见。
+  const jointVals = jointPct.map((pct, i) => toRad(pct, i).toFixed(6))
   const poseJoint = jointVals.map((v, i) => ({ k: 'J' + (i + 1), v, u: 'rad' }))
 
   // 关节与笛卡尔同时展示（不再用页签二选一）。顺序取 daemon `get_tcp` 的原生顺序：
@@ -341,20 +342,20 @@ export function useSoloState() {
     ? null
     : cartPose
       ? [
-          { k: 'X', v: cartPose[0].toFixed(4), u: 'm' },
-          { k: 'Y', v: cartPose[1].toFixed(4), u: 'm' },
-          { k: 'Z', v: cartPose[2].toFixed(4), u: 'm' },
-          { k: 'RX', v: cartPose[3].toFixed(4), u: 'rad' },
-          { k: 'RY', v: cartPose[4].toFixed(4), u: 'rad' },
-          { k: 'RZ', v: cartPose[5].toFixed(4), u: 'rad' },
+          { k: 'X', v: cartPose[0].toFixed(6), u: 'm' },
+          { k: 'Y', v: cartPose[1].toFixed(6), u: 'm' },
+          { k: 'Z', v: cartPose[2].toFixed(6), u: 'm' },
+          { k: 'RX', v: cartPose[3].toFixed(6), u: 'rad' },
+          { k: 'RY', v: cartPose[4].toFixed(6), u: 'rad' },
+          { k: 'RZ', v: cartPose[5].toFixed(6), u: 'rad' },
         ]
       : [
-          { k: 'X', v: s.cart.X.toFixed(4), u: 'm' },
-          { k: 'Y', v: s.cart.Y.toFixed(4), u: 'm' },
-          { k: 'Z', v: s.cart.Z.toFixed(4), u: 'm' },
-          { k: 'RX', v: s.cart.RX.toFixed(4), u: 'rad' },
-          { k: 'RY', v: s.cart.RY.toFixed(4), u: 'rad' },
-          { k: 'RZ', v: s.cart.RZ.toFixed(4), u: 'rad' },
+          { k: 'X', v: s.cart.X.toFixed(6), u: 'm' },
+          { k: 'Y', v: s.cart.Y.toFixed(6), u: 'm' },
+          { k: 'Z', v: s.cart.Z.toFixed(6), u: 'm' },
+          { k: 'RX', v: s.cart.RX.toFixed(6), u: 'rad' },
+          { k: 'RY', v: s.cart.RY.toFixed(6), u: 'rad' },
+          { k: 'RZ', v: s.cart.RZ.toFixed(6), u: 'rad' },
         ]
 
   const joints = jointPct.map((pct, i) => {
@@ -395,17 +396,50 @@ export function useSoloState() {
     { id: 'tool', name: t('solo:cartesian.toolFrame') },
   ] as const).map((f) => ({ key: f.id, label: f.name, ...pillProps(s.frame, f.id), onClick: () => update({ frame: f.id }) }))
 
-  const frameOrigin = s.frame === 'base' ? 'BASE_LINK' : 'TOOL0 / TCP'
-
+  // 点动盘的格子顺序 = 盘面位置（十字形，见 `DirectionPad` 的 `PadCell`）：
+  // 顶部一对 → 上 → 左/标签/右 → 下。平移盘把 Z 拆成顶部那一对，X 走竖向、
+  // Y 走横向；旋转盘同理（RZ 一对、RY 竖向、RX 横向）。
   const transCells: PadCell[] =
     s.frame === 'base'
-      ? [null, ['X+', t('solo:cartesian.pad.fwd')], ['Z+', t('solo:cartesian.pad.up')], ['Y+', t('solo:cartesian.pad.left')], ['TCP', '', true], ['Y−', t('solo:cartesian.pad.right')], null, ['X−', t('solo:cartesian.pad.back')], ['Z−', t('solo:cartesian.pad.down')]]
-      : [null, ['TX+', t('solo:cartesian.pad.toolFwd')], ['TZ+', t('solo:cartesian.pad.feed')], ['TY+', t('solo:cartesian.pad.toolLeft')], ['TOOL', '', true], ['TY−', t('solo:cartesian.pad.toolRight')], null, ['TX−', t('solo:cartesian.pad.toolBack')], ['TZ−', t('solo:cartesian.pad.retract')]]
+      ? [
+          ['Z+', t('solo:cartesian.pad.up')],
+          ['Z−', t('solo:cartesian.pad.down')],
+          ['X+', t('solo:cartesian.pad.fwd')],
+          ['Y+', t('solo:cartesian.pad.left')],
+          [t('solo:cartesian.transTitle'), t('solo:cartesian.transUnit'), true],
+          ['Y−', t('solo:cartesian.pad.right')],
+          ['X−', t('solo:cartesian.pad.back')],
+        ]
+      : [
+          ['TZ+', t('solo:cartesian.pad.feed')],
+          ['TZ−', t('solo:cartesian.pad.retract')],
+          ['TX+', t('solo:cartesian.pad.toolFwd')],
+          ['TY+', t('solo:cartesian.pad.toolLeft')],
+          [t('solo:cartesian.transTitle'), t('solo:cartesian.transUnit'), true],
+          ['TY−', t('solo:cartesian.pad.toolRight')],
+          ['TX−', t('solo:cartesian.pad.toolBack')],
+        ]
 
   const rotCells: PadCell[] =
     s.frame === 'base'
-      ? [null, ['RX+', t('solo:cartesian.pad.rotBaseX')], ['RZ+', t('solo:cartesian.pad.rotBaseZ')], ['RY+', t('solo:cartesian.pad.rotBaseY')], [t('solo:cartesian.pad.pose'), '', true], ['RY−', t('solo:cartesian.pad.rotBaseY')], null, ['RX−', t('solo:cartesian.pad.rotBaseX')], ['RZ−', t('solo:cartesian.pad.rotBaseZ')]]
-      : [null, ['RTX+', t('solo:cartesian.pad.rotToolX')], ['RTZ+', t('solo:cartesian.pad.rotToolZ')], ['RTY+', t('solo:cartesian.pad.rotToolY')], [t('solo:cartesian.pad.toolPose'), '', true], ['RTY−', t('solo:cartesian.pad.rotToolY')], null, ['RTX−', t('solo:cartesian.pad.rotToolX')], ['RTZ−', t('solo:cartesian.pad.retract')]]
+      ? [
+          ['RZ+', t('solo:cartesian.pad.rotBaseZ')],
+          ['RZ−', t('solo:cartesian.pad.rotBaseZ')],
+          ['RY−', t('solo:cartesian.pad.rotBaseY')],
+          ['RX+', t('solo:cartesian.pad.rotBaseX')],
+          [t('solo:cartesian.rotTitle'), t('solo:cartesian.rotUnit'), true],
+          ['RX−', t('solo:cartesian.pad.rotBaseX')],
+          ['RY+', t('solo:cartesian.pad.rotBaseY')],
+        ]
+      : [
+          ['RTZ+', t('solo:cartesian.pad.rotToolZ')],
+          ['RTZ−', t('solo:cartesian.pad.rotToolZ')],
+          ['RTY−', t('solo:cartesian.pad.rotToolY')],
+          ['RTX+', t('solo:cartesian.pad.rotToolX')],
+          [t('solo:cartesian.rotTitle'), t('solo:cartesian.rotUnit'), true],
+          ['RTX−', t('solo:cartesian.pad.rotToolX')],
+          ['RTY+', t('solo:cartesian.pad.rotToolY')],
+        ]
 
   const viewTabs: SegItem[] = [
     { key: 'sim', label: t('common:sim'), active: !s.real, onClick: () => update({ real: false }) },
@@ -582,7 +616,6 @@ export function useSoloState() {
     },
 
     frames,
-    frameOrigin,
     transCells,
     rotCells,
     transSteps: TRANS_STEPS,

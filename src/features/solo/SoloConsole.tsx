@@ -72,7 +72,6 @@ export function SoloConsole() {
             simMode={simMode}
             cartUnsupported={vm.cartUnsupported}
             frames={vm.frames}
-            frameOrigin={vm.frameOrigin}
             transCells={vm.transCells}
             rotCells={vm.rotCells}
             onJogPress={vm.onJogPress}
