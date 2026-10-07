@@ -64,7 +64,9 @@ export function JointSpacePanel({
   }
 
   return (
-    <Card className="flex-none gap-2.5 rounded-[0.875rem] px-4 py-3.5">
+    /* 吃掉中列剩余高度：关节列表是这一列唯一能自然拉长的一块（多出来的空间
+       分给各行，而不是在笛卡尔卡片里留一片空白）。 */
+    <Card className="flex-1 gap-2.5 rounded-[0.875rem] px-4 py-3.5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-baseline gap-[0.5625rem]">
           <div className="text-[0.90625rem] font-semibold text-foreground">{t('jointSpace.title')}</div>
@@ -101,7 +103,7 @@ export function JointSpacePanel({
           </button>
         </div>
       </div>
-      <div className="flex flex-col gap-0.5">
+      <div className="flex flex-1 flex-col justify-between gap-0.5">
         {joints.map((j) => (
           <JointRow
             key={j.key}

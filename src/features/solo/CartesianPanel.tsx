@@ -154,13 +154,13 @@ export function CartesianPanel({
   }
 
   return (
-    /* 左右两张卡：右卡固定 13rem，左卡吃掉其余宽度。用显式轨道而不是 flex 分配，
-       两点动盘在左卡里居中，宽度不随右侧表单的内容漂移。
+    /* 左右两张卡：右卡固定 13rem，左卡吃掉其余宽度。卡片**贴合内容高度**，多出来的
+       竖向空间留给关节列表（见 SoloConsole）：把卡片拉满列高只会让点动盘四周全是空白。
        注：根字号是流式的 clamp(13px, 1.522vh, 36px)，所以 13rem 在 900px 高的
        窗口下约 178px，不是 208px。 */
-    <div className="grid flex-[1_1_auto] grid-cols-[minmax(0,1fr)_13rem] items-stretch gap-3">
+    <div className="grid flex-none grid-cols-[minmax(0,1fr)_13rem] items-stretch gap-3">
       {/* 左：方向点动 */}
-      <Card className="min-h-[15rem] gap-3 rounded-[0.875rem] px-4 py-3.5">
+      <Card className="gap-3 rounded-[0.875rem] px-4 py-3.5">
         <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2 border-b pb-2.5">
           <div className="flex items-center gap-1.5 text-[0.90625rem] font-semibold text-foreground">
             <Compass className="size-4 text-primary" />
@@ -191,11 +191,11 @@ export function CartesianPanel({
           </div>
         </div>
 
-        <div className="flex min-h-0 flex-1 items-center justify-center gap-5 py-1" style={disabledStyle}>
-          <div className="w-full min-w-0 max-w-[12rem]">
+        <div className="flex items-center justify-center gap-6 py-1" style={disabledStyle}>
+          <div className="w-full min-w-0 max-w-[16rem]">
             <DirectionPad cells={transCells} onPress={onJogPress} onRelease={onJogRelease} />
           </div>
-          <div className="w-full min-w-0 max-w-[12rem]">
+          <div className="w-full min-w-0 max-w-[16rem]">
             <DirectionPad cells={rotCells} onPress={onJogPress} onRelease={onJogRelease} />
           </div>
         </div>
