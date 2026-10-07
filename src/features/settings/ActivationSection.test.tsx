@@ -7,6 +7,8 @@ afterEach(cleanup)
 const mocks = vi.hoisted(() => ({
   connected: { current: true },
   snapshot: { current: null as unknown },
+  record: { current: null as unknown },
+  stale: { current: false },
   loading: { current: false },
   submitting: { current: false },
   error: { current: null as string | null },
@@ -30,6 +32,8 @@ vi.mock('./useActivation', () => ({
   useActivation: () => ({
     connected: mocks.connected.current,
     snapshot: mocks.snapshot.current,
+    record: mocks.record.current,
+    stale: mocks.stale.current,
     loading: mocks.loading.current,
     submitting: mocks.submitting.current,
     error: mocks.error.current,
@@ -69,6 +73,17 @@ function setClipboard(writeText: unknown) {
   Object.defineProperty(navigator, 'clipboard', { value: writeText, configurable: true })
 }
 
+/**
+ * 面板从 hook 拿「最近一次读到的记录」而不是从快照现推（见 `useActivation`），所以二者要
+ * 一起设。多数用例里记录就是刚读到的、不算旧；刻意制造"旧读数"的用例自己再改 `stale`。
+ */
+function setRead(value: unknown) {
+  mocks.snapshot.current = value
+  mocks.record.current =
+    value && (value as { supported?: unknown }).supported === true ? value : null
+  mocks.stale.current = false
+}
+
 /** 填满**必填项**（与激活网站的表单同集：姓名、手机号、单位、邮箱、所在地区）。 */
 function fillContact() {
   fireEvent.change(screen.getByTestId('activation-name'), { target: { value: '张三' } })
@@ -88,7 +103,7 @@ const submitButton = () => screen.getByTestId('activation-submit') as HTMLButton
 describe('ActivationSection', () => {
   beforeEach(() => {
     mocks.connected.current = true
-    mocks.snapshot.current = null
+    setRead(null)
     mocks.loading.current = false
     mocks.submitting.current = false
     mocks.error.current = null
@@ -98,7 +113,7 @@ describe('ActivationSection', () => {
   })
 
   it('shows the device UID and the next step when the arm is not activated', () => {
-    mocks.snapshot.current = LOCKED
+    setRead(LOCKED)
     render(<ActivationSection />)
 
     expect(screen.getByTestId('activation-status').textContent).toMatch(/未激活|Not activated/)
@@ -109,7 +124,7 @@ describe('ActivationSection', () => {
   })
 
   it('shows the licence details once activated, and no signup form', () => {
-    mocks.snapshot.current = RECORD
+    setRead(RECORD)
     render(<ActivationSection />)
 
     expect(screen.getByTestId('activation-status').textContent).toMatch(/已激活|Activated/)
@@ -122,13 +137,13 @@ describe('ActivationSection', () => {
   })
 
   it('keeps "the firmware has no such command" apart from "not read this time"', () => {
-    mocks.snapshot.current = { supported: false }
+    setRead({ supported: false })
     const { unmount } = render(<ActivationSection />)
     expect(screen.getByTestId('activation-status').textContent).toMatch(/固件不支持|Not supported/)
     expect(screen.getByText(/1\.8\.0/)).toBeTruthy()
     unmount()
 
-    mocks.snapshot.current = { supported: null }
+    setRead({ supported: null })
     render(<ActivationSection />)
     expect(screen.getByTestId('activation-status').textContent).toMatch(/读不到|Unreadable/)
   })
@@ -155,7 +170,8 @@ describe('ActivationSection', () => {
     // ⚠ UID 是这一段唯一的交付物, 且在一台机器上不会变 —— 一次读失败不该把它从屏幕上
     //   抹掉 (那等于让操作员重来一遍)。但必须标明是**旧读数**, 不能让"已激活"看起来像
     //   刚刚确认过, 所以状态徽章仍然说"读不到"。
-    mocks.snapshot.current = RECORD
+    setRead(RECORD)
+    mocks.stale.current = true
     mocks.error.current = '与机械臂的通信失败'
     render(<ActivationSection />)
 
@@ -165,8 +181,17 @@ describe('ActivationSection', () => {
     expect(screen.getByTestId('activation-status').textContent).toMatch(/读不到|Unreadable/)
   })
 
+  it('does not call a freshly read record stale', () => {
+    // 反面：刚读到的记录不该挂"旧读数"的牌子, 否则这个标记就失去意义了。
+    setRead(RECORD)
+    render(<ActivationSection />)
+
+    expect(screen.getByTestId('activation-uid').textContent).toBe(UID)
+    expect(screen.queryByTestId('activation-stale')).toBeNull()
+  })
+
   it('copies the UID, and reports a copy failure instead of failing silently', async () => {
-    mocks.snapshot.current = RECORD
+    setRead(RECORD)
     render(<ActivationSection />)
 
     fireEvent.click(screen.getByRole('button', { name: /复制|Copy/ }))
@@ -180,7 +205,7 @@ describe('ActivationSection', () => {
   })
 
   it('keeps submit disabled until consent is ticked and every required field is filled', () => {
-    mocks.snapshot.current = LOCKED
+    setRead(LOCKED)
     render(<ActivationSection />)
 
     expect(submitButton().disabled).toBe(true)
@@ -203,7 +228,7 @@ describe('ActivationSection', () => {
   })
 
   it('refuses a value the website form would reject, and says which field it is', () => {
-    mocks.snapshot.current = LOCKED
+    setRead(LOCKED)
     render(<ActivationSection />)
     fillForm()
 
@@ -218,7 +243,7 @@ describe('ActivationSection', () => {
   })
 
   it('submits the consented body and shows no raw request preview', () => {
-    mocks.snapshot.current = LOCKED
+    setRead(LOCKED)
     render(<ActivationSection />)
     fillForm()
 
@@ -246,7 +271,7 @@ describe('ActivationSection', () => {
   })
 
   it('spells out every item the request carries inside the consent document', () => {
-    mocks.snapshot.current = LOCKED
+    setRead(LOCKED)
     render(<ActivationSection />)
 
     // 同意书默认关着，点开才看。
@@ -273,7 +298,7 @@ describe('ActivationSection', () => {
   })
 
   it('ticks the box from inside the consent document', () => {
-    mocks.snapshot.current = LOCKED
+    setRead(LOCKED)
     render(<ActivationSection />)
     fillContact()
 
@@ -288,7 +313,7 @@ describe('ActivationSection', () => {
   })
 
   it('refuses to write while the arm is enabled, and says why', () => {
-    mocks.snapshot.current = LOCKED
+    setRead(LOCKED)
     mocks.armState.current = { enabled: true }
     render(<ActivationSection />)
     fillForm()

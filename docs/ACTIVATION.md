@@ -252,6 +252,12 @@ promise this path cannot keep.
 
 - **Never compute or verify the tag.** The key lives in firmware and in the vendor
   signer only. Any customer-side code able to produce a tag voids the mechanism.
+- **Never let a failed re-read erase the UID.** Keep the last record on screen and
+  mark it as the previous read. A failed read arrives two ways — a transport error,
+  and a device that simply does not answer, which the daemon turns into
+  `supported: null` with `ok: true` (section 4) — and both must behave the same. The
+  UID is the one thing this panel delivers, and a link glitch that blanks it makes the
+  operator start over. `ActivationSection.refresh.test.tsx` pins both paths.
 - **Never call `0x3F/0x02` a wrong credential.** The firmware folds "already
   activated", "tag mismatch", "bad compiled-in key" and "write failed" into that
   one code. Read the record back: `state != 0` means the arm is activated and the
