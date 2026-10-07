@@ -118,7 +118,7 @@ chmod +x "litearm-studio-${version}-linux-amd64"
 ./"litearm-studio-${version}-linux-amd64"            # 真机，自动发现 USB 设备
 ```
 
-完整的环境要求、串口权限与首次激活步骤见 [docs/INSTALL.md](docs/INSTALL.md)。
+完整的环境要求、串口权限与首次激活步骤见 [docs/INSTALL_ZH.md](docs/INSTALL_ZH.md)。
 
 发布附件由 `.github/workflows/release.yml` 的 `package` job 产出；自己构建则先 `pnpm build`
 再执行 `python packaging/build.py`。
@@ -137,7 +137,7 @@ PyInstaller 悄悄退回它自带的默认图标。
 
 ## 📖 文档
 
-- **[安装说明](docs/INSTALL.md)** —— 发布附件分别是什么，以及在 Ubuntu / Windows 上怎么装。
+- **[安装说明](docs/INSTALL_ZH.md)** —— 发布附件分别是什么，以及在 Ubuntu / Windows 上怎么装。
 - 📕 **[用户操作手册 (简体中文)](docs/USER_MANUAL_ZH.md)** —— ⚠️ 仍在描述已下线的 server 版，正在重写。
 - 📘 **[User Manual (English)](docs/USER_MANUAL.md)** —— ⚠️ 同上。
 - **[快速开始](docs/QUICKSTART_ZH.md)** / **[Quickstart](docs/QUICKSTART.md)**
