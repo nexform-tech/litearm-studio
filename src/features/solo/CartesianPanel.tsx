@@ -52,14 +52,14 @@ function PoseField({
   onChange: (v: number) => void
 }) {
   return (
-    <label className="flex min-w-0 flex-col gap-0.5">
-      <span className="truncate font-mono text-[0.59375rem] text-muted-foreground">{label}</span>
+    <label className="flex min-w-0 flex-col gap-1">
+      <span className="truncate font-mono text-[0.6875rem] text-muted-foreground">{label}</span>
       <Input
         type="number"
         step={step}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="h-7 px-1.5 font-mono text-[0.71875rem]"
+        className="h-8 font-mono"
       />
     </label>
   )
@@ -156,12 +156,13 @@ export function CartesianPanel({
   return (
     /* 左右两张卡：右卡固定 13rem，左卡吃掉其余宽度。卡片给一个明确的高度下限
        （比"贴合内容"高一截，盘面才不至于挤成一条），剩下的竖向空间留给关节列表。
-       盘面宽度按 12rem 封顶：按钮随之变小，省下的横向空间给右边的 movel 卡。
+       盘面宽度按 12rem 封顶：按钮随之变小，省下的横向空间给右边的 movel 卡（18rem）。
+       窄列放不下时 movel 整卡折到盘面下方，而不是把点动盘压扁。
        注：根字号是流式的 clamp(13px, 1.522vh, 36px)，所以 13rem 在 900px 高的
        窗口下约 178px，不是 208px。 */
-    <div className="grid flex-none grid-cols-[minmax(0,1fr)_15.5rem] items-stretch gap-3">
+    <div className="flex flex-none flex-wrap items-stretch gap-3">
       {/* 左：方向点动 */}
-      <Card className="gap-3 rounded-[0.875rem] px-4 py-3.5 min-h-[23rem]">
+      <Card className="flex-[1_1_20rem] gap-3 rounded-[0.875rem] px-4 py-3.5 min-h-[23rem]">
         <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2 border-b pb-2.5">
           <div className="flex items-center gap-1.5 text-[0.90625rem] font-semibold text-foreground">
             <Compass className="size-4 text-primary" />
@@ -203,7 +204,7 @@ export function CartesianPanel({
       </Card>
 
       {/* 右：目标位姿直线运动 */}
-      <Card className="flex min-w-0 flex-col gap-2.5 rounded-[0.875rem] px-3.5 py-3">
+      <Card className="flex w-[18rem] flex-none flex-col gap-2.5 rounded-[0.875rem] px-3.5 py-3">
         <div className="flex items-center gap-1.5 text-[0.90625rem] font-semibold text-foreground">
           <MoveRight className="size-4 text-primary" />
           {t('solo:cartesian.targetSubMode')}
@@ -215,14 +216,14 @@ export function CartesianPanel({
           size="sm"
           onClick={handleSyncPose}
           disabled={syncing || inactive}
-          className="h-7 w-full gap-1 text-[0.6875rem]"
+          className="w-full gap-1.5"
         >
           <RefreshCw className={`size-3 ${syncing ? 'animate-spin' : ''}`} />
           {t('solo:cartesian.syncCurrentPose')}
         </Button>
 
         {/* 输入组在两段之间居中：上边是标题与同步、下边是 movel 动作 */}
-        <div className="my-auto grid grid-cols-2 gap-x-2 gap-y-2" style={disabledStyle}>
+        <div className="my-auto grid grid-cols-2 gap-x-2.5 gap-y-2.5" style={disabledStyle}>
           <PoseField label="X (m)" value={targetX} step="0.005" onChange={setTargetX} />
           <PoseField label="Y (m)" value={targetY} step="0.005" onChange={setTargetY} />
           <PoseField label="Z (m)" value={targetZ} step="0.005" onChange={setTargetZ} />
@@ -235,7 +236,7 @@ export function CartesianPanel({
           type="button"
           onClick={handleMovel}
           disabled={moving || inactive}
-          className="mt-auto h-auto w-full gap-1 px-2 py-1.5 text-[0.71875rem] leading-tight whitespace-normal"
+          className="mt-auto h-auto w-full gap-1.5 py-1.5 text-sm leading-tight whitespace-normal"
         >
           <MoveRight className="size-3.5 shrink-0" />
           {moving ? t('solo:cartesian.movelMoving') : t('solo:cartesian.movelBtn')}
