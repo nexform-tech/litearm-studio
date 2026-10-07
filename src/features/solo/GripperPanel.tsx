@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next'
+import { useState } from 'react'
 import {
   Gauge,
   Grip,
@@ -14,9 +15,11 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Slider } from '@/components/ui/slider'
 import { useGripperPanel, FORCE_MAX_N, SPEED_MAX_MM_S, SPEED_MIN_MM_S } from '@/features/gripper/useGripperPanel'
 import type { GripperPanelVm } from '@/features/gripper/useGripperPanel'
+import { useGripperChannels } from '@/lib/arm/useGripper'
 import type { CalibrationSource } from '@/lib/arm/gripperClient'
 
 const SOURCE_KEYS: Record<CalibrationSource, string> = {
@@ -102,9 +105,13 @@ function mountLabel(vm: GripperPanelVm, t: (key: string) => string): string {
  * 控制页右列的夹爪组件（§6.2）：老版本 `EndEffectorControlPanel` 的形态 ——
  * 急停正下方一块卡片，只放操作夹爪要用的东西。
  *
- * 配置（通道、CAN ID、装配方向、标定文件、实测行程）不在这里，在设置页的
- * `GripperSection`；两处共用同一个 `gripperClient`，挂载在这一页之外的任何页面
- * 都会看到同一份连接。
+ * 配置（CAN ID、装配方向、标定文件、实测行程）不在这里，在设置页的 `GripperSection`；
+ * 两处共用同一个 `gripperClient`，挂载在这一页之外的任何页面都会看到同一份连接。
+ *
+ * ⚠ **例外是 CAN 通道**：它也在这里选。操作员是在这一页连接并驱动夹爪的，为了换一条
+ * CAN 线跑回设置页、改完再回来重连，是这一页最没必要的一次往返（§5.4 的"通道可枚举"
+ * 本来就是给这里用的）。两处用的是同一个命令（`gripper.list_channels`），改一处另一处
+ * 会跟着变 —— 因为通道存在 daemon 的配置里，不是各自的界面状态。
  *
  * ⚠ 一次只能挂一个消费方：`useGripperAlerts()` 每次挂载都订阅一遍 `gripper_alert`，
  * 同时挂两处会让每条告警弹两次。
@@ -113,6 +120,17 @@ export function GripperPanel() {
   const { t } = useTranslation(['common', 'gripper'])
   const vm = useGripperPanel()
   const state = vm.state
+  // ⚠ 通道选在这里, 是因为操作员在**这一页**驱动夹爪: 为了换一条 CAN 线跑回设置页,
+  //   再回来重连, 是这一页最没必要的往返 (§6.2 的配置留在设置页, 但连接目标不在此列)。
+  const { channels } = useGripperChannels()
+  const [picked, setPicked] = useState('')
+
+  // 操作员选过的 → 引擎当前用的 → 枚举到的第一个。最后那个是"还没连过任何一次"时的
+  // 合理默认, 与 daemon 侧的默认通道同源 (`store.lastChannel` / `constants.CAN_CHANNEL`)。
+  const channel = picked || vm.conn?.channel || channels[0] || ''
+  const channelOptions = Array.from(
+    new Set([channel, vm.conn?.channel, ...channels].filter((c): c is string => !!c)),
+  )
 
   const statusTone = vm.connected ? 'success' : vm.status === 'error' ? 'destructive' : 'outline'
   const gateKey = (vm.gate ?? 'BLOCKED') as 'READY' | 'TEMPLATE' | 'FACTORY' | 'BLOCKED'
@@ -170,13 +188,38 @@ export function GripperPanel() {
 
       {/* 连接与使能 */}
       <div className="flex flex-wrap gap-1.5">
+        {/* CAN 通道: 就在这里换线, 不必回设置页。
+            ⚠ 连着的时候锁住 —— daemon 会拒"先断开再改通道/ID"之外的一切改法
+            (`GripperSession._cmd_connect`), 在这里放开只会让操作员撞一条拒绝。 */}
+        <Select
+          value={channel}
+          onValueChange={setPicked}
+          disabled={!vm.present || vm.connected || vm.status === 'connecting'}
+        >
+          <SelectTrigger
+            id="gripper-panel-channel"
+            data-testid="gripper-panel-channel"
+            aria-label={t('gripper:connection.channel')}
+            title={vm.connected ? t('gripper:settings.needsDisconnect') : t('gripper:connection.connectHint')}
+            className="h-[1.875rem] w-[7.5rem] font-mono text-xs"
+          >
+            <SelectValue placeholder="—" />
+          </SelectTrigger>
+          <SelectContent>
+            {channelOptions.map((name) => (
+              <SelectItem key={name} value={name}>
+                {name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <Button
           id="gripper-connect"
           data-testid="gripper-connect"
           size="sm"
           disabled={!vm.present || vm.connected || vm.status === 'connecting'}
           title={t('gripper:connection.connectHint')}
-          onClick={() => vm.connect()}
+          onClick={() => vm.connect(channel ? { channel } : {})}
         >
           {t('nav:connect')}
         </Button>

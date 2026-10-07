@@ -28,7 +28,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="配合 --fake: 让假设备是**未激活**的那台, 于是授权面板与注册表单都能看到"
                         " (使能会被固件拒 ERR{0x10,0x08}, 与真机一致)")
     p.add_argument("--port", metavar="PORT", default=None,
-                   help="串口设备路径 (覆盖自动发现; --fake 下无意义)")
+                   help="串口设备路径 (覆盖自动发现; 界面上的端口下拉优先于它;"
+                        " --fake 下无意义)")
     p.add_argument("--host", default="127.0.0.1",
                    help="监听地址 (只允许本机; 默认 127.0.0.1)")
     p.add_argument("--http-port", type=int, default=8765, metavar="N",

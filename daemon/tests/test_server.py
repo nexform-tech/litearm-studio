@@ -463,6 +463,45 @@ def test_ws_rejects_an_unknown_message_type() -> None:
         session.close()
 
 
+def test_ws_connect_on_a_different_port_answers_ok_false() -> None:
+    """已连着时 `connect` 指另一个口 ⇒ `res`(`ok:false`) 带原因, 不是静默 no-op。
+
+    ⚠ issue #70 review 的 blocker 1: 上一版这一帧回 `ok:true` 且链路不动, 操作员的
+    选择被无声吞掉。这里钉的是**线上形状** —— 前端靠这条 `res` 的 `err.kind`/`msg`
+    把拒绝显示出来 (帧上有 id 才认领得到)。
+    """
+    from litearm_studio_daemon.session import Session as _Session
+
+    session = _Session(fake=True, reconnect=False,
+                       poll_period=0.05, state_push_interval=0.05)
+    app = create_app(session, version=VERSION, repo_dist=Path("/nonexistent-ui"))
+    try:
+        assert session.connect() is True
+        deadline = time.monotonic() + 5.0
+        while not session.connected and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert session.connected, f"假会话没连上: {session.arm_info()}"
+
+        with TestClient(app) as client:
+            with client.websocket_connect("/ws") as ws:
+                ws.receive_json()                 # hello
+                ws.receive_json()                 # conn
+                ws.send_json({"t": "connect", "id": 21, "port": "/dev/ttyACM0"})
+                while True:                       # 状态帧会插进来, 认 id
+                    frame = ws.receive_json()
+                    if frame["t"] == "res" and frame["id"] == 21:
+                        break
+                assert frame["ok"] is False, frame
+                assert frame["err"]["kind"] == "PortChangeWhileConnectedError", frame
+                assert "换口请先断开" in frame["err"]["msg"], frame
+
+        # 拒绝改口不该动链路: 还连在原来的口上。
+        assert session.connected is True, "拒绝改口却把链路弄断了"
+        assert session.arm_info()["port"] == "fake", session.arm_info()
+    finally:
+        session.close()
+
+
 def test_ws_command_without_a_session_returns_a_structured_error() -> None:
     session, app = _client()
     try:

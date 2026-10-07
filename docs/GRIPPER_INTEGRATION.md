@@ -376,10 +376,18 @@ There are two surfaces, matching the retired product:
 - **A panel on the control page**, `src/features/solo/GripperPanel.tsx`, pinned in
   the right column below the E-stop, for operating the gripper: connect state,
   aperture, open/close/grasp/release, force and speed, live position and
-  temperature, fault clearing, E-stop state.
+  temperature, fault clearing, E-stop state, and the CAN channel it connects on.
 - **A section in the existing settings page**, for configuring it: CAN channel,
   CAN ids, mount, which calibration file is in effect, import a calibration,
   run `zero()`, and the per-channel travel.
+
+The CAN channel appears on both surfaces on purpose: the operator connects and
+drives the gripper from the control page, so switching the CAN line from there
+must not cost a trip to Settings and back. Both call the same
+`gripper.list_channels` and both connect through `gripper.connect`'s `channel`.
+The channel lives in the daemon's per-channel record, so the two surfaces cannot
+drift, and a channel change is only accepted while disconnected — which is why
+both disable the picker while connected.
 
 The panel is a component, not a route. The gripper shares the arm's CAN bus and
 is driven from the same page as the arm, so operating it must not navigate away

@@ -1,61 +1,7 @@
+import { waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { FakeWebSocket } from '@/test/fakeWebSocket'
 import type { RobotState } from './client'
-
-/** 最小可用的假 WebSocket：测试手动控制 open/message/close。 */
-class FakeWebSocket {
-  static CONNECTING = 0
-  static OPEN = 1
-  static CLOSING = 2
-  static CLOSED = 3
-  static instances: FakeWebSocket[] = []
-
-  url: string
-  readyState = FakeWebSocket.CONNECTING
-  onopen: ((ev: Event) => void) | null = null
-  onmessage: ((ev: MessageEvent) => void) | null = null
-  onclose: ((ev: CloseEvent) => void) | null = null
-  sent: string[] = []
-
-  constructor(url: string) {
-    this.url = url
-    FakeWebSocket.instances.push(this)
-  }
-
-  send(data: string) {
-    this.sent.push(data)
-  }
-
-  close() {
-    this.readyState = FakeWebSocket.CLOSED
-  }
-
-  // ── 测试助手 ──
-  open() {
-    this.readyState = FakeWebSocket.OPEN
-    this.onopen?.({} as Event)
-  }
-
-  receive(msg: unknown) {
-    this.onmessage?.({ data: JSON.stringify(msg) } as MessageEvent)
-  }
-
-  drop() {
-    this.readyState = FakeWebSocket.CLOSED
-    this.onclose?.({} as CloseEvent)
-  }
-
-  frames(): Array<Record<string, unknown>> {
-    return this.sent.map((s) => JSON.parse(s) as Record<string, unknown>)
-  }
-
-  lastFrame(m?: string): Record<string, unknown> | undefined {
-    const frames = this.frames()
-    for (let i = frames.length - 1; i >= 0; i--) {
-      if (!m || frames[i].t === m) return frames[i]
-    }
-    return undefined
-  }
-}
 
 const { ArmClient } = await import('./client')
 
@@ -116,6 +62,105 @@ describe('ArmClient (daemon WebSocket)', () => {
     expect(ws.lastFrame('connect')).toMatchObject({ t: 'connect' })
   })
 
+  it('carries the chosen serial port on the connect frame, and omits it when none is chosen', () => {
+    // ⚠ 帧上**有**port 与**没有**port 是两件事: 有 = "就这一台, 连不上就报错"; 没有 =
+    //   "按 daemon 自己的顺序来" (上次连上的口 → 自动发现)。所以空选择不能发成 `port: ''`。
+    const { client, ws } = connectedClient()
+
+    client.connect('/dev/ttyACM7')
+    expect(ws.lastFrame('connect')).toMatchObject({ t: 'connect', port: '/dev/ttyACM7' })
+
+    client.connect()
+    const auto = ws.lastFrame('connect')!
+    expect(auto).toMatchObject({ t: 'connect' })
+    expect(auto).not.toHaveProperty('port')
+  })
+
+  it('keeps a port chosen before the socket is open', () => {
+    // 启动时传输层还在开, 这时操作员先选了口再点连接 —— 那次选择不能丢, 否则连上的是
+    // 自动发现到的另一台, 而界面上显示的是他选的那个。
+    const client = new ArmClient()
+    client.connect('/dev/ttyACM7')
+    const ws = FakeWebSocket.instances.at(-1)!
+
+    ws.open()
+    expect(ws.lastFrame('connect')).toMatchObject({ t: 'connect', port: '/dev/ttyACM7' })
+  })
+
+  it('gives the connect frame an id and surfaces a refused connect without claiming the link died', async () => {
+    // ⚠ 已连着时指另一个口, daemon 只回一条 `ok:false` 的 `res`（没有 conn 帧）——
+    //   帧带 id 就是为了认领这条拒绝。丢掉它, 操作员看到的是"点了没反应", 链路却还在
+    //   原来的口上 (issue #70 review 的 blocker 1)。
+    const { client, ws } = connectedClient()
+
+    client.connect('/dev/ttyACM0')
+    const frame = ws.lastFrame('connect')!
+    expect(typeof frame.id).toBe('number')
+
+    ws.receive({
+      t: 'res', id: frame.id, ok: false,
+      err: {
+        kind: 'PortChangeWhileConnectedError',
+        msg: '已连接 /dev/ttyACM1；换口请先断开 (本次请求的 /dev/ttyACM0 未生效)',
+      },
+    })
+    // 让拒绝的微任务落地（旧实现在这一步把 status 落成 error）。
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    // ⚠ daemon 没有动链路: 顶栏必须继续显示「已连接」, 这条拒绝**不是**连接失败。
+    //   上一版把它写成 status=error + lastError, 于是界面一边说失败一边还连着。
+    expect(client.status).toBe('connected')
+    expect(client.lastError).toBeNull()
+    // 文案随界面语言（zh/en），但两种都必须告诉操作员"先断开"。
+    expect(client.connectError).toMatch(/断开|Disconnect/)
+  })
+
+  it('clears the refused-connect message when a connect succeeds or the link is dropped', async () => {
+    const { client, ws } = connectedClient()
+
+    const refuse = (port: string) => {
+      client.connect(port)
+      const frame = ws.lastFrame('connect')!
+      ws.receive({
+        t: 'res', id: frame.id, ok: false,
+        err: { kind: 'PortChangeWhileConnectedError', msg: '换口请先断开' },
+      })
+      return waitFor(() => expect(client.connectError).toBeTruthy())
+    }
+
+    await refuse('/dev/ttyACM0')
+
+    // 换回真正的口重试: daemon 受理 ⇒ 提示必须消失。
+    client.connect('/dev/ttyACM1')
+    const accepted = ws.lastFrame('connect')!
+    ws.receive({ t: 'res', id: accepted.id, ok: true, v: { started: true } })
+    await waitFor(() => expect(client.connectError).toBeNull())
+
+    // 再被拒一次, 然后按「断开」⇒ 也必须消失。
+    await refuse('/dev/ttyACM0')
+    client.disconnect()
+    expect(client.connectError).toBeNull()
+  })
+
+  it('lists candidate ports through list_ports and drops entries that are not paths', async () => {
+    const { client, ws } = connectedClient()
+    const pending = client.listPorts()
+    const cmd = ws.lastFrame('cmd')!
+
+    ws.receive({ t: 'res', id: cmd.id, ok: true, v: ['/dev/ttyACM0', 42, '/dev/ttyUSB0'] })
+    await expect(pending).resolves.toEqual(['/dev/ttyACM0', '/dev/ttyUSB0'])
+  })
+
+  it('resolves list_ports to an empty list when the daemon answers something else', async () => {
+    // 「答了但不是数组」与「拒绝」都要落到空列表上 —— 下拉拿到 `undefined` 会当场炸。
+    const { client, ws } = connectedClient()
+    const pending = client.listPorts()
+    const cmd = ws.lastFrame('cmd')!
+
+    ws.receive({ t: 'res', id: cmd.id, ok: true, v: null })
+    await expect(pending).resolves.toEqual([])
+  })
+
   it('goes connecting → connected on the daemon conn frame and notifies status listeners', () => {
     const client = new ArmClient()
     const statuses: string[] = []
@@ -171,9 +216,11 @@ describe('ArmClient (daemon WebSocket)', () => {
     const { client, ws } = connectedClient()
     const promise = client.enable()
     const frame = ws.lastFrame('cmd')!
-    expect(frame).toMatchObject({ t: 'cmd', id: 1, m: 'enable', p: {} })
+    // ⚠ id 从一个共享计数器来, `connect` 帧也占一个 —— 不断言具体数字, 只钉形状。
+    expect(frame).toMatchObject({ t: 'cmd', m: 'enable', p: {} })
+    expect(typeof frame.id).toBe('number')
 
-    ws.receive({ t: 'res', id: 1, ok: true, v: null })
+    ws.receive({ t: 'res', id: frame.id, ok: true, v: null })
     await expect(promise).resolves.toBeNull()
   })
 

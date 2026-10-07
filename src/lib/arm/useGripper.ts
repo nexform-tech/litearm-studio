@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 import { toast } from 'sonner'
 import i18n from '@/i18n'
 import { formatArmError } from './errors'
@@ -36,6 +36,41 @@ export function useGripperConnection(): {
 /** 夹爪的实时状态（`gripper_state`）。`null` = 还没有状态帧。 */
 export function useGripperState(): GripperState | null {
   return useSyncExternalStore(gripperClient.subscribeState, () => gripperClient.state)
+}
+
+/**
+ * 本机的 CAN 接口列表（`gripper.list_channels`）—— 控制页的通道下拉用。
+ *
+ * ⚠ 只在 `present` 时问: 没有夹爪会话的进程 (Windows / `--no-gripper`) 回的是
+ * `GripperNotConnectedError`, 那不是"这台机器没有 CAN 接口" —— 混起来会让界面把
+ * "本进程没起夹爪"说成"你没有 CAN 接口"。
+ *
+ * ⚠ 枚举失败时保持空表, **不**报错: 通道下拉退回"配置里那个通道", 而那正是 daemon
+ * 会用的那个 —— 连接本身照常可用。
+ */
+export function useGripperChannels(): { channels: string[]; reload: () => void } {
+  const present = useSyncExternalStore(gripperClient.subscribeConn, () => gripperClient.present)
+  const [channels, setChannels] = useState<string[]>([])
+  const [tick, setTick] = useState(0)
+
+  useEffect(() => {
+    if (!present) return
+    let alive = true
+    gripperClient.listChannels().then(
+      (found) => {
+        if (alive && Array.isArray(found)) setChannels(found)
+      },
+      () => {
+        /* 见上面的说明: 枚举不出来不是连接的前提 */
+      },
+    )
+    return () => {
+      alive = false
+    }
+  }, [present, tick])
+
+  const reload = useCallback(() => setTick((n) => n + 1), [])
+  return { channels, reload }
 }
 
 /** 一次探测的进度（`gripper_calib`），没有探测时为 `null`。 */

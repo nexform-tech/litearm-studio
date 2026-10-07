@@ -116,6 +116,17 @@ export class DaemonSocket {
 
   /** 发送一条 `cmd` 帧并等待同 id 的 `res`。socket 未开时立即拒绝。 */
   sendCmd(m: string, p?: Record<string, unknown>): Promise<unknown> {
+    return this.sendRequest({ t: 'cmd', m, p: p ?? {} })
+  }
+
+  /**
+   * 发送一条自带 `id` 的帧并等待同 id 的 `res`（`connect` 这类非 `cmd` 帧）。
+   *
+   * ⚠ `connect` 的应答是**带原因的唯一通道**：daemon 拒绝改口时只回一条 `ok:false` 的
+   * `res`（不会再有 `conn` 帧），不接住这条应答，操作员看到的就是"点了没反应"。
+   * socket 未开时立即拒绝。
+   */
+  sendRequest(frame: Record<string, unknown>): Promise<unknown> {
     const ws = this.socket
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       return Promise.reject(new Error('本地程序未连接'))
@@ -123,7 +134,7 @@ export class DaemonSocket {
     const id = this.nextId++
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject })
-      const sent = this.sendFrame({ t: 'cmd', id, m, p: p ?? {} })
+      const sent = this.sendFrame({ ...frame, id })
       if (!sent) {
         this.pending.delete(id)
         reject(new Error('本地程序未连接'))

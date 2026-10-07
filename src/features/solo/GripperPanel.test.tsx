@@ -13,6 +13,8 @@ beforeAll(() => {
     unobserve() {}
     disconnect() {}
   })
+  // Radix 的 Select 打开时会把当前项滚进视野; jsdom 没有这个方法。
+  HTMLElement.prototype.scrollIntoView = () => {}
   HTMLElement.prototype.setPointerCapture = () => {}
   HTMLElement.prototype.releasePointerCapture = () => {}
   HTMLElement.prototype.hasPointerCapture = () => false
@@ -24,12 +26,14 @@ const mocks = vi.hoisted(() => {
   const calib = { current: null as Record<string, unknown> | null }
   const status = { current: 'disconnected' as string }
   const present = { current: true }
+  const channels = { current: ['can0'] as string[] }
   return {
     conn,
     state,
     calib,
     status,
     present,
+    channels,
     open: vi.fn(),
     close: vi.fn(),
     grasp: vi.fn(),
@@ -80,6 +84,7 @@ vi.mock('@/lib/arm/useGripper', () => ({
   useGripperState: () => mocks.state.current,
   useGripperCalibration: () => mocks.calib.current,
   useGripperAlerts: () => undefined,
+  useGripperChannels: () => ({ channels: mocks.channels.current, reload: vi.fn() }),
 }))
 
 const { GripperPanel } = await import('./GripperPanel')
@@ -143,6 +148,32 @@ describe('GripperPanel', () => {
     // 标定卡片显示的是**具体数字**，不是一句"已标定"。
     expect(screen.getByText('1.7760')).toBeTruthy()
     expect(screen.getByText('-0.0643')).toBeTruthy()
+  })
+
+  it('offers the CAN channels and connects on the one the operator picked', () => {
+    // 操作员在**这一页**驱动夹爪: 为了换一条 CAN 线跑回设置页、再回来重连, 是这里最没
+    // 必要的一次往返。选了哪个通道, `gripper.connect` 就带哪个。
+    mocks.status.current = 'disconnected'
+    mocks.conn.current = null
+    mocks.channels.current = ['can0', 'can1']
+    render(<GripperPanel />)
+
+    fireEvent.click(screen.getByTestId('gripper-panel-channel'))
+    fireEvent.click(screen.getByRole('option', { name: 'can1' }))
+    fireEvent.click(screen.getByTestId('gripper-connect'))
+
+    expect(mocks.connect).toHaveBeenCalledWith({ channel: 'can1' })
+  })
+
+  it('locks the channel picker while the gripper is connected, and says why', () => {
+    // daemon 会拒"连着的时候改通道/ID" (`_cmd_connect`), 所以这里放开只会让操作员撞
+    // 一条拒绝; 锁住的同时必须把原因说出来。
+    connected()
+    render(<GripperPanel />)
+
+    const picker = screen.getByTestId('gripper-panel-channel') as HTMLButtonElement
+    expect(picker.disabled).toBe(true)
+    expect(picker.getAttribute('title')).toMatch(/Disconnect|断开/)
   })
 
   it('lets the operator drive the gripper when the gate is ready', () => {

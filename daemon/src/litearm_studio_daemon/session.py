@@ -42,9 +42,10 @@ from litearm import Arm
 from . import statemap
 from . import activation
 from . import dfu
+from . import ports
 from .errors import (FirmwareUpgradeError, MotionBusyError,
-                     NotConnectedCommandError, UpgradeBusyError,
-                     UnknownCommandError)
+                     NotConnectedCommandError, PortChangeWhileConnectedError,
+                     UpgradeBusyError, UnknownCommandError)
 
 log = logging.getLogger("litearm_studio_daemon.session")
 
@@ -132,7 +133,11 @@ FIRMWARE_COMMANDS = frozenset({"firmware_inspect", "firmware_upgrade",
 #: 而"看一眼进度""取消"必须仍然可用 —— 否则升级一开始，界面就再也问不动守护进程了。
 #: ⚠ `firmware_upgrade` **不**在这里: 它要先失能、再交棒, 必须有活着的会话。
 SESSION_FREE_COMMANDS = frozenset({"firmware_inspect", "firmware_status",
-                                   "firmware_cancel"})
+                                   "firmware_cancel",
+                                   # 选端口**发生在连接之前**: 连接判定在这里会
+                                   # 把"这台机器上有哪些口"变成一句"请先连接设备",
+                                   # 而那正是操作员此刻做不到的事。
+                                   "list_ports"})
 
 #: 等 `0483:DF11` 枚举出来的上限 (秒)。固件侧从登记到交棒的上界是 100ms, 但 USB
 #: **重枚举**要时间 —— 这里等的是枚举, 不是等固件。
@@ -160,6 +165,8 @@ KEEP_INSPECTED_IMAGES = 3
 #: 命令白名单 —— (方法名 → 中文说明)。**唯一**的准入判据: 表里没有的一律
 #: `UnknownCommandError`, 不接受任意方法调用 (计划 3.2)。
 COMMANDS: Dict[str, str] = {
+    # ---- 设备发现 (界面上的端口下拉; 没连也能问, 见 SESSION_FREE_COMMANDS) ----
+    "list_ports": "枚举本机可能的机械臂串口 (STM32 CDC 排最前) → [path, …]",
     "enable": "使能全关节 (arm.enable)",
     "disable": "失能 (arm.disable)",
     "estop": "急停, 降能量方向永远可达 (arm.emergency_stop)",
@@ -247,6 +254,8 @@ class Session:
     def __init__(self, *, port: Optional[str] = None, fake: bool = False,
                  fake_activated: bool = True,
                  port_finder: Optional[Callable[[], Optional[str]]] = None,
+                 port_lister: Optional[Callable[[], List[str]]] = None,
+                 port_store: Optional[ports.LastPortStore] = None,
                  poll_period: float = POLL_PERIOD_S,
                  state_push_interval: float = STATE_PUSH_INTERVAL_S,
                  link_stale_after: float = LINK_STALE_AFTER_S,
@@ -265,6 +274,15 @@ class Session:
         #: 只在 `--fake` 下有意义; 命令行那边会拒掉"给了它却没给 --fake"的组合。
         self._fake_activated = bool(fake_activated)
         self._port_finder = port_finder or find_cdc_port
+        #: 界面上「端口」下拉的数据源 (`list_ports`)。注入是为了让测试不依赖本机真的
+        #: 插着什么 —— 与 `port_finder` 同一个理由。
+        self._port_lister = port_lister or ports.list_serial_ports
+        #: 上次连上的串口 —— **只是提示**, 见 `_connect_candidates`。测试必须注入
+        #: (或由 conftest 把 `LITEARM_STUDIO_ARM_CONFIG` 指到私有路径), 否则会读到
+        #: 跑测试那台机器上真实的记录, 还会把假端口写进去。
+        self._port_store = port_store if port_store is not None else ports.LastPortStore()
+        #: 界面这一次显式选的口 (**一次性**: 用过即清, 见 `_connect_candidates`)。
+        self._pending_port: Optional[str] = None
         self._poll_period = float(poll_period)
         self._state_push_interval = float(state_push_interval)
         #: 多久没有新状态帧即判链路已断 (见 `LINK_STALE_AFTER_S`)。
@@ -415,8 +433,16 @@ class Session:
             return None if self._state_dict is None else dict(self._state_dict)
 
     # ------------------------------------------------------------------ 连接/断开
-    def connect(self) -> bool:
+    def connect(self, port: Optional[str] = None) -> bool:
         """连接 (幂等) —— 已连接时**是 no-op**, 返回 `True`。
+
+        `port` = **这一次**要连的口 (顶栏下拉里选的那个), 覆盖自动发现与 `--port`。
+        只在本次尝试里有效: 用完即清, 下一次不带口的 `connect` 又回到"上次连上的口 →
+        自动发现"那条软路径 (见 `_connect_candidates`)。
+
+        ⚠ 显式指定的口**不做退让**: 指定错了就是响亮失败 (`error` 态 + 原因), 不会偷偷
+        换成发现到的另一个设备 —— 那会让"我明明指了这个口"变成谎话。界面上"我以为连的
+        是这台、其实连的是那台"是这里最坏的失败形状。
 
         真在跑时: 状态先落 `connecting` 并推一条 `conn`, 再在命令执行器上建会话
         (握手可能几秒), 成功后定关节数、起状态轮询线程、推 `connected`。
@@ -426,12 +452,25 @@ class Session:
 
         ⚠ 握手期间收到 `disconnect()`/`close()` 时, 这次连接由 `_connect_gen` 作废:
         收尾的 `_open` 会把已建好的 arm 关掉并静默退出, **不会**把状态改回 `connected`。
+
+        ⚠ 已经连着时再指一个**不同**的口会被拒 (`PortChangeWhileConnectedError`), 而不是
+        静默忽略: 上一版返回 `True` 却把 `port` 丢掉, 于是"我选了 ACM0"与"链路还在 ACM1"
+        同时成立。换口是操作员的决定 —— 先 `disconnect()`, 会话不自己挪链路。
+        `port` 为空或正是当前口时仍是幂等 no-op (`main.tsx` 每次页面加载自动发的那条无参
+        `connect` 走的就是这条)。
         """
+        requested = (port or "").strip() or None
         with self._lock:
             if self._arm is not None and self._status == "connected":
+                # 已经连着: 只有"没指口"或"指的就是当前口"是 no-op。指了别的口必须响亮
+                # 失败 —— 见 `PortChangeWhileConnectedError` 的类文档。
+                if requested is not None and requested != self._resolved_port:
+                    raise PortChangeWhileConnectedError(
+                        self._resolved_port or "", requested)
                 return True
             if self._status == "connecting":
                 return False
+            self._pending_port = requested
             self._status = "connecting"
             self._last_error = None
             # 代次在这里落章: `_open`/`_recover_link` 收尾时比对, 对不上说明这次连接
@@ -442,37 +481,68 @@ class Session:
 
         def _open(gen: int) -> None:
             try:
-                target = self._connect_target()
-                arm = self._dial(target)
+                targets = self._connect_candidates()
             except Exception as e:  # noqa: BLE001 - 连接失败是**预期结局**之一
                 self._connect_failed(e, None, gen)
                 return
-            self._commit_link(arm, target, gen)
+            last: Optional[BaseException] = None
+            for target in targets:
+                # 试下一个之前先看看这次连接还算不算数: 用户可能刚按了「断开」, 那就不该
+                # 再握着下一个候选口往下试 (`_commit_link` 也会挡, 但这里挡住省一次握手)。
+                with self._lock:
+                    if self._connect_gen != gen or self._stop.is_set():
+                        log.info("连接已被断开/关闭, 放弃剩余的候选口: %s", targets)
+                        return
+                try:
+                    arm = self._dial(target)
+                except Exception as e:  # noqa: BLE001 - 见上
+                    last = e
+                    log.info("连接 %s 失败: %s: %s", target, type(e).__name__, e)
+                    continue
+                self._commit_link(arm, target, gen)
+                return
+            if last is None:
+                last = litearm.TransportError(
+                    "未发现 STM32 CDC 设备 (VID:PID 1d50:606f); 请插好设备或用 --port 指定")
+            self._connect_failed(last, None, gen)
 
         self._executor.submit(_open, gen)
         return True
 
-    def _connect_target(self) -> str:
-        """这次 `connect()` 该连哪个口 —— **自动发现 / `--port` / `--fake` 的唯一判据点**。
+    def _connect_candidates(self) -> List[str]:
+        """这次 `connect()` 按顺序试哪些口 —— **自动发现 / `--port` / 界面选口 / 上次
+        连上的口** 四者的唯一判据点。
 
-        ⚠ 语义刻意与自愈那条不同 (`_recover_candidates`): 这里 `--port` 是**明确指定**,
-        指定错了就该响亮失败, 不许偷偷换成自动发现到的另一个设备 —— 那会让"我明明指了
-        这个口"变成谎话。自愈那条的职责是"把这台臂找回来", 所以它允许退回发现。
+        三层, 语义刻意不同:
+
+        * `--fake` ⇒ 占位口 (真机端口在假传输上没有意义);
+        * **显式指定** (`--port`, 或界面这一次选的口) ⇒ **只有它**: 指定错了就该响亮
+          失败, 不许偷偷换成自动发现到的另一个设备 —— 那会让"我明明指了这个口"变成
+          谎话。这条纪律由 `test_session.test_connect_without_device_...` 与
+          `test_ports.*` 钉住。
+        * 其余 ⇒ **上次连上的口** (软提示, 可能已经被重新枚举成别的节点名) →
+          自动发现。与自愈那条 (`_recover_candidates`) 同一口径: 它的职责是"把这台臂
+          找回来", 所以允许退回发现。
+
+        ⚠ 界面选的口**一次性**: 读走就清。留着的话, 之后客户端自动发的无参 `connect`
+          会被一次早就过期的选择锁死 (哪怕那个口已经消失), 而那正是"上次连上的口"这条
+          软路径要解决的问题。
         """
+        with self._lock:
+            chosen, self._pending_port = self._pending_port, None
+            fixed = self._port
         if self._fake:
             # ⚠ 注入工厂时**必须**同时给占位端口: SDK 的 `find_cdc_port()`
             # 空值检查排在注入点**之前** (见 `Arm.__init__` 的说明), 没有端口会
             # 在走到工厂之前就抛 TransportError。
-            return self._port or "fake"
-        if self._port:
-            return self._port
-        # 真机 + 没给 --port ⇒ 交给 SDK 自己发现。**在连接时**才发现:
-        # 启动时发现会让"插上臂再点连接"这种用法失效。
-        found = self._port_finder()
-        if not found:
-            raise litearm.TransportError(
-                "未发现 STM32 CDC 设备 (VID:PID 1d50:606f); 请插好设备或用 --port 指定")
-        return found
+            return [chosen or fixed or "fake"]
+        if chosen or fixed:
+            return [chosen or fixed]
+        out: List[str] = []
+        for cand in (self._port_store.last_port(), self._port_finder()):
+            if cand and cand not in out:
+                out.append(cand)
+        return out
 
     def _dial(self, target: str) -> Arm:
         """按端口建一条链路 —— `connect()` 与断线自愈**共用**的唯一构造点。"""
@@ -507,6 +577,13 @@ class Session:
             log.info("链路建成时已被断开/关闭, 丢弃它: port=%s", target)
             self._close_arm(arm)
             return False
+        # 记住这个口 —— 下次启动/不带口的连接先试它 (只是提示, 见 `_connect_candidates`)。
+        # ⚠ 只在**连上之后**记: 记一个连不通的口, 会让下一次的默认选择和"上次能用"无关。
+        # ⚠ 放在锁外: 这是文件 I/O, 不该占着会话锁。代价是 `connected` 比这一笔**先**
+        #   被看见 (状态在上面那个锁块里就发布了)。这是可接受的: 唯一读这条记录的是
+        #   `_connect_candidates`, 而它只在 `connect()` 里被调用, `connect()` 又跑在同一
+        #   条单线程执行器上 —— 下一次连接必然排在这次 `_open` 之后, 那时这一笔已经落地。
+        self._port_store.remember(target)
         try:
             log.info("已连接: port=%s firmware=%s n=%d cart=%s",
                      target, arm.firmware, arm.n,
@@ -649,7 +726,7 @@ class Session:
         return True
 
     def _recover_candidates(self, hint: Optional[str]) -> List[str]:
-        """自愈时按什么顺序试哪些口 —— 与 `_connect_target` 的差别见那里。
+        """自愈时按什么顺序试哪些口 —— 与 `_connect_candidates` 的差别见那里。
 
         顺序 = **上次真正连上的口** → 显式 `--port` → 自动发现。前两个都可能已经消失
         (设备重新枚举后节点名会变: 实测 `/dev/ttyACM1` → `/dev/ttyACM0`), 所以**必须**
@@ -1166,7 +1243,10 @@ class Session:
     #      "看进度/取消"必须是不依赖会话的命令 (见 `SESSION_FREE_COMMANDS`)。
 
     def _run_session_free(self, m: str, p: dict) -> Any:
-        """不依赖机械臂会话的三条 —— 在连接判定之前被分派 (见 `execute`)。"""
+        """不依赖机械臂会话的几条 —— 在连接判定之前被分派 (见 `execute`)。"""
+        if m == "list_ports":
+            # 列的是**这台机器**上可能是这台臂的串口, 与当前有没有连上无关。
+            return self._port_lister()
         if m == "firmware_inspect":
             return self._inspect_image(p)
         if m == "firmware_status":
