@@ -87,7 +87,7 @@ describe('ArmClient (daemon WebSocket)', () => {
     expect(ws.lastFrame('connect')).toMatchObject({ t: 'connect', port: '/dev/ttyACM7' })
   })
 
-  it('gives the connect frame an id and surfaces a refused connect as error + lastError', async () => {
+  it('gives the connect frame an id and surfaces a refused connect without claiming the link died', async () => {
     // ⚠ 已连着时指另一个口, daemon 只回一条 `ok:false` 的 `res`（没有 conn 帧）——
     //   帧带 id 就是为了认领这条拒绝。丢掉它, 操作员看到的是"点了没反应", 链路却还在
     //   原来的口上 (issue #70 review 的 blocker 1)。
@@ -104,10 +104,42 @@ describe('ArmClient (daemon WebSocket)', () => {
         msg: '已连接 /dev/ttyACM1；换口请先断开 (本次请求的 /dev/ttyACM0 未生效)',
       },
     })
+    // 让拒绝的微任务落地（旧实现在这一步把 status 落成 error）。
+    await new Promise((resolve) => setTimeout(resolve, 0))
 
-    await waitFor(() => expect(client.status).toBe('error'))
+    // ⚠ daemon 没有动链路: 顶栏必须继续显示「已连接」, 这条拒绝**不是**连接失败。
+    //   上一版把它写成 status=error + lastError, 于是界面一边说失败一边还连着。
+    expect(client.status).toBe('connected')
+    expect(client.lastError).toBeNull()
     // 文案随界面语言（zh/en），但两种都必须告诉操作员"先断开"。
-    expect(client.lastError).toMatch(/断开|Disconnect/)
+    expect(client.connectError).toMatch(/断开|Disconnect/)
+  })
+
+  it('clears the refused-connect message when a connect succeeds or the link is dropped', async () => {
+    const { client, ws } = connectedClient()
+
+    const refuse = (port: string) => {
+      client.connect(port)
+      const frame = ws.lastFrame('connect')!
+      ws.receive({
+        t: 'res', id: frame.id, ok: false,
+        err: { kind: 'PortChangeWhileConnectedError', msg: '换口请先断开' },
+      })
+      return waitFor(() => expect(client.connectError).toBeTruthy())
+    }
+
+    await refuse('/dev/ttyACM0')
+
+    // 换回真正的口重试: daemon 受理 ⇒ 提示必须消失。
+    client.connect('/dev/ttyACM1')
+    const accepted = ws.lastFrame('connect')!
+    ws.receive({ t: 'res', id: accepted.id, ok: true, v: { started: true } })
+    await waitFor(() => expect(client.connectError).toBeNull())
+
+    // 再被拒一次, 然后按「断开」⇒ 也必须消失。
+    await refuse('/dev/ttyACM0')
+    client.disconnect()
+    expect(client.connectError).toBeNull()
   })
 
   it('lists candidate ports through list_ports and drops entries that are not paths', async () => {

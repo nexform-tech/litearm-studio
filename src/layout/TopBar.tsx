@@ -30,7 +30,7 @@ export function TopBar() {
   }
   const title = titleMap[pathname] ?? t('nav:controlTitle')
 
-  const { status, conn, lastError, connect, disconnect } = useArmConnection()
+  const { status, conn, lastError, connectError, connect, disconnect } = useArmConnection()
   const armState = useArmState()
   const ports = useArmPorts()
   const [selected, setSelected] = useState<string>(AUTO_PORT)
@@ -39,6 +39,11 @@ export function TopBar() {
   const connecting = status === 'connecting'
   const port = conn?.port || '—'
   const firmware = conn?.firmware || '—'
+
+  // 错误槽里显示什么。⚠ `connectError`（daemon 拒绝了这次改口）**不看 `status`**：
+  // 那时链路还好好的，徽标仍是绿色的「已连接」——界面必须同时说清这两件事，而不是
+  // 把一次被拒的改口说成"连接失败"。
+  const errorNotice = connectError ?? (status === 'error' ? lastError : null)
 
   // 下拉里的候选 + 操作员选过的那个。后者必须留着自己那一项: 它可能已经不在枚举结果
   // 里 (设备拔了), 而 Radix 在值不在列表里时会退回占位符 —— 那看着像"什么都没选",
@@ -163,9 +168,13 @@ export function TopBar() {
           </Button>
         </div>
 
-        {status === 'error' && lastError ? (
-          <div className="min-w-0 truncate text-[0.71875rem] text-destructive" title={lastError}>
-            {lastError}
+        {errorNotice ? (
+          <div
+            data-testid="topbar-error"
+            className="min-w-0 truncate text-[0.71875rem] text-destructive"
+            title={errorNotice}
+          >
+            {errorNotice}
           </div>
         ) : null}
 

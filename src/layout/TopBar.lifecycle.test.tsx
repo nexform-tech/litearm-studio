@@ -80,9 +80,31 @@ describe('TopBar port picker, real lifecycle', () => {
       })
     })
 
+    // 已连着时那次改口被 daemon 拒了 (另一个标签页发的同一条帧也会走到这里): 顶栏必须
+    // **仍然**是绿色的「已连接」, 拒绝原因单独出现在错误槽里 —— 链路好好的时候说
+    // 「连接失败」正是这个功能要消灭的那种谎话。
+    act(() => armClient.connect('/dev/ttyACM0'))
+    const refused = ws.lastFrame('connect')!
+    await act(async () => {
+      ws.receive({
+        t: 'res', id: refused.id, ok: false,
+        err: {
+          kind: 'PortChangeWhileConnectedError',
+          msg: '已连接 /dev/ttyACM1；换口请先断开 (本次请求的 /dev/ttyACM0 未生效)',
+        },
+      })
+    })
+    expect(armClient.status).toBe('connected')
+    expect(armClient.lastError).toBeNull()
+    expect(document.getElementById('topbar-connection-status')?.textContent).toMatch(/Connected|已连接/)
+    expect(screen.getByTestId('topbar-error').textContent).toMatch(/断开|Disconnect/)
+
     // 断开: 真客户端会关掉那条共用 WebSocket —— 之后 `listPorts()` 一律被拒。
     act(() => fireEvent.click(disconnectButton()))
     expect(armClient.conn).toBeNull()
+    // 「断开」也要把那条拒绝提示收掉 (它描述的是上一条链路的事)。
+    expect(armClient.connectError).toBeNull()
+    expect(screen.queryByTestId('topbar-error')).toBeNull()
 
     // 打开下拉会触发一次重新枚举。等过 5×400ms 的重试窗口: 旧实现在这里
     // `setPorts([])`, 于是下拉塌成只有「自动发现」一项。

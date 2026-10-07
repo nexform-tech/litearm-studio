@@ -38,6 +38,7 @@ vi.mock('@/lib/arm', () => ({
     conn: mocks.conn.current,
     motionBusy: false,
     lastError: null,
+    connectError: null,
     connect: mocks.connect,
     disconnect: mocks.disconnect,
     requestStop: vi.fn(),

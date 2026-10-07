@@ -258,6 +258,17 @@ export class ArmClient {
   /** 操作员在端口下拉里选的口；`null` = 交给 daemon 自己解析。 */
   private _pendingPort: string | null = null
 
+  /**
+   * 最近一次被 daemon 拒绝的 `connect` 的原因 —— **不是**连接失败：会话可能仍然
+   * `connected`，只是"你这次改口没生效"。
+   *
+   * ⚠ 单独一个字段、**不**走 `socket.lastError`：拒绝改口时 daemon 没有动链路，也不会
+   * 再发 `conn` 帧。把它塞进传输层的 `lastError` 并落 `error` 态，顶栏就会一边显示
+   * 「连接失败」一边还连着、还能驱动机器 —— 那正是本功能要消灭的"界面说了设备没发生的
+   * 事"。它只是给操作员的一句提示，由顶栏在既有的错误槽里显示。
+   */
+  private _connectError: string | null = null
+
   /** 共用的 daemon socket。默认自建一条，`armClient` 用默认值；夹爪注入同一条。 */
   readonly socket: DaemonSocket
 
@@ -305,6 +316,16 @@ export class ArmClient {
   }
   get lastError() {
     return this.socket.lastError
+  }
+
+  /**
+   * 最近一次被拒绝的 `connect` 的原因（没有则为 `null`）。
+   *
+   * ⚠ 与 `lastError` **分开**：后者是链路/传输出了事（状态随之落 `error`），前者只是
+   * 这次改口被拒，链路照旧。顶栏在 `status === 'error'` 之外也要显示它。
+   */
+  get connectError() {
+    return this._connectError
   }
 
   /**
@@ -392,18 +413,35 @@ export class ArmClient {
    *
    * ⚠ 帧必须带 `id`：daemon 拒绝这次连接时（例如已在另一个口上，换口要先断开）只回一条
    * `ok:false` 的 `res`，**不会**再发 `conn` 帧。不认领这条应答，那次拒绝在界面上就完全
-   * 不可见 —— 顶栏还停在旧状态，操作员以为点了没反应。这里把它落到既有的
-   * `status === 'error'` + `lastError` 通道（顶栏读的就是这两个），不另造错误通道。
+   * 不可见 —— 顶栏还停在旧状态，操作员以为点了没反应。
+   *
+   * ⚠ 拒绝**不**改 `status`、也不动 socket 的 `lastError`：daemon 没有动链路。原因存进
+   * `_connectError`，由顶栏在 `connected` 徽标旁边单独显示。
    *
    * ⚠ socket 已经关掉时的拒绝不走这里：那条是传输层的事（`disconnect()` 会拒掉在途
-   * 请求），由 `onLifecycle` 把它报成「已断开」，覆盖成「连接失败」是错的。
+   * 请求），由 `onLifecycle` 把它报成「已断开」。
    */
   private _sendConnectFrame() {
-    void this.socket.sendRequest(this._connectFrame()).catch((err: unknown) => {
-      if (!this.socket.open) return
-      this.socket.setLastError(formatArmError(err) || String(err))
-      this._setStatus('error')
-    })
+    void this.socket.sendRequest(this._connectFrame()).then(
+      // daemon 受理了这次 connect ⇒ 上一次的拒绝提示不再成立。
+      () => this._clearConnectError(),
+      (err: unknown) => {
+        if (!this.socket.open) return
+        this._setConnectError(formatArmError(err) || String(err))
+      },
+    )
+  }
+
+  /** 记下"这次 connect 被拒"的原因 —— 它不是 `_status`，但订阅者要跟着重渲染。 */
+  private _setConnectError(message: string) {
+    this._connectError = message
+    this._notifyStatus()
+  }
+
+  private _clearConnectError() {
+    if (this._connectError === null) return
+    this._connectError = null
+    this._notifyStatus()
   }
 
   /** 断开：通知 daemon 断开机械臂，并关闭本地 WebSocket。 */
@@ -414,6 +452,7 @@ export class ArmClient {
     this._clearState()
     this._setMotionBusy(false)
     this._conn = null
+    this._clearConnectError()
     this._setStatus('disconnected')
   }
 
@@ -680,6 +719,7 @@ export class ArmClient {
     this._conn = conn
     if (conn.status === 'connected') {
       this.socket.setLastError(null)
+      this._clearConnectError()
     } else if (conn.error) {
       this.socket.setLastError(conn.error)
     }
@@ -735,10 +775,15 @@ export class ArmClient {
     this._notifyState()
   }
 
+  /** 通知状态订阅者 —— `_status` 没变时也要能叫醒 React（`connectError` 走这条）。 */
+  private _notifyStatus() {
+    for (const l of this.statusListeners) l()
+  }
+
   private _setStatus(s: ConnectionStatus) {
     if (this._status === s) return
     this._status = s
-    for (const l of this.statusListeners) l()
+    this._notifyStatus()
   }
 
   private _notifyState() {

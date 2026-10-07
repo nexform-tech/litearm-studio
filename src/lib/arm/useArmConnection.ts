@@ -9,6 +9,9 @@ export function useArmConnection() {
   // conn 与 status 同源于 daemon 的 conn 帧，共用 status 订阅通道。
   const conn = useSyncExternalStore(armClient.subscribeStatus, () => armClient.conn)
   const motionBusy = useSyncExternalStore(armClient.subscribeMotion, () => armClient.motionBusy)
+  // ⚠ 被拒绝的 connect **不是**连接失败（`status` 不变），所以它要自己的快照：
+  //   `lastError` 那种"渲染时现读"的读法在 status 不变时不会触发重渲染。
+  const connectError = useSyncExternalStore(armClient.subscribeStatus, () => armClient.connectError)
 
   /** 连接。`port` = 顶栏下拉里选的那个串口（不传 = 交给 daemon 自己解析）。 */
   const connect = useCallback((port?: string) => armClient.connect(port), [])
@@ -28,6 +31,7 @@ export function useArmConnection() {
     conn,
     motionBusy,
     lastError: armClient.lastError,
+    connectError,
     connect,
     disconnect,
     requestStop,
