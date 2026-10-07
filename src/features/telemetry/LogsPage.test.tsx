@@ -110,6 +110,26 @@ function record(overrides: Record<string, unknown> = {}) {
   }
 }
 
+/** 一条采样记录 —— 折叠区就是拿它画折线的。 */
+function sample(tsNs: number, temps: number[], tau: number[]) {
+  return record({
+    seq: 0,
+    kind: 'sample',
+    event: 'state.sample',
+    body: 'state=ready',
+    severity: 'DEBUG',
+    severityNumber: 5,
+    tsNs,
+    ts: new Date(tsNs / 1e6).toISOString(),
+    fields: {
+      state: 'ready',
+      q: [0, 0, 0],
+      tau,
+      temps: temps.map((v) => ({ mosTemp: v, coilTemp: v - 4 })),
+    },
+  })
+}
+
 describe('LogsPage — records tab', () => {
   beforeEach(async () => {
     mock.state.entries = []
@@ -148,6 +168,63 @@ describe('LogsPage — records tab', () => {
     // 异常栈单独成块: 排障时第一样要看的就是它。
     expect(await screen.findByText(/--- exception ---/)).toBeTruthy()
     expect(screen.getByText(/MotionBusyError: busy/)).toBeTruthy()
+  })
+
+  it('shows the readings around an event when its row is expanded', async () => {
+    // ⚠ 这是方案 2 的判据: 展开一条事件就要看到它那一刻的数值, 而不是切到另一个 tab
+    // 手动对齐时间。事件与采样同源, 所以这里只是把同一份数据取一小段。
+    const eventTs = 1_778_152_382_123_456_000
+    const second = 1_000_000_000
+    mock.state.entries = [record({ tsNs: eventTs })]
+    mock.state.samples = [
+      sample(eventTs - 2 * second, [30, 70, 31], [0.1, 0.2, 2.5]),
+      sample(eventTs - second, [31, 76, 32], [0.2, 0.3, 2.9]),
+      sample(eventTs + second, [32, 78, 33], [0.3, 0.2, 3.0]),
+      // 窗口之外 —— 不该出现在折叠区里 (那会让"那一刻"这个说法失真)。
+      sample(eventTs + 600 * second, [99, 99, 99], [9, 9, 9]),
+    ]
+    mock.state.status = { ...mock.state.status, metaAt: Date.now() }
+    render(<LogsPage />)
+
+    fireEvent.click(await screen.findByText('arm.command.failed'))
+    expect(await screen.findByText(/Readings around this moment/)).toBeTruthy()
+    expect(screen.getByText('3 samples')).toBeTruthy()
+    // 最热那一轴与力矩最大那一轴各一条折线, 加上"整机最高温"。
+    const plot = document.querySelector('polyline')
+    expect(plot).not.toBeNull()
+    // 窗口里那 4 条采样只画 3 条, 且极值取自它们而不是窗口外那条 99。
+    const points = plot!.getAttribute('points') ?? ''
+    expect(points.split(' ')).toHaveLength(3)
+    // 读数按"整数不带小数"给 (见 `Sparkline.nice`), 所以区间是 70–78。
+    // 最热那一轴与"整机最高温"在这个例子里是同一条曲线 (其余轴只到 30 出头),
+    // 所以它会出现多次 —— 断言"至少一次", 而不是"恰好一次"。
+    expect(screen.getAllByText('70–78').length).toBeGreaterThanOrEqual(1)
+    // 窗口外那条 99°C 不该被算进来。
+    expect(screen.queryByText(/99/)).toBeNull()
+  })
+
+  it('says so when the daemon recorded no samples', async () => {
+    // INFO 级别下不落采样, 这是正常状态, 不是错误 —— 界面要说清, 而不是画一张空白图。
+    mock.state.entries = [record()]
+    mock.state.samples = []
+    mock.state.status = { ...mock.state.status, metaAt: Date.now() }
+    render(<LogsPage />)
+
+    fireEvent.click(await screen.findByText('arm.command.failed'))
+    expect(await screen.findByText(/No state samples around this moment/)).toBeTruthy()
+  })
+
+  it('does not draw a context chart for a sample record itself', async () => {
+    // 采样记录自己就是数值, 再给它画一段上下文是多余的。
+    const eventTs = 1_778_152_382_123_456_000
+    mock.state.entries = [sample(eventTs, [40, 50, 60], [1, 2, 3])]
+    mock.state.samples = [sample(eventTs, [40, 50, 60], [1, 2, 3])]
+    mock.state.status = { ...mock.state.status, metaAt: Date.now() }
+    render(<LogsPage />)
+
+    fireEvent.click(await screen.findByText('state.sample'))
+    expect(await screen.findByText(/"state": "ready"/)).toBeTruthy()
+    expect(screen.queryByText(/Readings around this moment/)).toBeNull()
   })
 
   it('filters by text without touching the stream', async () => {

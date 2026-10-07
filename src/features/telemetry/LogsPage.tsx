@@ -4,6 +4,8 @@ import { useTranslation } from 'react-i18next'
 import { useTelemetryState } from './useTelemetryState'
 import { useLogRecords } from '@/lib/log/useLogRecords'
 import { recordToWire, type LogEntry } from '@/lib/log/schema'
+import { sampleContextFor } from '@/lib/log/sampleContext'
+import { Sparkline } from '@/components/Sparkline'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -112,6 +114,58 @@ function sampleSummary(entry: LogEntry) {
     torque: maxAbs(tau),
     faults: faults.length,
   }
+}
+
+/** 窗口的一半 (纳秒) → 人读的秒数。 */
+function windowSeconds(windowNs: number): number {
+  return Math.round(windowNs / 1e9)
+}
+
+/**
+ * 展开一条记录时, 它**那一刻的数值**。
+ *
+ * 为什么放在这里而不是另开一页: 事件是稀疏的、采样是 1Hz 的, 放进同一个列表里事件会被
+ * 采样淹掉, 而把两者彻底分开又切断了因果 (看到"温度过高"却要手动去别处找那几秒的数).
+ * 所以在**需要它的地方**给一小段上下文 —— 见 `lib/log/sampleContext.ts`。
+ */
+function EventContext({ entry, samples, locale }: {
+  entry: LogEntry
+  samples: LogEntry[]
+  locale: string
+}) {
+  const { t } = useTranslation('logs')
+  const context = sampleContextFor(entry, samples)
+  const title = t('contextTitle', { seconds: windowSeconds(context.windowNs) })
+
+  if (context.samples.length === 0) {
+    return (
+      <div className="mt-2 border-t border-border/60 pt-2">
+        <div className="text-[0.6875rem] font-medium text-muted-foreground">{title}</div>
+        <div className="text-[0.6875rem] text-muted-foreground">{t('contextNoSamples')}</div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="mt-2 border-t border-border/60 pt-2">
+      <div className="mb-1.5 flex items-baseline gap-3 text-[0.6875rem]">
+        <span className="font-medium text-muted-foreground">{title}</span>
+        <span className="font-mono text-muted-foreground">
+          {t('contextSampleCount', { count: context.samples.length })}
+        </span>
+      </div>
+      <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
+        {context.series.map((series) => (
+          <Sparkline
+            key={`${series.label}-${series.unit}`}
+            series={series}
+            times={context.times}
+            locale={locale}
+          />
+        ))}
+      </div>
+    </div>
+  )
 }
 
 /** 一条记录的详情: `fields` 逐项展开, 异常单独成块 (它是排障时要读的第一样东西)。 */
@@ -437,6 +491,14 @@ export function LogsPage() {
                                 <pre className="max-h-[18rem] overflow-auto font-mono text-[0.6875rem] leading-relaxed text-ink-muted">
                                   {recordDetail(entry)}
                                 </pre>
+                                {/* ⚠ 采样记录自己不需要这条上下文 (它就是数值)。 */}
+                                {entry.kind === 'sample' ? null : (
+                                  <EventContext
+                                    entry={entry}
+                                    samples={logs.samples}
+                                    locale={i18n.language}
+                                  />
+                                )}
                               </TableCell>
                             </TableRow>
                           ) : null}
