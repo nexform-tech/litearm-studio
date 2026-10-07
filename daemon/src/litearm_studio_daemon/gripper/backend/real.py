@@ -1,14 +1,20 @@
 """The real backend: the LiteGrip SDK behind the same four primitives.
 
-Only public SDK methods are used, and only four of them are on the control path
-— ``send_mit_frame``, ``poll``, ``get_state(wait=False)`` and ``stop``.  Every
-convenience method is deliberately unused, and the reasons are structural rather
-than stylistic (they are listed at length in
-:mod:`litearm_studio_daemon.gripper.backend`).  The one that matters most here:
-``control_mit_stream`` has no abort hook (can_bus.py:342), so anything built on
-it cannot be interrupted, which rules out ``open``, ``close``, ``grasp``,
-``goto``, ``move_to`` and ``move_at_speed`` for a console whose E-stop has to
-work inside one tick.
+The control path is ``send_mit_frame``, ``poll``, ``get_state(wait=False)`` and
+``stop`` — one frame per tick, never a blocking loop — with **two** exceptions,
+:meth:`RealBackend.open_plain` and :meth:`RealBackend.close_plain`, which drive
+the SDK's own ``open()`` and ``close()``.  Every other convenience method is
+deliberately unused, and the reasons are structural rather than stylistic (they
+are listed at length in :mod:`litearm_studio_daemon.gripper.backend`).  The one
+that matters most here: ``control_mit_stream`` has no abort hook of its own
+(can_bus.py:342), so anything built on it cannot be interrupted — which rules
+out ``grasp``, ``goto``, ``move_to`` and ``move_at_speed`` for a console whose
+E-stop has to work inside one tick.  ``open`` and ``close`` are the exceptions
+only because they accept a ``progress`` callback, and the two ``*_plain``
+methods reach through it for the two things a blocking move still needs: the
+E-stop, and a state frame for the UI while this loop cannot publish one; they
+are kept out of the control path proper so that the blocking calls live in a
+single, named place rather than spread across the FSM.
 
 Two things this class is careful about, both about not lying:
 
@@ -34,7 +40,7 @@ import math
 import time
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from litegrip import GripperConfig, LiteGrip, LiteGripError, describe_error
 
@@ -50,6 +56,7 @@ from . import (
     FaultActive,
     GripperBackend,
     LinkDown,
+    MoveAborted,
     NotReady,
 )
 
@@ -115,6 +122,12 @@ class RealBackend(GripperBackend):
         if canfd_mode is not None:
             cfg.canfd_mode = bool(canfd_mode)
         self._gripper = LiteGrip(config=cfg)
+        # Press softly onto the stop: ``open()``/``close()`` are what this console
+        # delegates its plain moves to, and they always press (see
+        # :data:`~litearm_studio_daemon.gripper.constants.PRESS_STOP_LEAD_MM`).
+        # The SDK builds this MotionConfig once, at construction, and nothing
+        # rebuilds it, so setting it here holds for the object's whole life.
+        self._gripper.motion_config.stop_lead_mm = constants.PRESS_STOP_LEAD_MM
 
     # ── lifecycle ───────────────────────────────────────────────────────────
     def connect(self) -> None:
@@ -314,6 +327,135 @@ class RealBackend(GripperBackend):
             self._gripper.stop()
         except LiteGripError as exc:
             raise BackendError(f"零力矩指令失败: {exc}") from exc
+
+    def open_plain(
+        self,
+        *,
+        speed_mm_s: float | None = None,
+        should_abort: Callable[[], bool] | None = None,
+        progress: Callable[[Any], None] | None = None,
+    ) -> bool:
+        """Open to the open stop with the SDK's own ``open()`` ramp.
+
+        The exact counterpart of :meth:`close_plain`, delegated for the same
+        reason and by the same means; that method carries the full account of
+        why the SDK's schedule is the law that breaks the dead-band and how the
+        E-stop is threaded in.  The opening side has its own dead-band, and the
+        daemon's anchored reference clears it no better than it cleared the
+        closing one — a plain open that stalls on nothing is the failure this
+        avoids.
+
+        Returns ``True`` once the jaws pressed onto the open stop.  An open a
+        workpiece stopped short of the stop is the obstruction it is, not a
+        completed move.
+        """
+        return self._drive_to_limit(
+            "open", self._gripper.open, speed_mm_s, should_abort, progress
+        )
+
+    def close_plain(
+        self,
+        *,
+        speed_mm_s: float | None = None,
+        should_abort: Callable[[], bool] | None = None,
+        progress: Callable[[Any], None] | None = None,
+    ) -> bool:
+        """Close to the closed stop with the SDK's own ``close()`` ramp.
+
+        The reason is issue #72: the SDK's ``_move_to_limit`` schedules the
+        command against the wall clock (``q_sched = start + dist·i/steps``) and
+        feeds the speed forward as ``dq``, and *that* is the law that breaks the
+        closing-side dead-band.  Porting only its two lead caps into the
+        daemon's anchored reference did not, because the anchoring is what
+        sustained the limit cycle.
+
+        Returns ``True`` once the jaws pressed onto the closed stop.  A close
+        that a workpiece stopped short of the stop is the obstruction it is, not
+        a completed move.
+        """
+        return self._drive_to_limit(
+            "close", self._gripper.close, speed_mm_s, should_abort, progress
+        )
+
+    def _drive_to_limit(
+        self,
+        direction: str,
+        sdk_call: Callable[..., Any],
+        speed_mm_s: float | None,
+        should_abort: Callable[[], bool] | None,
+        progress: Callable[[Any], None] | None = None,
+    ) -> bool:
+        """Drive one end of the travel with the SDK's own ramp.
+
+        ``open()``/``close()`` loop inside the SDK with no abort hook of their
+        own, so the SDK's ``progress`` callback — which the ramp already calls
+        once per sample — is used for both jobs this console needs from a move
+        it cannot tick through: ``should_abort`` is polled there and raising out
+        of it unwinds the loop, and ``progress`` (the caller's) is forwarded each
+        sample so the caller can publish where the jaws are.  The first is what
+        keeps the E-stop able to interrupt a move, which every other move gets
+        by never blocking; the second is what keeps the UI from reading 保持 for
+        the whole move while the tick sits inside this call.
+
+        ``speed_mm_s`` is the operator's 速度 setting; ``None`` leaves the SDK
+        on its own configured speed, which is the fallback the rest of this
+        console also uses.  ``direction`` names the move in the messages and
+        picks which end :meth:`_short_of_the_end` measures against.
+        """
+        self._claim()
+        self._require_connected()
+        if not self._gripper.is_enabled:
+            raise NotReady("电机未使能")
+
+        label = "张开" if direction == "open" else "闭合"
+
+        def _progress(sample: Any) -> None:
+            if should_abort is not None and should_abort():
+                raise MoveAborted(f"{label}被中断")
+            if progress is not None:
+                progress(sample)
+
+        try:
+            result = sdk_call(speed_mm_s, progress=_progress)
+        except MoveAborted:
+            raise
+        except LiteGripError as exc:
+            raise BackendError(f"{label}失败: {exc}") from exc
+
+        short_mm = self._short_of_the_end(direction, result)
+        if short_mm is None:
+            # No calibration in hand to measure the stop against, so the SDK's
+            # own verdict is all there is.
+            arrived = result.ok
+        else:
+            arrived = short_mm <= constants.PRESS_REACH_TOL_MM
+        if not arrived:
+            # A stall on the inner side of the end is the obstruction it looks
+            # like, and reporting it as a completed move is the one thing this
+            # must not do.
+            raise BackendError(f"{label}未顶到限位：行程中被挡住")
+        return True
+
+    def _short_of_the_end(self, direction: str, result: Any) -> float | None:
+        """How far short of this end the jaws stopped, in mm; ``None`` if unknown.
+
+        The sign is what makes this the right question.  ``press=True`` drives
+        *past* the calibrated limit toward the mechanical stop, so a stall is
+        the arrival and only a stall on the inner side is an obstruction — a
+        stop that overshot the limit is not one, whatever the SDK's ``ok`` says
+        about a limit the probe may have recorded a hair shallow.  Negative when
+        the jaws pressed past the commanded end, which is a success.
+        """
+        if not result.stalled:
+            # Ran out of steps without pressing onto anything: never arrived.
+            return math.inf
+        limits = self._info.limits if self._info is not None else None
+        if limits is None:
+            return None
+        pos_mm = limits.to_mm(result.state.position_rad)
+        if direction == "open":
+            return limits.max_stroke_mm - pos_mm
+        return pos_mm
 
     # ── calibration ─────────────────────────────────────────────────────────
     def load_calibration(self, path: str | None = None,

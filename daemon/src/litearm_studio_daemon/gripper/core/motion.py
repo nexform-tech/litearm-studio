@@ -2,9 +2,19 @@
 
 Every state's ``tick`` sends at most one frame and returns, so the worker's loop
 stays interruptible: an E-stop, a new slider target or a fault is noticed within
-one 5 ms tick.  That property is the whole reason the console drives the motor
-through ``send_mit_frame`` instead of any SDK convenience method, all of which
-block inside ``control_mit_stream`` with no abort hook.
+one 5 ms tick.  That is why the console drives the motor through
+``send_mit_frame`` rather than an SDK convenience method — those run a blocking
+control loop with no abort hook of their own (see
+:mod:`litearm_studio_daemon.gripper.backend`).
+
+Two moves do not go through this class at all.  A plain 张开 and 闭合 are driven
+by the SDK's own ``open()`` and ``close()``, because their wall-clock schedule
+is what breaks each side's dead-band and this anchoring law cannot (issue #72 on
+the closing side); see
+:meth:`~litearm_studio_daemon.gripper.core.worker.WorkerLoop._open` and
+:meth:`~litearm_studio_daemon.gripper.core.worker.WorkerLoop._close`.  They are
+the console's blocking calls, and they keep their interruptibility by threading
+the E-stop through the SDK's ``progress`` hook instead of through a tick.
 
 Force semantics
 ---------------
@@ -174,9 +184,22 @@ class MotionFSM:
         self.state = MotionState.SERVO
 
     def open(self, source: str = "open") -> None:
+        """Drive to the open end — the FSM fallback for a backend without an SDK open.
+
+        The worker tries :meth:`GripperBackend.open_plain` first; this runs only
+        when the backend declines (the simulator does), so it stays the same
+        anchored law as every other path here.
+        """
         self.move_to_mm(self.limits.max_stroke_mm, source)
 
     def close(self, source: str = "close", force_n: float | None = None) -> None:
+        """Drive to the closed end — the FSM fallback, or the forced variant.
+
+        A force-carrying close always takes this path: the position gain is the
+        approach gain here, and the SDK's schedule would read as the contact it
+        is trying to detect.  A plain close takes it only when the backend has
+        no SDK close.
+        """
         self.move_to_mm(0.0, source, force_n=force_n)
 
     def grasp(self, force_n: float | None = None, source: str = "grasp") -> None:

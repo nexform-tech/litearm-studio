@@ -16,9 +16,20 @@ unusable here for a concrete reason:
     ``duration`` is a settle time, not a speed, so the speed setting cannot be
     honoured.  Also clamps to a config-derived range that is inverted while
     uncalibrated (gripper.py:947).
-``open``/``close``/``grasp``
-    All funnel into ``control_mit_stream``, which has no abort hook
-    (can_bus.py:342), so an E-stop could not interrupt them.
+``grasp``
+    Drives a blocking ramp (can_bus.py:342, ``_move_to_limit``) whose only
+    interruption point would be a callback this console does not pass, so an
+    E-stop could not interrupt it.
+
+``open``/``close``
+    Both drive the same blocking ramp, but both take a ``progress`` callback
+    this console wires to the E-stop — so both *are* driven, in their plain
+    forms only, through :meth:`GripperBackend.open_plain` and
+    :meth:`GripperBackend.close_plain`.  They are driven instead of ported
+    because their schedule is the law that actually breaks the dead-band (issue
+    #72 on the closing side), which the daemon's anchored reference — able to
+    lead the measurement by only a bounded cap — could not.  A force-carrying
+    close still goes through the FSM.
 ``home``
     Uses the hardcoded ``GripperParams.POS_CLOSED_RAD`` rather than
     ``config.pos_closed_rad`` (gripper.py:781), so it is wrong after
@@ -32,7 +43,7 @@ from __future__ import annotations
 
 import threading
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Callable
 
 from ..calibration import CalibrationInfo
 from ..telemetry import Telemetry
@@ -86,6 +97,16 @@ class NotReady(BackendError):
 
 class Unsupported(BackendError):
     """The operation does not apply to this backend."""
+
+
+class MoveAborted(BackendError):
+    """A plain move was interrupted before it arrived.
+
+    Raised out of a backend's ``open_plain`` / ``close_plain`` when its
+    ``should_abort`` hook fired — an E-stop or a shutdown reached the move while
+    it was blocking.  It is not a failure of the move: the caller abandons the
+    axis exactly as it does for any other interrupted move.
+    """
 
 
 class GripperBackend(ABC):
@@ -214,6 +235,66 @@ class GripperBackend(ABC):
         """Short human-readable identity, for the title bar and logs."""
 
     # ── optional ────────────────────────────────────────────────────────────
+    def open_plain(
+        self,
+        *,
+        speed_mm_s: float | None = None,
+        should_abort: Callable[[], bool] | None = None,
+        progress: Callable[[Any], None] | None = None,
+    ) -> bool:
+        """Drive the jaws to the open stop with the SDK's own ``open()``.
+
+        The exact counterpart of :meth:`close_plain`, and it is delegated for
+        the same reason: ``open()`` shares the wall-clock ramp that breaks the
+        dead-band, and it shares the ``progress`` callback that lets the E-stop
+        reach a blocking move.  Both directions have a dead-band of their own,
+        and the daemon's anchored law clears neither.
+
+        Returns ``True`` when this backend handled the move, and ``False`` when
+        it has no SDK open and the caller should fall back to the motion FSM.
+        The simulator returns ``False`` on purpose: its whole value is that it
+        exercises the FSM the hardware runs, and the SDK's schedule has no
+        simulator behind it.
+
+        ``should_abort`` is polled during the move and aborts it with
+        :class:`MoveAborted` when it returns true — the hook that lets the
+        E-stop reach a call that would otherwise block the tick thread for the
+        whole move.  ``progress`` receives each of the SDK's own progress
+        samples while the move runs; the caller publishes them, because a
+        blocking move leaves the tick loop no other way to tell the UI where the
+        jaws are.  ``speed_mm_s`` overrides the SDK's configured speed; the real
+        backend passes the operator's setting so the 速度 slider still means
+        something here.
+        """
+        return False
+
+    def close_plain(
+        self,
+        *,
+        speed_mm_s: float | None = None,
+        should_abort: Callable[[], bool] | None = None,
+        progress: Callable[[Any], None] | None = None,
+    ) -> bool:
+        """Drive the jaws to the closed stop with the SDK's own ``close()``.
+
+        Returns ``True`` when this backend handled the close, and ``False``
+        when it has no SDK close and the caller should fall back to the motion
+        FSM.  The simulator returns ``False`` on purpose: its whole value is
+        that it exercises the FSM the hardware runs, and the SDK's schedule has
+        no simulator behind it.
+
+        ``should_abort`` is polled during the move and aborts it with
+        :class:`MoveAborted` when it returns true — the hook that lets the
+        E-stop reach a call that would otherwise block the tick thread for the
+        whole move.  ``progress`` receives each of the SDK's own progress
+        samples while the move runs; the caller publishes them, because a
+        blocking move leaves the tick loop no other way to tell the UI where the
+        jaws are.  ``speed_mm_s`` overrides the SDK's configured speed; the real
+        backend passes the operator's setting so the 速度 slider still means
+        something here.
+        """
+        return False
+
     def calibration_info(self) -> CalibrationInfo | None:
         """The calibration currently applied, if this backend tracks one.
 
