@@ -256,27 +256,28 @@ LiteArm 是由 *NEXFORM ROBOTICS* 针对具身智能、工业自动化、医疗�
   [*重复定位精度*], [±0.15 mm], [经过精密标定补偿],
   [*工作电压*], [DC 24V \~ 48V], [推荐标准 24V / 10A 稳压供电],
   [*整机额定功率*], [150 W], [待机功耗约 15 W],
-  [*通信接口*], [CAN (1 Mbps) / WebSocket], [支持 USB-CAN 适配器直连],
+  [*通信接口*], [USB CDC (1d50:606f) / WebSocket], [USB 直连上位机；关节电机走臂内 CAN 总线],
   [*上位机控制频率*], [250 Hz], [底层电机驱动环达 1 kHz],
   [*末端安装接口*], [标准快换机械法兰], [兼容各主流电动夹爪与快换夹具],
 )
 
 == 系统架构与通信拓扑
 
-机械臂通过 USB-CAN 适配器连接运行控制服务的主机（用户电脑或独立工控机/计算盒）。系统原生支持单机同屏操作与分布式局域网控制两种模式：
+LiteArm Studio 是「本地程序 + 浏览器界面」：`litearm-studio-daemon` 独占到机械臂的 USB 串口，界面由它托管，两者通过本机回环上的 WebSocket 通信。**没有后端服务器，也没有需要填写的 IP。**
 
-#align(center, image(read("../images/zh/system_architecture.png", encoding: none), width: 100%))
+```text
+浏览器窗口（React 界面，由本地程序托管）
+   │ HTTP → 静态资源、/api/health
+   │ WS   → 状态推送 / 命令
+   ▼
+litearm-studio-daemon（Python，只监听 127.0.0.1）
+   ▼
+litearm-python ──USB CDC（1d50:606f @921600）──> STM32 ──CAN──> 电机
+```
 
-#heading(level: 3, numbering: none, outlined: false)[部署模式说明]
-
-- *单机直连模式*：控制服务（`litearm-server`）与 Studio 上位机均运行在同一台电脑上，Studio 直接连接 `127.0.0.1:7449`；
-- *独立主机模式*：控制服务运行在连接机械臂的独立工控机或计算盒上，用户在局域网内通过另一台电脑的 Studio 连接其主机 IP。
-
-#heading(level: 3, numbering: none, outlined: false)[默认通信端口与配置]
-
-- *上位机通信端口*：`7449`（WebSocket 协议，单机填写 `127.0.0.1`，跨机填写实际局域网 IP）
-- *Python SDK 端口*：`7447`（RPC / Zenoh 协议）
-- *CAN 接口*：默认 `can0`（波特率 1M，服务启动时由 systemd 自动初始化拉起）
+#note-box[
+  本地程序**只监听 `127.0.0.1`**，没有对外网或局域网开放的开关。
+]
 
 #line(length: 100%, stroke: 0.7pt + rgb("#DADEE5"))
 
@@ -326,60 +327,30 @@ LiteArm 是由 *NEXFORM ROBOTICS* 针对具身智能、工业自动化、医疗�
   请务必在断电状态下插拔电源与 CAN 线缆，严禁带电热插拔主电源接口！
 ]
 
-== 后端控制服务部署 (litearm-server)
+== 启动本地程序 (litearm-studio-daemon)
 
-#heading(level: 3, numbering: none, outlined: false)[1. 安装软件包]
-
-在连接机械臂的 Ubuntu 22.04 主机（电脑或工控机）上执行：
+#heading(level: 3, numbering: none, outlined: false)[1. 启动]
 
 ```bash
-sudo dpkg -i litearm-server_<版本号>_amd64.deb
+# 离线：用 SDK 的假传输跑完整会话，不需要任何硬件
+litearm-studio-daemon --fake
+
+# 真机：自动发现 USB CDC 设备
+litearm-studio-daemon
+
+# 指定串口 / 端口 / 不自动开窗口
+litearm-studio-daemon --port /dev/ttyACM1 --http-port 9000 --no-open
 ```
 
 #quote-box(rgb("#2563EB"))[
-  安装后系统会自动注册 `litearm-server-bin.service` 服务。服务启动时会自动拉起并配置 `can0` 接口为 1M 波特率。
+  启动后会打印实际监听的地址（默认 `http://127.0.0.1:8765/`；被占用会自动往后找并打印新端口），并在检测到 Chromium 系浏览器时以应用窗口打开，否则退回普通标签页。请以打印出的地址为准。
 ]
 
-#heading(level: 3, numbering: none, outlined: false)[2. 配置运行模式]
+#heading(level: 3, numbering: none, outlined: false)[2. 监听地址]
 
-配置文件路径：`/etc/litearm-server.env`
-
-- *实机模式*：连接好 USB-CAN 适配器与机械臂电源，保持默认文件内容即可。
-- *仿真模式 (Dry-Run)*：若手头未连接物理机械臂或 CAN 硬件，需开启仿真模式以避免驱动初始化报错：
-
-```
-LITEARM_EXTRA_ARGS="--dry-run"
-```
-
-#heading(level: 3, numbering: none, outlined: false)[3. 启动后台服务]
-
-```bash
-# 启动后台服务
-sudo systemctl start litearm-server-bin
-
-# 查看运行状态与即时日志
-sudo systemctl status litearm-server-bin
-sudo journalctl -u litearm-server-bin -f -n 50
-```
-
-#quote-box(rgb("#2563EB"))[
-  当终端日志输出 `WebSocket server listening on port 7449` 即表示服务启动就绪。
-]
-
-#heading(level: 3, numbering: none, outlined: false)[4. 终端调试与无头操控（可选）]
-
-如需在纯终端环境下验证机械臂通信：
-
-```bash
-# 前台调试启动服务（带调试日志）
-litearm-server --dry-run --log-level DEBUG
-
-# CLI 读取当前 7 关节角度
-python3 -c "import litearm; arm=litearm.Arm('tcp/127.0.0.1:7447'); print('当前关节角:', arm.get_state().q); arm.close()"
-
-# CLI 一键回零
-python3 -c "import litearm; arm=litearm.Arm('tcp/127.0.0.1:7447'); arm.home(); arm.close()"
-```
+- *控制台*：`http://127.0.0.1:<端口>/`
+- *WebSocket*：`ws://127.0.0.1:<端口>/ws`
+- *健康检查*：`http://127.0.0.1:<端口>/api/health`
 
 == 上位机安装 (LiteArm Studio)
 
@@ -422,15 +393,12 @@ chmod +x "litearm-studio-${version}-linux-amd64"
 
 = 首次联调与测试
 
-#heading(level: 3, numbering: none)[步骤 1：连接控制服务]
+#heading(level: 3, numbering: none)[步骤 1：启动并连接]
 
-+ 打开 *LiteArm Studio* 上位机软件。
-+ 点击顶部导航栏左侧的控制器连接徽标，调出「控制器连接设置」浮窗。
-+ 根据部署架构填写 IP 地址，端口保持 `7449`，点击「连接」：
-  - *单机直连*：保持默认 `127.0.0.1`；
-  - *独立工控机*：输入工控机的局域网 IP 地址（例如 `192.168.1.100`）。
-
-#align(center, image("../images/zh/02_header_endpoint_modal.png", width: 85%))
++ 运行 `litearm-studio-daemon`，程序会自行开窗；若没有可用浏览器，就打开终端打印出的地址。
++ 本地程序**自动查找**机械臂的 USB CDC 设备（VID:PID `1d50:606f`），**不需要填写任何 IP 或端口**。
++ 顶栏徽标显示 `已连接` 与本次解析到的 **端口名 · 固件版本**；若会话没有建立，点击顶栏的「连接」。
++ 全新机械臂必须先激活，否则「使能」无效：进入「设置 → 授权激活」，填写注册信息并提交（见用户手册 §1.4）。
 
 #quote-box(rgb("#2563EB"))[
   *连接成功标志*：顶栏徽标变为绿色圆点并显示 `已连接`，右侧遥测通信频率实时跳动在 *250 Hz* 左右。
@@ -456,29 +424,18 @@ chmod +x "litearm-studio-${version}-linux-amd64"
 
 = 常见问题排查 (FAQ)
 
-#heading(level: 3, numbering: none)[Q1：上位机提示连接失败或连接超时？]
+#heading(level: 3, numbering: none)[Q1：顶栏一直显示「连接失败」，或界面能打开但一直没有状态？]
 
-+ 确认连接地址与端口填写正确（本机默认为 `127.0.0.1:7449`）。
-+ 检查控制端后台服务运行状态：
++ 检查 USB 线缆与控制器供电，确认设备以 VID:PID `1d50:606f` 枚举（Linux 用 `lsusb`，Windows 在设备管理器里应出现 COM 口）。
++ Linux 下确认当前用户能打开串口设备（`dialout` 组）；用 `.deb` 安装时 udev 规则已经装好。
++ 若设备出现在非默认路径，显式指定：`litearm-studio-daemon --port /dev/ttyACM1`。
++ 访问 `http://127.0.0.1:<端口>/api/health`，`connected` 必须为 `true`；`conn.status` 是 `error` 时，`conn.error` 字段就是原因（设备不存在、固件不匹配、链路故障）。
++ 默认端口 8765 被占用时，程序会自动往后找并打印，请以打印出的地址为准。
 
-  ```bash
-  sudo systemctl status litearm-server-bin
-  ```
+#heading(level: 3, numbering: none)[Q2：启动时报找不到 `litearm` 模块？]
 
-+ 若服务未处于 active 状态，执行 `sudo systemctl start litearm-server-bin` 重新拉起；若为 failed，请参照 Q2 排查。
-+ 若跨电脑局域网连接，请检查两台设备是否处于同一子网并能相互 `ping` 通，且工控机防火墙已放行 7449 端口：`sudo ufw allow 7449/tcp`。
-
-#heading(level: 3, numbering: none)[Q2：控制端服务启动失败 (failed) 或频繁重启退出？]
-
-- 执行命令查看详细日志：`sudo journalctl -u litearm-server-bin -e`
-- *原因 1：USB-CAN 适配器未正确连接或接口名称不匹配*
-  - 服务启动时会自动初始化 `can0`。若未插 USB-CAN 适配器，服务将直接退出报错。
-  - 使用 `ip link show can0` 及 `dmesg | grep -i can` 排查系统是否识别到硬件设备。
-  - 若系统识别出的 CAN 接口为 `can1`，需在 `/etc/litearm-server.env` 中指定 `LITEARM_IFACE="can1"`。
-- *原因 2：未连接硬件但未开启仿真模式*
-  - 在纯软件或无实机测试时，必须在 `/etc/litearm-server.env` 中配置 `LITEARM_EXTRA_ARGS="--dry-run"` 后重启服务。
-- *原因 3：机械臂供电异常*
-  - 检查 24V 开关电源指示灯是否正常亮起，测量端子输入电压是否在 24V \~ 48V 正常区间。
+- `litearm-python` 不在 PyPI 上，需从检出目录安装：`pip install -e ../litearm-python`。
+- *机械臂供电异常时*：检查 24V 开关电源指示灯是否正常亮起，测量端子输入电压是否在 24V \~ 48V 正常区间。
 
 #heading(level: 3, numbering: none)[Q3：3D 视口显示黑屏或提示 WebGL 初始化失败？]
 
