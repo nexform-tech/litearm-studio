@@ -1,9 +1,11 @@
-LiteArm Studio can read whether an arm is activated and, once the credential
-format is settled, will submit the vendor-issued credential. This document is the
-contract shared by the Studio activation panel, the daemon's `license` command,
-and the vendor signer; read it before changing any of the three.
+LiteArm Studio reads whether an arm is activated and submits the vendor-issued
+credential to the device. This document is the contract shared by the Studio
+activation panel, the daemon's `license` command, and the vendor signer; read it
+before changing any of the three.
 
 # Activation
+
+**English** | [简体中文](ACTIVATION_ZH.md)
 
 ## 1. What the firmware does
 
@@ -255,7 +257,7 @@ promise this path cannot keep.
   one code. Read the record back: `state != 0` means the arm is activated and the
   submission succeeded.
 - **Never disable the arm to satisfy the "must be disarmed" gate** (`0x3F/0x04`).
-  Dropping motor power is the operator's decision, not a side effect of a licence
+  Dropping motor power is the operator's decision, not a side effect of a license
   submission.
 - **Activation must not freeze the arm.** The request runs outside the daemon's single
   command thread, so movement commands keep working while the credential is being
