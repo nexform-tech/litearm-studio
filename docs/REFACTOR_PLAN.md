@@ -84,9 +84,11 @@ litearm-python  ──USB CDC (1d50:606f @921600)──>  STM32  ──CAN──
 上行（浏览器 → 本地程序）：
 
 ```jsonc
-{"t":"connect"} | {"t":"disconnect"}
+{"t":"connect","id":3} | {"t":"disconnect","id":4}
 {"t":"cmd","id":1,"m":"enable","p":{}}
 ```
+
+`connect` 与 `disconnect` 都带 `id` 并等同 id 的 `res`。**断开尤其不能 fire-and-forget**：daemon 在 WebSocket 关闭时**不**断开机械臂（刷新页面不能掉臂），所以「已断开」只有在收到确认后才是真的 —— 帧没送到就落「已断开」会让界面与 daemon 失步，之后换口连接必被拒（#82）。daemon 处理 `disconnect` 时先广播一条 `conn`（`status: disconnected`）再回 `res`，顶栏徽标以那条 `conn` 帧为准。
 
 ### 3.2 命令白名单
 

@@ -103,6 +103,7 @@
     "portChangeWhileConnected": "机械臂已连接在另一个串口上：换口请先按「断开」，再选新口连接",
     "stopFailed": "急停指令未能送达：{{message}}",
     "jogFailed": "点动未执行：{{message}}",
+    "disconnectFailed": "断开未确认：{{message}}。机械臂可能仍然连着，请重试",
     "notEnabled": "机械臂未使能 —— 请先使能再操作",
     "cartUnsupported": "当前固件未编译笛卡尔规划：movel 与笛卡尔点动不可用，请改用关节空间",
     "jointLimitsFallback": "未能从控制器读取关节软限位，滑条已退回内置默认量程",

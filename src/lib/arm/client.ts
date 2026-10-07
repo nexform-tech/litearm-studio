@@ -444,10 +444,27 @@ export class ArmClient {
     this._notifyStatus()
   }
 
-  /** 断开：通知 daemon 断开机械臂，并关闭本地 WebSocket。 */
-  disconnect() {
-    const open = this.socket.open
-    if (open) this.socket.sendFrame({ t: 'disconnect' })
+  /**
+   * 断开：**先让 daemon 确认**它断开了机械臂，再关闭本地 WebSocket。
+   *
+   * ⚠ 旧实现是 fire-and-forget —— 发一条**不带 id** 的 `disconnect` 帧、紧接着关掉 socket。
+   *   投递无人确认，而 daemon **不会**因 WS 关闭就断开机械臂（刷新页面不能掉臂，见
+   *   `server.py`）。`send` 之后立刻 `close`，浏览器会丢弃还在排队的那条帧，于是界面显示
+   *   「已断开」而 daemon 仍连在原口上 —— 之后换口连接必被拒，操作员除了重启 daemon 无路
+   *   可走（#82）。改成带 `id` 的请求，等到同 id 的 `res` 才收尾。
+   *
+   * ⚠ 没有确认时（拒绝 / 超时 / 链路中途断开）**绝不谎报已断开**：原样抛出、`status` 不动，
+   *   由调用方提示，操作员可以重试。
+   *
+   * 数据流：daemon 处理 `disconnect` 时先广播一条 `conn`(disconnected) 再回 `res`，两条都在
+   * 本方法关闭 socket **之前**到达 —— 徽标由那条 `conn` 帧对齐，`res` 只是"确认收到"。
+   */
+  async disconnect(): Promise<void> {
+    if (this.socket.open) {
+      await this.socket.sendRequest({ t: 'disconnect' })
+    }
+    // 走到这里：要么 daemon 确认了断开，要么传输层本来就断着（那条帧发不出去，此刻无从
+    // 确认；本地收尾、停止重连，真值等 socket 重连时的 `conn` 握手帧再对齐）。
     this.socket.disconnect()
     this._clearState()
     this._setMotionBusy(false)

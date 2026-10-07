@@ -138,7 +138,9 @@ describe('ArmClient (daemon WebSocket)', () => {
 
     // 再被拒一次, 然后按「断开」⇒ 也必须消失。
     await refuse('/dev/ttyACM0')
-    client.disconnect()
+    const done = client.disconnect()
+    ws.receive({ t: 'res', id: ws.lastFrame('disconnect')!.id, ok: true, v: { stopped: true } })
+    await done
     expect(client.connectError).toBeNull()
   })
 
@@ -402,14 +404,53 @@ describe('ArmClient (daemon WebSocket)', () => {
     expect(client.motionBusy).toBe(false)
   })
 
-  it('disconnect() sends the disconnect frame, closes, and clears state', async () => {
+  it('disconnect() waits for the daemon ack before closing the socket and clearing state', async () => {
     const { client, ws } = connectedClient()
     ws.receive({ t: 'state', stamp: 1, state: { q: [1], state: 'ready' } })
 
-    client.disconnect()
-    expect(ws.lastFrame('disconnect')).toMatchObject({ t: 'disconnect' })
+    const done = client.disconnect()
+    // 帧必须带 id —— 没有 id 就没有"确认"这回事（旧实现正是这样静默丢帧的, #82）。
+    const frame = ws.lastFrame('disconnect')!
+    expect(frame).toMatchObject({ t: 'disconnect' })
+    expect(typeof frame.id).toBe('number')
+
+    // 还没确认：socket 照开、状态照旧 —— 不许在 daemon 点头之前谎报已断开。
+    expect(ws.readyState).toBe(FakeWebSocket.OPEN)
+    expect(client.status).toBe('connected')
+    expect(client.state).not.toBeNull()
+
+    ws.receive({ t: 'res', id: frame.id, ok: true, v: { stopped: true } })
+    await done
+
     expect(client.status).toBe('disconnected')
     expect(client.state).toBeNull()
+  })
+
+  it('disconnect() reports an unacknowledged failure instead of claiming 已断开', async () => {
+    const { client, ws } = connectedClient()
+    const done = client.disconnect()
+    const frame = ws.lastFrame('disconnect')!
+
+    // daemon 拒绝了这次断开（或链路中途出错）—— 没有 ack。
+    ws.receive({ t: 'res', id: frame.id, ok: false, err: { kind: 'TransportError', msg: '链路故障' } })
+
+    await expect(done).rejects.toMatchObject({ err: { kind: 'TransportError' } })
+    // ⚠ 没有确认就不许改口：链路没动、socket 没关、臂还在原口上。要是这里落成
+    //   「已断开」，操作员以为断了其实没断 —— 那正是 #82。
+    expect(client.status).toBe('connected')
+    expect(client.conn?.port).toBe('/dev/ttyACM0')
+    expect(ws.readyState).toBe(FakeWebSocket.OPEN)
+  })
+
+  it('disconnect() that loses the socket mid-flight does not silently claim 已断开', async () => {
+    const { client, ws } = connectedClient()
+    const done = client.disconnect()
+
+    // 帧发出去了但链路在应答前断掉：在途请求被拒，这次断开无从确认。
+    ws.drop()
+
+    await expect(done).rejects.toThrow('本地程序连接已断开')
+    expect(client.status).toBe('reconnecting')
   })
 
   it('a redundant connect() while connecting/connected is a no-op', () => {
@@ -464,7 +505,9 @@ describe('ArmClient (daemon WebSocket)', () => {
   it('does not reconnect after an explicit disconnect()', async () => {
     vi.useFakeTimers()
     const { client, ws } = connectedClient()
-    client.disconnect()
+    const done = client.disconnect()
+    ws.receive({ t: 'res', id: ws.lastFrame('disconnect')!.id, ok: true, v: { stopped: true } })
+    await done
     ws.drop()
     await vi.advanceTimersByTimeAsync(5000)
     expect(FakeWebSocket.instances).toHaveLength(1)

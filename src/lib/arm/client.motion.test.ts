@@ -138,11 +138,15 @@ describe('ArmClient motion mutex and notify throttle', () => {
   })
 
   it('releases the motion mutex when disconnect() interrupts a motion', async () => {
-    const { client } = connectedClient()
+    const { client, ws } = connectedClient()
     const inFlight = client.home()
     expect(client.motionBusy).toBe(true)
 
-    client.disconnect()
+    // 断开是一条**带确认的请求**（#82）：先给 daemon 应答，收尾（关 socket、拒在途命令）
+    // 才发生 —— 在途运动正是在那一步被拒、互斥随之放开的。
+    const done = client.disconnect()
+    ws.receive({ t: 'res', id: ws.lastFrame('disconnect')!.id, ok: true, v: { stopped: true } })
+    await done
 
     expect(client.status).toBe('disconnected')
     expect(client.motionBusy).toBe(false)

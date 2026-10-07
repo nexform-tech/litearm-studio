@@ -99,8 +99,14 @@ describe('TopBar port picker, real lifecycle', () => {
     expect(document.getElementById('topbar-connection-status')?.textContent).toMatch(/Connected|已连接/)
     expect(screen.getByTestId('topbar-error').textContent).toMatch(/断开|Disconnect/)
 
-    // 断开: 真客户端会关掉那条共用 WebSocket —— 之后 `listPorts()` 一律被拒。
+    // 断开: 真客户端会**先等 daemon 确认**（带 id 的请求, #82）再关掉那条共用 WebSocket
+    // —— 关掉之后 `listPorts()` 一律被拒。
     act(() => fireEvent.click(disconnectButton()))
+    const discFrame = ws.lastFrame('disconnect')!
+    expect(typeof discFrame.id).toBe('number') // 没有 id 就没有"确认"可言
+    await act(async () => {
+      ws.receive({ t: 'res', id: discFrame.id, ok: true, v: { stopped: true } })
+    })
     expect(armClient.conn).toBeNull()
     // 「断开」也要把那条拒绝提示收掉 (它描述的是上一条链路的事)。
     expect(armClient.connectError).toBeNull()
