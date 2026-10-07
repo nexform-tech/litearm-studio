@@ -67,7 +67,7 @@ describe('CartesianPanel capability notice', () => {
     expect(screen.getByText(/未编译笛卡尔规划/)).toBeTruthy()
 
     // 盘面与 movel 表单同屏并存，不需要先切子模式。
-    const movel = screen.getByRole('button', { name: /直线运动到目标位姿/ }) as HTMLButtonElement
+    const movel = screen.getByRole('button', { name: /运动到目标位姿/ }) as HTMLButtonElement
     expect(movel.disabled).toBe(true)
     const sync = screen.getByRole('button', { name: /同步当前位姿/ }) as HTMLButtonElement
     expect(sync.disabled).toBe(true)
@@ -78,7 +78,7 @@ describe('CartesianPanel capability notice', () => {
 
     expect(screen.queryByText(/未编译笛卡尔规划/)).toBeNull()
 
-    const movel = screen.getByRole('button', { name: /直线运动到目标位姿/ }) as HTMLButtonElement
+    const movel = screen.getByRole('button', { name: /运动到目标位姿/ }) as HTMLButtonElement
     expect(movel.disabled).toBe(false)
     expect(screen.getByRole('button', { name: /同步当前位姿/ })).toBeTruthy()
   })

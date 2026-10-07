@@ -209,16 +209,17 @@ Supports spatial pose adjustments referenced to the end-effector tool:
   - Tool: Dynamic reference aligned with tool TCP orientation;
 - Translation Pad (a cross): the top pair is `Z+ / Z−` (up/down), the vertical axis is `X+ / X−` (forward/back) and the horizontal axis is `Y+ / Y−` (left/right). Long-press for continuous linear moves; stop on release. Step size 1 / 5 / 10 / 25 / 50 mm, chosen on the title row;
 - Rotation Pad (the same cross): the top pair is `RZ+ / RZ−`, the vertical axis is `RY− / RY+` and the horizontal axis is `RX+ / RX−`. Long-press to rotate around the TCP; stop on release. Step size 1 / 5 / 10 / 15 / 30°;
-- Two cards side by side: the end-effector trim card on the left holds the jog pads and the target-pose movel card on the right holds the absolute pose inputs, with no sub-mode tabs to switch between;
+- Two cards side by side: the end-effector trim card on the left holds the jog pads and the linear-motion card on the right holds the absolute pose inputs, with no sub-mode tabs to switch between;
 - Reference frame: `Base Frame / Tool Frame` lives on the title row and already says which frame is in use, so the separate origin badge is gone.
 
-#### Linear Move to Target Pose
+#### Linear Motion to a Target Pose
 
 ![Cartesian Linear Motion](images/en/09_solo_cartesian_movel.png)
 
 - Target Pose Input: Enter target `X, Y, Z` coordinates (m) and `Roll, Pitch, Yaw` angles (rad);
 - ⇠ Sync Current: Populate inputs with live TCP pose for precision fine-tuning;
-- Execute: Plans a linear interpolation trajectory to smoothly move the arm to the target pose.
+- Execute: the end effector travels the **straight line** from its start to the target (firmware `0x3A`, a Cartesian straight move) and the orientation is interpolated along the shortest arc; the start is the live measured TCP, not the values in the fields;
+- ⚠ The firmware accepting the command does not mean the arm stopped on the target: a later motion can supersede the trajectory, so read the live TCP in the Status card for the real landing point.
 
 ---
 
