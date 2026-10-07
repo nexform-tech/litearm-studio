@@ -79,15 +79,16 @@ The **Connect / Disconnect** buttons on the top bar open or close the session by
 > [!IMPORTANT]
 > An unactivated arm **refuses to enable** (the firmware answers `ERR{0x10,0x08}`) while every other command keeps working. Complete this section before first use.
 
-Open **Settings → Activation**. The panel shows this machine's licence state and device UID.
+Open **Settings → Activation**. The panel shows this machine's licence state and device UID. The program reads that UID (24 hex characters) from the arm — **you never type it**, and normally you have nothing to do with it either: your supplier records the licence for it before shipping.
 
-1. While unactivated the panel reads **Not activated** and lists the **device UID** (24 hex characters). Press **Copy** and give that string to your supplier.
-2. The supplier issues a credential for this machine's UID.
-3. Fill in the registration form — **name, phone, organization, email and region are required**; WeChat ID, industry and purpose are optional — and read and accept the *Activation Registration Consent*.
-4. **Disarm the arm first**: the firmware only accepts the licence record while the arm is disarmed, otherwise the submission is rejected with "disarm first".
-5. Press **Submit and activate**. The program sends the registration details together with the device UID to the activation service, receives this machine's credential, writes it to the device, and reads it back to confirm.
+1. Confirm the panel reads **Not activated** (an activated machine does not need this section);
+2. Fill in the registration form — **name, phone, organization, email and region are required**; WeChat ID, industry and purpose are optional — and read and accept the *Activation Registration Consent*.
+3. **Disarm the arm first**: the firmware only accepts the licence record while the arm is disarmed, otherwise the submission is rejected with "disarm first".
+4. Press **Submit and activate**. The program sends the registration details together with the device UID to the activation service, receives this machine's credential, writes it to the device, and reads it back to confirm.
 
 Once it succeeds the panel reads **Activated** and lists the customer ID, issue date and record version, and the firmware will accept `enable`.
+
+If the panel reports **"no license for this machine"**, the activation service has no record for this UID (it was never recorded, or the recorded UID does not match the arm): press **Copy** and send the UID to your supplier so they can record it, then submit again.
 
 - **The credential is bound to one machine**: a different arm needs a credential issued for its own UID.
 - **The record is written once and cannot be erased**: the UI offers no "deactivate"; clearing it means returning the unit to the factory and erasing the licence sector with a debug probe (SWD).
@@ -358,8 +359,8 @@ See §1.4. The panel shows this machine's licence state and device UID, and is w
 | Issue | Probable Cause | Recommended Action |
 | :--- | :--- | :--- |
 | Top bar shows "Connect Failed" | 1. Arm not powered, or the USB cable is loose<br>2. The device did not enumerate as `1d50:606f`<br>3. On Linux the current user lacks serial permission<br>4. Another process holds the serial port | 1. Check the USB cable and controller power<br>2. Confirm enumeration: `lsusb` should list `1d50:606f` on Linux, a COM port on Windows<br>3. On Linux, add the user to `dialout` and log in again (see §1.2)<br>4. Close the other program, or pass `--port` explicitly |
-| **"Enable" does nothing / not activated** | The arm is not activated. The firmware checks the licence as the **first** predicate of `enable` and refuses with `ERR{0x10,0x08}`; retrying changes nothing | Complete §1.4: give the device UID to your supplier, then submit the credential. Everything except `enable` works while unactivated |
-| Activation says "no credential for this machine" | The supplier has not issued a credential for this device UID | Send the **device UID** (24 hex characters) from Settings → Activation to your supplier, then submit again |
+| **"Enable" does nothing / not activated** | The arm is not activated. The firmware checks the licence as the **first** predicate of `enable` and refuses with `ERR{0x10,0x08}`; retrying changes nothing | Complete §1.4: fill in the registration form and submit it. Everything except `enable` works while unactivated |
+| Activation says "no credential for this machine" | The activation service has no record for this device UID: it was never recorded before shipping, or the recorded UID does not match the arm | Press **Copy** and send the **device UID** (24 hex characters, read from the arm by the program) from Settings → Activation to your supplier to have it recorded, then submit again |
 | Activation says "too many requests" | Too many submissions from this IP or for this UID in a short window | Wait a while and retry |
 | Activation says "cannot reach the activation service" | This machine has no internet access, or the activation service address is wrong | Check the local network; release builds already carry the production address |
 | Activation says "cannot read the device's licence record" | The device did not return its licence record, so **nothing was sent** — a credential must be bound to this machine's UID, and guessing one would file the registration under another machine | Check the USB link (port, power) and retry; if it keeps failing, check the firmware version |

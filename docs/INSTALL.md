@@ -225,16 +225,18 @@ to every enable request. Everything else in the UI works, so the first run looks
 half-broken until you finish this.
 
 1. Open **Settings → Activation**. The panel shows the device UID, 24 hex characters.
-2. Copy the UID and give it to your supplier, who issues a credential for that
-   machine.
-3. Fill in the registration form (**name, phone, organization, email and region are
+   The program reads it from the arm: you never type it, and your supplier recorded
+   the licence for it before shipping, so there is normally nothing to send.
+2. Fill in the registration form (**name, phone, organization, email and region are
    required**) and accept the consent document.
-4. Disarm the arm. The firmware rejects the licence record while the arm is armed.
-5. Press **Submit and activate**.
+3. Disarm the arm. The firmware rejects the licence record while the arm is armed.
+4. Press **Submit and activate**.
 
 Activation is the only feature that uses the network, and the credential is bound to
 one machine: another arm needs a credential issued for its own UID. The record is
-written once and cannot be erased from the UI.
+written once and cannot be erased from the UI. If the service answers that it has no
+credential for this machine, press **Copy** and send the UID to your supplier so they
+can record it, then submit again.
 
 ## 8. Where settings live
 

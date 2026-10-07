@@ -88,12 +88,11 @@ The daemon prints the address it actually bound to (default `http://127.0.0.1:87
 
 An unactivated arm **refuses to enable** (the firmware answers `ERR{0x10,0x08}`) while every other command keeps working. Open **Settings → Activation**:
 
-1. The panel reads **Not activated** and shows the **device UID** (24 hex characters). Press **Copy** and hand that string to your supplier.
-2. The supplier issues a credential for this UID.
-3. Fill in the registration form (**name, phone, organization, email and region are required**) and accept the *Activation Registration Consent*.
-4. **Disarm the arm first** — the firmware only accepts the licence record while disarmed — then press **Submit and activate**.
+1. The panel reads **Not activated** and shows the **device UID** (24 hex characters). The program reads that UID from the arm — **you never type it, and you do not normally send it anywhere**: your supplier recorded the licence for it before shipping.
+2. Fill in the registration form (**name, phone, organization, email and region are required**) and accept the *Activation Registration Consent*.
+3. **Disarm the arm first** — the firmware only accepts the licence record while disarmed — then press **Submit and activate**.
 
-The panel then reads **Activated**, and only then will the firmware accept `enable`. Details: user manual §1.4.
+The panel then reads **Activated**, and only then will the firmware accept `enable`. Press **Copy** and send the UID to your supplier only if the panel reports "no credential for this machine". Details: user manual §1.4.
 
 ### Step 2 — Connect and enable
 
