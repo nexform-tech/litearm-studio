@@ -34,6 +34,11 @@ const KIND_KEYS: Record<string, string> = {
   // 激活（凭据/注册）。具体原因看 `err.reason`（见下面的 REASON_KEYS）。
   ActivationError: 'activationFailed',
   LicenseFileError: 'licenseUnreadable',
+  // 固件升级。具体原因同样看 `err.reason`（短码表在下面，与激活共用一张）。
+  UpgradeBusyError: 'upgradeBusy',
+  FirmwareUpgradeError: 'firmwareUpgradeRefused',
+  ImageError: 'firmwareImageRejected',
+  UpgradeError: 'firmwareUpgradeFailed',
 }
 
 /**
@@ -82,6 +87,27 @@ const REASON_KEYS: Record<string, string> = {
   missing_field: 'licenseUnreadable',
   bad_field: 'licenseUnreadable',
   unsupported_format: 'licenseUnsupportedFormat',
+  // ---- 固件升级（`daemon/dfu/job.py` 的 REASON_*） ----
+  // ⚠ 前四条是**选文件**的时候就会撞上的：镜像判据在 `image.inspect` 里，早于任何
+  //   硬件动作 —— 操作员的下一步动作是"换一份镜像"，不是"重试"。
+  image_unreadable: 'firmwareImageUnreadable',
+  image_not_at_app_base: 'firmwareImageNotAtBase',
+  image_too_large: 'firmwareImageTooLarge',
+  image_covers_protected: 'firmwareImageCoversProtected',
+  // 开跑之前就被拒。
+  confirm_required: 'firmwareConfirmRequired',
+  engine_unavailable: 'firmwareEngineUnavailable',
+  // 流水线内部的失败。
+  arm_enabled: 'firmwareArmEnabled',
+  not_connected: 'notConnected',
+  dfu_not_entered: 'firmwareDfuNotEntered',
+  dfu_device_absent: 'firmwareDfuAbsent',
+  // ⚠ 这一条要**单独说**：设备明明在 bootloader 里，只是当前用户打不开它。操作员的
+  //   下一步是加 udev 规则，而不是"重试"或"检查 USB 线"。
+  dfu_permission_denied: 'firmwareDfuPermission',
+  flash_failed: 'firmwareFlashFailed',
+  reconnect_failed: 'firmwareReconnectFailed',
+  cancelled: 'firmwareCancelled',
 }
 
 /**
@@ -159,6 +185,33 @@ const FALLBACK_ZH: Record<string, string> = {
   activationDeviceUidUnavailable:
     '读不到设备的授权记录：无法确认这台机器，已停止发送。请检查 USB 链路后重试',
   activationFirmwareUnsupported: '这台固件没有授权功能（需要 1.8.0 及以上）：请升级固件',
+  // ---- 固件升级 ----
+  upgradeBusy: '固件升级正在进行：设备已交给 bootloader，请等它结束（或取消）后再操作',
+  firmwareUpgradeRefused: '升级没有开始：{{message}}',
+  firmwareImageRejected: '这份固件镜像不能用：{{message}}',
+  firmwareUpgradeFailed: '固件升级失败：{{message}}',
+  firmwareImageUnreadable:
+    '读不出这份镜像：它既不是合法的 Intel HEX，也不是 .bin。请向供应商索取官方的 .hex',
+  firmwareImageNotAtBase:
+    '镜像的起始地址不是 0x08000000：应用只能烧到那里。请确认选的是固件而不是别的固件段',
+  firmwareImageTooLarge: '镜像超出控制器 1 MB 的 Flash：请确认选对了文件',
+  firmwareImageCoversProtected:
+    '镜像覆盖了许可证与出厂标定所在的扇区（擦掉不可恢复）：这份镜像不能用，请向供应商索取正确的固件',
+  firmwareConfirmRequired: '缺少确认：升级会先失能，机械臂失去支撑会下垂，需要先确认',
+  firmwareEngineUnavailable:
+    '这台机器上没有可用的 USB 烧录引擎：{{message}}（需要 pyusb 与 libusb；Windows 上还要装 ST 的 WinUSB 驱动）',
+  firmwareArmEnabled: '机械臂没有失能，已中止：带着使能进 bootloader 会让电机松开、臂下垂',
+  firmwareDfuNotEntered:
+    '控制器没有接受进入 bootloader 的请求（登记被撤销或未执行）：机械臂原样可用，确认已失能后重试',
+  firmwareDfuAbsent:
+    '进入 bootloader 后没有找到 DFU 设备（0483:DF11）：请检查 USB 线；Windows 上需要 ST 的 WinUSB 驱动',
+  firmwareDfuPermission:
+    '打不开 DFU 设备（权限不足）：板子已经在 bootloader 里，但当前用户没有权限访问它。Linux 上需要一条 udev 规则：SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="df11", MODE="0666"',
+  firmwareFlashFailed:
+    '烧录失败：{{message}}。设备已被尽量擦回空白，可以直接重试；若反复失败需要 SWD 探针救机',
+  firmwareReconnectFailed:
+    '固件已经写入并通过读回校验，但没能重新连上控制器：{{message}}',
+  firmwareCancelled: '升级已取消（若已进入烧录相位，取消不再生效）',
   unknownError: '操作失败：{{message}}',
 }
 
@@ -218,4 +271,27 @@ export function formatArmError(err: unknown): string {
   if (msg) return msg
   const fallback = t('unknownError', { message: kind ?? '' }) || ''
   return fallback.startsWith('common:errors.') ? '' : fallback
+}
+
+/**
+ * 升级**终局帧**里的短码 → 可读文案。
+ *
+ * 为什么单独一个入口：`firmware_result` 是**广播帧**（不是 `res` 的 `err` 对象），
+ * 所以它没有 `kind`/`cmd`/`code`，只有 `reason` + `msg`。复用同一张 `REASON_KEYS`
+ * 是刻意的 —— 一个短码在两条路上必须是**同一句话**，否则操作员会看到自相矛盾的解释。
+ *
+ * 认不出的短码退回 `fallback`（守护进程写的那句中文），不吞掉。
+ */
+export function formatFirmwareReason(reason: string | null | undefined,
+                                      fallback: string): string {
+  if (!reason) return fallback
+  const key = REASON_KEYS[reason]
+  if (!key) return fallback || reason
+  const translated = i18n && typeof i18n.t === 'function'
+    ? i18n.t(`common:errors.${key}`)
+    : ''
+  if (translated && !String(translated).startsWith('common:errors.')) {
+    return String(translated)
+  }
+  return FALLBACK_ZH[key] ?? fallback
 }

@@ -30,6 +30,15 @@ license = { text = "Apache-2.0" }
 dependencies = [
     "fastapi",
     "uvicorn[standard]",
+    # 固件升级（USB DFU）的烧录引擎。**在 PyPI 上**，所以可以正常声明 —— 与
+    # `litearm` / `litegrip` 那两个必须从 checkout 装的 SDK 不同。
+    #
+    # ⚠ `libusb-package` 不是可选的：pyusb 靠 `ctypes.util.find_library` 找 libusb，
+    #   而它在 Windows 上只查系统目录 ⇒ 返回 None ⇒ pyusb **静默地没有后端**
+    #   （`usb.core.find()` 恒为空，看着像"设备不在"）。`libusb-package` 自带 DLL 且
+    #   按绝对路径加载；`dfu/engine.py` 的 `_load_backend()` **优先**用它。
+    "pyusb",
+    "libusb-package",
 ]
 
 [project.optional-dependencies]

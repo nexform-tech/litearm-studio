@@ -601,3 +601,66 @@ def test_cli_fake_unactivated_parses_with_fake() -> None:
     assert args.fake is True and args.fake_activated is False
     # 默认仍是"已激活的假设备" —— 不给开关就不改变老行为。
     assert build_parser().parse_args(["--fake"]).fake_activated is True
+
+
+# ------------------------------------------------------------ 固件升级的帧
+
+def test_ws_receives_firmware_progress_and_result_frames() -> None:
+    """升级的进度与终局**必须**能过 WS —— 它们是这条功能唯一的结果通道。
+
+    命令只回一个 job 号就返回（烧录可能几十秒，超过 `COMMAND_TIMEOUT_S`，而且进
+    bootloader 之后没有会话可问），所以"界面能不能看到结果"完全取决于两类广播帧
+    有没有真的走到客户端。这一条钉的就是那个交付面。
+    """
+    import base64
+
+    from litearm_studio_daemon.dfu import fake as fake_engine
+    from litearm_studio_daemon.session import Session as _Session
+
+    def rec(off: int, typ: int, data: bytes) -> str:
+        body = bytes([len(data), (off >> 8) & 0xFF, off & 0xFF, typ]) + data
+        return ":" + (body + bytes([(-sum(body)) & 0xFF])).hex().upper()
+
+    text = (rec(0, 0x04, b"\x08\x00") + "\n"
+            + rec(0, 0x00, b"Litearm1.9.0-7J\x00\x00\x00\x00") + "\n:00000001FF\n")
+
+    session = _Session(fake=True, dfu_engine=fake_engine.FakeEngine(steps=2))
+    app = create_app(session, version=VERSION, repo_dist=Path("/nonexistent-ui"))
+    try:
+        assert session.connect() is True
+        deadline = time.monotonic() + 5.0
+        while not session.connected and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert session.connected
+
+        with TestClient(app) as client:
+            with client.websocket_connect("/ws") as ws:
+                assert ws.receive_json()["t"] == "hello"
+                assert ws.receive_json()["t"] == "conn"
+
+                inspected = session.execute(
+                    "firmware_inspect",
+                    {"name": "fw.hex",
+                     "data": base64.b64encode(text.encode()).decode()})
+                job = session.execute(
+                    "firmware_upgrade",
+                    {"token": inspected["token"], "confirm": True})["job"]
+
+                phases, result = [], None
+                end = time.monotonic() + 20.0
+                while result is None and time.monotonic() < end:
+                    frame = ws.receive_json()
+                    if frame["t"] == "firmware_progress":
+                        assert frame["job"] == job
+                        phases.append(frame["phase"])
+                    elif frame["t"] == "firmware_result":
+                        result = frame
+
+                assert result is not None, "没收到 firmware_result 帧"
+                assert result["ok"] is True, result
+                assert result["job"] == job
+                # 相位从校验一路走到完成 —— 少了中间任何一段，界面上的进度条都会冻住。
+                assert phases[0] == "validate"
+                assert "flash" in phases and phases[-1] == "done"
+    finally:
+        session.close()

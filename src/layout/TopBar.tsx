@@ -53,8 +53,12 @@ export function TopBar() {
         ? t('common:connecting')
         : status === 'reconnecting'
           ? t('common:reconnecting')
-          : status === 'error'
-            ? t('common:connectFailed')
+          : status === 'upgrading'
+            // 升级期间设备在 ROM bootloader 里 —— 那不是"掉线", 是我们自己交出去的。
+            // 并进 `disconnected` 会让操作员去点「连接」, 而那正是最不该做的事。
+            ? t('common:upgrading')
+            : status === 'error'
+              ? t('common:connectFailed')
             : t('common:disconnected')
 
   return (

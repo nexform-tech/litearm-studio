@@ -12,8 +12,21 @@ export type {
   Pose6,
   RobotState,
 } from './client'
-export { formatArmError } from './errors'
+export { formatArmError, formatFirmwareReason } from './errors'
 export type { DaemonErrorInfo } from './errors'
+export {
+  FIRMWARE_PHASE_KEYS,
+  fileToBase64,
+  normalizeFirmwareProgress,
+  normalizeFirmwareResult,
+  normalizeFirmwareStatus,
+} from './firmware'
+export type {
+  FirmwareImageSummary,
+  FirmwareProgress,
+  FirmwareResult,
+  FirmwareStatus,
+} from './firmware'
 export { DEFAULT_JOINT_COUNT, MAX_JOINT_COUNT, jointIndexes, resolveJointCount, useJointCount } from './axes'
 export { useArmConnection } from './useArmConnection'
 export { useArmState } from './useArmState'

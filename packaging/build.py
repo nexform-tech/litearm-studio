@@ -132,6 +132,36 @@ def gripper_build_args() -> list[str]:
     return ["--collect-all", "litegrip"]
 
 
+def dfu_build_args() -> list[str]:
+    """固件升级（USB DFU）引擎的 PyInstaller 参数。
+
+    两个包都**必须显式收**，PyInstaller 的静态分析看不见它们：
+
+    * `usb`（pyusb）—— 它是**动态加载** libusb 的（`ctypes`），没有 import 语句；
+    * `libusb_package` —— 它不只是 .py，还带着各平台的 libusb 动态库。少了它，
+      冻结出来的 exe 在 Windows 上会"静默地没有后端"：`usb.core.find()` 恒为空，
+      GUI 报"未发现设备"而板子其实就在 DFU 模式。这正是上游 `dfu-flash` 踩过的坑。
+
+    ⚠ 缺 pyusb 时**判失败**，与夹爪那条同一条口径：谁都可以在没有它的情况下把包装
+    出去，而发出去的产物里"固件升级"永远显示"引擎不可用" —— 一个静默残缺的能力
+    比一个构建失败难查得多。
+    """
+    if not sdk_available("usb"):
+        raise SystemExit(
+            "找不到固件烧录引擎 `pyusb`，发布出来的产物**没有固件升级能力**。\n"
+            "    pip install pyusb libusb-package")
+    args = ["--collect-all", "usb"]
+    if sdk_available("libusb_package"):
+        print("[package] 收集 libusb（libusb-package 自带各平台动态库）")
+        args += ["--collect-all", "libusb_package"]
+    else:
+        # 不判失败：Linux 上系统 libusb 通常够用（engine 会回退到 pyusb 自带查找）。
+        # 但 Windows 上少了它多半就是"找不到设备"，所以说清楚。
+        print("[package] ⚠ 没有 libusb-package —— Windows 上可能需要手工放 "
+              "libusb-1.0.dll，或装 ST 的 WinUSB 驱动")
+    return args
+
+
 def main() -> int:
     if not (UI_DIST / "index.html").is_file():
         raise SystemExit(
@@ -186,6 +216,7 @@ def main() -> int:
             "--collect-all", "litearm",
             "--collect-all", "serial",
             *gripper_build_args(),
+            *dfu_build_args(),
             *activation_build_args(activation_url),
             # uvicorn 的 loop/protocol 实现是动态导入的, PyInstaller 静态分析看不见
             "--collect-submodules", "uvicorn",
