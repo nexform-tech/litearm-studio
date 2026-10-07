@@ -133,6 +133,7 @@
     "gripperCalibration": "The gripper's calibration does not allow this: {{message}}",
     "gripperEstopped": "The gripper's stop is latched: remove the cause, then reset it",
     "gripperBusy": "The gripper is running another long operation (calibration); wait for it",
+    "gripperBrowse": "Cannot open that folder: {{message}}",
     "activationServerError": "The activation service returned an error: try again later, or contact your supplier if it keeps failing",
     "activationInvalidRequest": "The activation service rejected these registration details: check the fields marked * and submit again (if it keeps happening, the website's field rules have changed)",
     "activationCodeRequired": "The activation service requires an order number or activation code: upgrade Studio, or contact your supplier",

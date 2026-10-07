@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => {
     disconnect: vi.fn(),
     listChannels: vi.fn(),
     listCalibrations: vi.fn(),
+    listDir: vi.fn(),
     loadTemplate: vi.fn(),
     importCalibration: vi.fn(),
     setAllowFactory: vi.fn(),
@@ -35,11 +36,14 @@ vi.mock('@/lib/arm/gripperClient', () => ({
     disconnect: mocks.disconnect,
     listChannels: mocks.listChannels,
     listCalibrations: mocks.listCalibrations,
+    listDir: mocks.listDir,
     loadTemplate: mocks.loadTemplate,
     importCalibration: mocks.importCalibration,
     setAllowFactory: mocks.setAllowFactory,
     zero: mocks.zero,
   },
+  hasCandidate: (e: { type?: string; valid?: unknown }) =>
+    e.type === 'file' && typeof e.valid === 'boolean',
 }))
 
 vi.mock('@/lib/arm/useGripper', () => ({

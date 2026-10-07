@@ -1,5 +1,6 @@
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { AlertTriangle, FileJson, RefreshCw, ScanLine, Upload } from 'lucide-react'
+import { AlertTriangle, FileJson, FolderOpen, RefreshCw, ScanLine, Upload } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -8,15 +9,10 @@ import { NumberField } from '@/components/ui/number-field'
 import { Progress } from '@/components/ui/progress'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Toggle } from '@/components/ui/toggle'
+import { CalibrationRow } from './CalibrationRow'
+import { GripperBrowserDialog } from './GripperBrowserDialog'
 import { useGripperSettings, TRAVEL_MAX_MM, TRAVEL_MIN_MM } from './useGripperSettings'
-import type { CalibrationSource } from '@/lib/arm/gripperClient'
-
-const SOURCE_KEYS: Record<CalibrationSource, string> = {
-  measured: 'gripper:source.measured',
-  template: 'gripper:source.template',
-  factory: 'gripper:source.factory',
-  missing: 'gripper:source.missing',
-}
+import { dirOf } from './useGripperBrowse'
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -35,6 +31,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 export function GripperSection() {
   const { t } = useTranslation(['common', 'gripper'])
   const vm = useGripperSettings()
+  const [browseOpen, setBrowseOpen] = useState(false)
 
   const calibrationRows = vm.calibrations
 
@@ -178,48 +175,8 @@ export function GripperSection() {
             {calibrationRows.map((row) => {
               const inUse = row.inUse ?? (vm.activePath != null && row.path === vm.activePath)
               return (
-                <li
-                  key={`${row.path}-${row.template ?? ''}`}
-                  className="flex flex-col gap-1 rounded-lg border border-line px-3 py-2"
-                >
-                  <div className="flex items-center gap-2">
-                    <Badge variant={row.valid ? 'outline' : 'destructive'} className="h-auto rounded-full px-2 py-0 text-[0.65625rem] font-semibold">
-                      {row.valid ? t('gripper:settings.valid') : t('gripper:settings.invalid')}
-                    </Badge>
-                    <span className="text-[0.75rem] font-semibold text-ink-strong">{t(SOURCE_KEYS[row.source])}</span>
-                    {row.template ? (
-                      <span className="font-mono text-[0.65625rem] text-muted-foreground">{row.template}</span>
-                    ) : null}
-                    {inUse ? (
-                      <Badge variant="success" className="h-auto rounded-full px-2 py-0 text-[0.65625rem] font-semibold">
-                        {t('gripper:settings.inUse')}
-                      </Badge>
-                    ) : null}
-                  </div>
-                  <div className="truncate font-mono text-[0.65625rem] text-muted-foreground" title={row.path}>
-                    {row.path}
-                  </div>
-                  <div className="flex flex-wrap gap-3 font-mono text-[0.65625rem] text-muted-foreground">
-                    <span>
-                      {t('gripper:source.closed')} {row.closedRad == null ? '—' : row.closedRad.toFixed(4)}
-                    </span>
-                    <span>
-                      {t('gripper:source.open')} {row.openRad == null ? '—' : row.openRad.toFixed(4)}
-                    </span>
-                    <span>
-                      {t('gripper:source.derived')} {row.fileRadToMm == null ? '—' : row.fileRadToMm.toFixed(2)}
-                    </span>
-                  </div>
-                  {row.problems.length ? (
-                    <div className="text-[0.65625rem] text-destructive">
-                      {t('gripper:settings.problems')}: {row.problems.join('；')}
-                    </div>
-                  ) : null}
-                  {row.warnings.length ? (
-                    <div className="text-[0.65625rem] text-warn">
-                      {t('gripper:settings.warnings')}: {row.warnings.join('；')}
-                    </div>
-                  ) : null}
+                <li key={`${row.path}-${row.template ?? ''}`}>
+                  <CalibrationRow row={row} inUse={inUse} />
                 </li>
               )
             })}
@@ -242,6 +199,18 @@ export function GripperSection() {
               onChange={(e) => vm.setImportPath(e.target.value)}
             />
             <Button
+              id="gripper-import-browse"
+              data-testid="gripper-import-browse"
+              size="sm"
+              variant="outline"
+              // 列举是文件系统问题，免连接（同「重新扫描」）；导入才需要连接。
+              disabled={!vm.present}
+              onClick={() => setBrowseOpen(true)}
+            >
+              <FolderOpen className="size-3.5" />
+              {t('gripper:settings.browse')}
+            </Button>
+            <Button
               id="gripper-import"
               data-testid="gripper-import"
               size="sm"
@@ -254,6 +223,13 @@ export function GripperSection() {
             </Button>
           </div>
         </div>
+
+        <GripperBrowserDialog
+          open={browseOpen}
+          onOpenChange={setBrowseOpen}
+          onPick={(path) => vm.setImportPath(path)}
+          initialPath={dirOf(vm.importPath)}
+        />
       </Card>
 
       <Card className="flex flex-col gap-3 rounded-[0.875rem] p-5">

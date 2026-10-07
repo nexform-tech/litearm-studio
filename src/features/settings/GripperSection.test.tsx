@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => {
     disconnect: vi.fn(),
     listChannels: vi.fn(),
     listCalibrations: vi.fn(),
+    listDir: vi.fn(),
     loadTemplate: vi.fn(),
     importCalibration: vi.fn(),
     setAllowFactory: vi.fn(),
@@ -33,11 +34,15 @@ vi.mock('@/lib/arm/gripperClient', () => ({
     disconnect: mocks.disconnect,
     listChannels: mocks.listChannels,
     listCalibrations: mocks.listCalibrations,
+    listDir: mocks.listDir,
     loadTemplate: mocks.loadTemplate,
     importCalibration: mocks.importCalibration,
     setAllowFactory: mocks.setAllowFactory,
     zero: mocks.zero,
   },
+  // 对话框用它分流目录行/文件行 —— 整个模块被 mock，所以这个也要在这里给。
+  hasCandidate: (e: { type?: string; valid?: unknown }) =>
+    e.type === 'file' && typeof e.valid === 'boolean',
 }))
 
 vi.mock('@/lib/arm/useGripper', () => ({
@@ -150,5 +155,57 @@ describe('GripperSection', () => {
     fireEvent.change(screen.getByTestId('gripper-import-path'), { target: { value: '/tmp/my.json' } })
     fireEvent.click(screen.getByTestId('gripper-import'))
     await waitFor(() => expect(mocks.importCalibration).toHaveBeenCalledWith('/tmp/my.json'))
+  })
+
+  // ── 目录浏览（控制机文件系统） ──────────────────────────────────────────────
+
+  const FILE_ENTRY = { ...CANDIDATE, name: 'can0_calibration.json', type: 'file', readable: true, symlink: false, size: 210, mtime: 1 }
+  const DIR_ENTRY = { name: '.litegrip', path: '/home/u/.litegrip', type: 'dir', readable: true, symlink: false }
+  const LISTING = { path: '/home/u', parent: '/home', truncated: false, entries: [DIR_ENTRY, FILE_ENTRY] }
+
+  it('browses without a connection but still gates import on it', async () => {
+    mocks.conn.current = null             // 断开：列举免连接，导入不然
+    mocks.listDir.mockResolvedValue(LISTING)
+    render(<GripperSection />)
+    await waitFor(() => expect(mocks.listCalibrations).toHaveBeenCalled())
+    expect((screen.getByTestId('gripper-import-browse') as HTMLButtonElement).disabled).toBe(false)
+    fireEvent.change(screen.getByTestId('gripper-import-path'), { target: { value: '/tmp/a.json' } })
+    expect((screen.getByTestId('gripper-import') as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('fills the path box from a picked file and closes the dialog', async () => {
+    mocks.listDir.mockResolvedValue(LISTING)
+    render(<GripperSection />)
+    await waitFor(() => expect(mocks.listCalibrations).toHaveBeenCalled())
+    fireEvent.click(screen.getByTestId('gripper-import-browse'))
+    await waitFor(() => expect(mocks.listDir).toHaveBeenCalled())
+
+    fireEvent.click(await screen.findByTestId('gripper-browse-file'))
+
+    await waitFor(() => expect(screen.queryByTestId('gripper-browse-dialog')).toBeNull())
+    expect((screen.getByTestId('gripper-import-path') as HTMLInputElement).value).toBe(CANDIDATE.path)
+    expect((screen.getByTestId('gripper-import') as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('navigates into a directory row', async () => {
+    mocks.listDir.mockResolvedValue(LISTING)
+    render(<GripperSection />)
+    await waitFor(() => expect(mocks.listCalibrations).toHaveBeenCalled())
+    fireEvent.click(screen.getByTestId('gripper-import-browse'))
+    await waitFor(() => expect(mocks.listDir).toHaveBeenCalled())
+
+    fireEvent.click(await screen.findByTestId('gripper-browse-dir'))
+
+    await waitFor(() => expect(mocks.listDir).toHaveBeenLastCalledWith('/home/u/.litegrip'))
+  })
+
+  it('shows a browse refusal inline, mapped from its kind', async () => {
+    mocks.listDir.mockRejectedValue({ err: { kind: 'GripperBrowseError', msg: '/x 不是一个可访问的目录' } })
+    render(<GripperSection />)
+    await waitFor(() => expect(mocks.listCalibrations).toHaveBeenCalled())
+    fireEvent.click(screen.getByTestId('gripper-import-browse'))
+
+    const err = await screen.findByTestId('gripper-browse-error')
+    expect(err.textContent).toMatch(/Cannot open that folder|打不开这个目录/)
   })
 })

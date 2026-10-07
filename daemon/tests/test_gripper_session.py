@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -654,5 +655,81 @@ def test_a_refused_motion_takes_its_kind_from_the_gate(tmp_path: Path) -> None:
         assert wait_for(lambda: any(
             f["t"] == "gripper_alert" and f.get("kind") == "GripperCalibrationError"
             for f in frames)), frames
+    finally:
+        session.close()
+
+
+# ------------------------------------------------------------ 目录列举 (浏览选择器)
+
+def _calib_dir() -> Path:
+    """``measured_home`` 夹具放那份实测标定的目录：``~/.litegrip``。"""
+    return Path(os.environ["HOME"]) / ".litegrip"
+
+
+def _only_file(listing: dict) -> dict:
+    files = [e for e in listing["entries"] if e["type"] == "file"]
+    assert len(files) == 1, files
+    return files[0]
+
+
+def test_list_dir_answers_without_a_connection(tmp_path: Path) -> None:
+    """和 ``list_calibrations`` 同理：列举是文件系统问题，设置页连接**之前**就要问。"""
+    session = make_session(tmp_path)
+    try:
+        assert session.status == "disconnected"
+        listing = session.execute("gripper.list_dir", {"path": str(_calib_dir())})
+        assert Path(listing["path"]) == _calib_dir()
+        assert session.status == "disconnected"       # 列举不改会话状态
+    finally:
+        session.close()
+
+
+def test_list_dir_needs_no_connection_or_motion_lock() -> None:
+    from litearm_studio_daemon.gripper import session as session_mod
+    assert "gripper.list_dir" not in session_mod._NEEDS_CONNECTION
+    assert "gripper.list_dir" not in session_mod._MOTION_REQUESTS
+
+
+def test_list_dir_refuses_a_non_string_path(tmp_path: Path) -> None:
+    session = make_session(tmp_path)
+    try:
+        with pytest.raises(ValueError):
+            session.execute("gripper.list_dir", {"path": 5})
+    finally:
+        session.close()
+
+
+def test_list_dir_validates_against_this_channels_settings(tmp_path: Path) -> None:
+    """每行的校验用会话自己的 channel 与 travel —— travel 一改，同一份文件就换结论。"""
+    session = make_session(tmp_path)
+    try:
+        row = _only_file(session.execute("gripper.list_dir", {"path": str(_calib_dir())}))
+        assert row["name"] == f"{session.config.channel}_calibration.json"
+        assert row["channel"] == session.config.channel and row["valid"] is True
+    finally:
+        session.close()
+
+    store = ChannelStore(tmp_path / "odd.json")
+    store.update("can0", travel_mm=1000.0)   # 1000 mm / 1.84 rad → rad_to_mm 远超 [30, 200]
+    odd = GripperSession(fake=True, store=store)
+    try:
+        row = _only_file(odd.execute("gripper.list_dir", {"path": str(_calib_dir())}))
+        assert row["valid"] is False
+        assert any("超出合理范围" in p for p in row["problems"])
+    finally:
+        odd.close()
+
+
+def test_list_dir_marks_the_calibration_in_effect(tmp_path: Path) -> None:
+    """生效的那一份打 ``inUse`` —— 与 ``list_calibrations`` 同一处判定。"""
+    session = make_session(tmp_path)
+    try:
+        connect(session)
+        active = session.loop.info
+        assert active is not None and active.path
+        entries = session.execute(
+            "gripper.list_dir", {"path": str(Path(active.path).parent)})["entries"]
+        marked = [e for e in entries if e.get("inUse")]
+        assert [(e["type"], e["path"]) for e in marked] == [("file", active.path)]
     finally:
         session.close()

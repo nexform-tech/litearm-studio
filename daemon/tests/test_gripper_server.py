@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -256,6 +257,38 @@ def test_gripper_alert_frames_reach_the_client(tmp_path: Path) -> None:
                 frame = _recv_until(ws, "gripper_alert")
                 assert frame["level"] in ("warn", "error")
                 assert frame["text"]
+    finally:
+        session.close()
+        gripper.close()
+
+
+def test_gripper_list_dir_round_trips_before_any_connection(tmp_path: Path) -> None:
+    """浏览选择器在**连接之前**就要能列目录 —— 端到端往返验一遍 (免连接)。"""
+    session, gripper, app = _make(tmp_path)
+    assert gripper is not None
+    try:
+        with TestClient(app) as client:
+            with client.websocket_connect("/ws") as ws:
+                ws.receive_json()
+                ws.receive_json()
+                ws.receive_json()               # 尚未连接
+
+                home = str(Path(os.environ["HOME"]))
+                ws.send_json({"t": "cmd", "id": 1, "m": "gripper.list_dir",
+                              "p": {"path": home}})
+                res = _recv_until(ws, "res")
+                assert res["ok"] is True
+                assert res["v"]["path"] == home
+                assert isinstance(res["v"]["entries"], list)
+
+                # 指向一个文件 → 不是可读目录。
+                bad = tmp_path / "not-a-dir.json"
+                bad.write_text("{}", encoding="utf-8")
+                ws.send_json({"t": "cmd", "id": 2, "m": "gripper.list_dir",
+                              "p": {"path": str(bad)}})
+                res = _recv_until(ws, "res")
+                assert res["ok"] is False
+                assert res["err"]["kind"] == "GripperBrowseError"
     finally:
         session.close()
         gripper.close()
