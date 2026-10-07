@@ -87,15 +87,27 @@ Run `litearm-studio-daemon --fake --no-open` alongside it.
 
 ### 4. Prebuilt executables
 
-Each release also attaches standalone one-file executables for Windows and Linux
-(`litearm-studio-<version>-<platform>`) plus a per-artifact `.sha256`. They bundle the daemon, the
-`litearm` SDK and the built UI, so a target machine needs **no Python, no pnpm and no repository
-checkout** — run the file and the console opens in a browser window:
+Each release also attaches standalone one-file executables,
+`litearm-studio-<version>-linux-amd64` and `litearm-studio-<version>-windows-amd64.exe`, plus a
+`.sha256` next to each. They bundle the daemon, the `litearm` SDK and the built UI, so a target
+machine needs **no Python, no pnpm and no repository checkout**. The Linux file is not executable
+as downloaded — verify it, `chmod +x` it, then run it:
 
 ```bash
-./litearm-studio-0.5.0-linux-amd64 --fake     # offline, no hardware
-./litearm-studio-0.5.0-linux-amd64            # real arm, USB auto-discovery
+mkdir -p ~/Applications && cd ~/Applications
+version=0.11.0
+base="https://github.com/nexform-tech/litearm-studio/releases/download/v${version}"
+curl -LO "$base/litearm-studio-${version}-linux-amd64"
+curl -LO "$base/litearm-studio-${version}-linux-amd64.sha256"
+sha256sum -c "litearm-studio-${version}-linux-amd64.sha256"   # prints: ...: OK
+chmod +x "litearm-studio-${version}-linux-amd64"
+./"litearm-studio-${version}-linux-amd64" --fake     # offline, no hardware
+./"litearm-studio-${version}-linux-amd64"            # real arm, USB auto-discovery
 ```
+
+The Linux file needs glibc 2.35 or newer (Ubuntu 22.04+, Debian 12+).
+[docs/INSTALL.md](docs/INSTALL.md) covers the requirements, the serial-port permission and
+first-run activation in full.
 
 Release assets are produced by the `package` job in `.github/workflows/release.yml`; to build one
 yourself run `pnpm build` and then `python packaging/build.py`.
@@ -115,6 +127,7 @@ so an untracked icon silently falls back to PyInstaller's default executable ico
 
 ## 📖 Documentation
 
+- **[Installation](docs/INSTALL.md)** — what each release file is, and how to install it on Ubuntu and Windows.
 - 📘 **[User Manual (English)](docs/USER_MANUAL.md)** — ⚠️ still describes the retired server-based build; being rewritten.
 - 📕 **[用户操作手册 (简体中文)](docs/USER_MANUAL_ZH.md)** — ⚠️ 同上。
 - **[Quickstart](docs/QUICKSTART.md)** / **[快速开始](docs/QUICKSTART_ZH.md)**

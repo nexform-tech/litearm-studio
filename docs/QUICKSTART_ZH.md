@@ -33,6 +33,9 @@ litearm-python  ──USB CDC (1d50:606f @921600)──>  STM32  ──CAN──
 
 ## 2. 安装
 
+有两条路。只想运行发布版，就下载单文件可执行程序并照着 [INSTALL.md](INSTALL.md) 做 —— 不需要
+Python、不需要 pnpm、也不需要克隆仓库。下面的命令是源码构建，开发时才需要。
+
 `litearm-python` 不在 PyPI 上，必须先克隆并本地安装：
 
 ```bash
