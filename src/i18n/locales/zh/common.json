@@ -156,5 +156,7 @@
     "firmwareFlashFailed": "烧录失败：{{message}}。设备已被尽量擦回空白，可以直接重试；若反复失败需要 SWD 探针救机",
     "firmwareReconnectFailed": "固件已经写入并通过读回校验，但没能重新连上控制器：{{message}}",
     "firmwareCancelled": "升级已取消（若已进入烧录相位，取消不再生效）"
-  }
+  },
+  "moving": "运动中",
+  "zero_gravity": "零重力"
 }

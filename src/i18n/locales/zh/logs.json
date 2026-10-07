@@ -88,5 +88,21 @@
   "unitTorque": "Nm",
   "sampleHz": "{{value}} Hz",
   "megabytesUnit": "MB",
-  "retentionRange": "{{min}}–{{max}} MB"
+  "retentionRange": "{{min}}–{{max}} MB",
+  "noFaults": "无",
+  "speedHint": "每轴转速的最大值（关节角速度）",
+  "tempHint": "每轴驱动温度的最大值（MOS 或线圈，取高者）",
+  "torqueHint": "每轴关节力矩的最大值",
+  "sampleReadings": "逐轴读数",
+  "jointColumn": "轴",
+  "angleColumn": "关节角",
+  "velocityColumn": "角速度",
+  "torqueColumn": "力矩",
+  "mosColumn": "MOS 温度",
+  "coilColumn": "线圈温度",
+  "errorColumn": "错误码",
+  "rawFields": "原始字段",
+  "summaryLine": "共 {{joints}} 轴 · 使能 {{enabled}} · 故障 {{faulted}}",
+  "yes": "是",
+  "no": "否"
 }

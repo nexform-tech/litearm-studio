@@ -88,5 +88,21 @@
   "unitTorque": "Nm",
   "sampleHz": "{{value}} Hz",
   "megabytesUnit": "MB",
-  "retentionRange": "{{min}}–{{max}} MB"
+  "retentionRange": "{{min}}–{{max}} MB",
+  "noFaults": "None",
+  "speedHint": "Largest per-joint angular velocity",
+  "tempHint": "Hottest driver temperature per joint (MOS or coil)",
+  "torqueHint": "Largest per-joint joint torque",
+  "sampleReadings": "Per-joint readings",
+  "jointColumn": "Joint",
+  "angleColumn": "Angle",
+  "velocityColumn": "Velocity",
+  "torqueColumn": "Torque",
+  "mosColumn": "MOS temp",
+  "coilColumn": "Coil temp",
+  "errorColumn": "Error",
+  "rawFields": "Raw fields",
+  "summaryLine": "{{joints}} joints · enabled {{enabled}} · faulted {{faulted}}",
+  "yes": "Yes",
+  "no": "No"
 }

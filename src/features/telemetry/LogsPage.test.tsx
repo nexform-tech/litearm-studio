@@ -214,6 +214,76 @@ describe('LogsPage — records tab', () => {
     expect(await screen.findByText(/No state samples around this moment/)).toBeTruthy()
   })
 
+  it('turns a sample record into per-joint readings a person can read', async () => {
+    // ⚠ 这是"看不懂"那一版的判据: 展开一条采样, 看到的必须是**逐轴的读数表**
+    // (关节角/角速度/力矩/MOS 温度/线圈温度/错误码), 不是 `q`/`dq`/`tau`/`mosTemp`
+    // 这些字段名。
+    const eventTs = 1_778_152_382_123_456_000
+    // ⚠ 断言的是**渲染结果**, 所以这里把 fields 当成一个有名字段袋来补; 测试里给采样
+    // 记录塞字段本来就该用索引签名, 而不是指望 TS 从 `record()` 的默认形状推出来。
+    const entry = sample(eventTs, [40, 55, 62], [1.5, 2.25, 0.75])
+    const fields = entry.fields as Record<string, unknown>
+    fields.q = [0.1, -0.2, 0.3]
+    fields.dq = [0.5, -1.5, 0.25]
+    fields.errs = [0, 7, 0]
+    mock.state.entries = [entry]
+    mock.state.samples = [entry]
+    mock.state.status = { ...mock.state.status, metaAt: Date.now() }
+    render(<LogsPage />)
+
+    fireEvent.click(await screen.findByText('state.sample'))
+
+    // 人读的列名
+    expect(await screen.findByText('Per-joint readings')).toBeTruthy()
+    expect(screen.getByText('Angle')).toBeTruthy()
+    expect(screen.getByText('Velocity')).toBeTruthy()
+    expect(screen.getByText('MOS temp')).toBeTruthy()
+    expect(screen.getByText('Coil temp')).toBeTruthy()
+    // 一行一轴, 轴号在行首
+    expect(screen.getByText('J1')).toBeTruthy()
+    expect(screen.getByText('J3')).toBeTruthy()
+    // 数值按轴对齐
+    expect(screen.getByText('-1.500')).toBeTruthy()   // J2 的角速度
+    expect(screen.getByText('2.25')).toBeTruthy()     // J2 的力矩
+    expect(screen.getByText('0.500')).toBeTruthy()    // J1 的角速度
+    // 非零错误码要能一眼看到
+    expect(screen.getByText('7')).toBeTruthy()
+    // 原始字段仍然在, 但退到下面并标明。用正则而不是精确串: 这条断言要钉的是
+    // "有这么一个标注", 不是 i18n 的大小写风格。
+    expect(screen.getByText(/raw fields/i)).toBeTruthy()
+  })
+
+  it('labels each reading with the joint it belongs to', async () => {
+    // "30 °C" 没有用 —— 操作员要知道去看哪一轴, 所以每个读数都必须带轴号。
+    // ⚠ 走**记录 tab 里展开采样**这条路径, 而不是去点 Radix 的 tab: 后者在 jsdom 里
+    // 点不动 (表头仍是记录 tab 的), 而展开读数才是用户真正看数的地方。
+    const eventTs = 1_778_152_382_123_456_000
+    const entry = sample(eventTs, [40, 55, 62], [1.5, 2.25, 0.75])
+    const fields = entry.fields as Record<string, unknown>
+    fields.dq = [0.5, 1.5, 0.25]
+    mock.state.entries = [entry]
+    mock.state.samples = [entry]
+    mock.state.status = { ...mock.state.status, metaAt: Date.now() }
+    render(<LogsPage />)
+
+    fireEvent.click(await screen.findByText('state.sample'))
+
+    // 表格里那几个"最大值"读数: 数值与轴号必须同时出现 (62 °C 在 J2)。
+    const table = (await screen.findByText('MOS temp')).closest('table')!
+    const rows = Array.from(table.querySelectorAll('tbody tr'))
+      // ⚠ 页面里不止一张表 (会话表也是 table), 所以先按列名认准这一张; 表头行用
+      // 有无 `<th>` 排除, 不靠"第一行一定是表头"这种约定。
+      .filter((row) => !row.querySelector('th'))
+      .map((row) => Array.from(row.children).map((cell) => cell.textContent ?? ''))
+    expect(rows).toHaveLength(3)
+    expect(rows[0][0]).toBe('J1')
+    expect(rows[1][0]).toBe('J2')
+    // J2 的 MOS 温度是 55 —— 列顺序: 轴/角/角速度/力矩/MOS/线圈/错误码
+    expect(rows[1][4]).toBe('55')
+    // 角速度列是 J2 的 1.5, 而不是"某个未标明的最大值"
+    expect(rows[1][2]).toBe('1.500')
+  })
+
   it('does not draw a context chart for a sample record itself', async () => {
     // 采样记录自己就是数值, 再给它画一段上下文是多余的。
     const eventTs = 1_778_152_382_123_456_000

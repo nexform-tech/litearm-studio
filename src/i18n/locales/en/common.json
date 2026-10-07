@@ -156,5 +156,7 @@
     "firmwareFlashFailed": "Flashing failed: {{message}}. The affected sectors were erased back to blank where possible, so you can retry; repeated failures need an SWD probe",
     "firmwareReconnectFailed": "The firmware was written and verified by read-back, but the controller could not be reconnected: {{message}}",
     "firmwareCancelled": "The update was cancelled (cancelling has no effect once flashing has started)"
-  }
+  },
+  "moving": "Moving",
+  "zero_gravity": "Zero-gravity"
 }

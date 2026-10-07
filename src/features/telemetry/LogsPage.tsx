@@ -100,20 +100,71 @@ function jointDetailLines(sample: TelemetrySample): string[] {
 }
 
 /** 采样记录 (`kind=sample`) 的各轴最大值 —— 与采样表同一口径。 */
+/** 一个数值 + 它是哪一轴 —— 页面上的读数**必须**带上这个, 否则"30 °C"没法看。 */
+type Reading = { value: number; joint: number } | null
+
+/** 取绝对值最大的那一项, 连同它的轴号一起返回。 */
+function peak(values: number[] | undefined): Reading {
+  if (!values || values.length === 0) return null
+  let index = 0
+  for (let i = 1; i < values.length; i++) {
+    if (Math.abs(values[i]) > Math.abs(values[index])) index = i
+  }
+  return { value: Math.abs(values[index]), joint: index + 1 }
+}
+
+function maxTempReading(
+  temps: { mosTemp?: number; coilTemp?: number }[] | undefined,
+): Reading {
+  if (!temps || temps.length === 0) return null
+  let index = 0
+  let best = -Infinity
+  for (let i = 0; i < temps.length; i++) {
+    const t = Math.max(temps[i]?.mosTemp ?? 0, temps[i]?.coilTemp ?? 0)
+    if (t > best) {
+      best = t
+      index = i
+    }
+  }
+  return { value: best, joint: index + 1 }
+}
+
+/**
+ * 一条采样记录 → 表格里那几个数。
+ *
+ * ⚠ 每一项都带上**轴号**: 只给 "30 °C" 的话, 操作员没法知道要去看哪个关节, 而"哪一轴"
+ * 正是这条读数唯一有用的部分 (一台静止的臂七轴温度全一样时更是如此)。
+ */
 function sampleSummary(entry: LogEntry) {
   const q = entry.fields.q as number[] | undefined
   const dq = entry.fields.dq as number[] | undefined
   const tau = entry.fields.tau as number[] | undefined
   const temps = entry.fields.temps as { mosTemp?: number; coilTemp?: number }[] | undefined
-  const faults = (entry.fields.fault as unknown[] | undefined) ?? []
+  const faults = (entry.fields.fault as { joint?: number; errCode?: number }[] | undefined) ?? []
   return {
     state: typeof entry.fields.state === 'string' ? entry.fields.state : '',
     joints: q?.length ?? 0,
-    temp: maxAbs((temps ?? []).map((t) => Math.max(t?.mosTemp ?? 0, t?.coilTemp ?? 0))),
-    speed: maxAbs(dq),
-    torque: maxAbs(tau),
-    faults: faults.length,
+    temp: maxTempReading(temps),
+    speed: peak(dq),
+    torque: peak(tau),
+    faults,
   }
+}
+
+/** 读数的统一写法: `30 °C · J2`。 */
+function ReadingCell({ reading, unit, digits }: {
+  reading: Reading
+  unit: string
+  digits: number
+}) {
+  if (!reading) return <span className="text-muted-foreground">—</span>
+  return (
+    <span className="font-mono text-xs text-foreground">
+      {reading.value.toFixed(digits)}
+      <span className="ml-0.5 text-muted-foreground">{unit}</span>
+      <span className="ml-1.5 text-muted-foreground">J{reading.joint}</span>
+    </span>
+  )
 }
 
 /** 窗口的一半 (纳秒) → 人读的秒数。 */
@@ -163,6 +214,76 @@ function EventContext({ entry, samples, locale }: {
             locale={locale}
           />
         ))}
+      </div>
+    </div>
+  )
+}
+
+/** 表格里的数字一律用等宽字体右对齐; 这里是逐轴读数, 所以按轴分列。 */
+function JointReadings({ entry }: { entry: LogEntry }) {
+  const { t } = useTranslation('logs')
+  const q = (entry.fields.q as number[] | undefined) ?? []
+  const dq = (entry.fields.dq as number[] | undefined) ?? []
+  const tau = (entry.fields.tau as number[] | undefined) ?? []
+  const errs = (entry.fields.errs as number[] | undefined) ?? []
+  const temps = (entry.fields.temps as { mosTemp?: number; coilTemp?: number }[] | undefined) ?? []
+  const joints = Math.max(q.length, dq.length, tau.length, temps.length, errs.length)
+  if (joints === 0) return null
+
+  const enabled = entry.fields.enabled === true
+  const faulted = entry.fields.faulted === true
+  const num = (v: number | undefined, digits: number) =>
+    typeof v === 'number' && Number.isFinite(v) ? v.toFixed(digits) : '—'
+
+  const headClass = 'px-2 py-1 text-[0.6875rem] font-semibold text-muted-foreground'
+  const cellClass = 'px-2 py-1 font-mono text-[0.6875rem] text-foreground'
+
+  return (
+    <div className="mt-2 border-t border-border/60 pt-2">
+      <div className="mb-1 flex flex-wrap items-baseline gap-x-3 text-[0.6875rem]">
+        <span className="font-medium text-muted-foreground">{t('sampleReadings')}</span>
+        <span className="text-muted-foreground">
+          {t('summaryLine', {
+            joints,
+            enabled: enabled ? t('yes') : t('no'),
+            faulted: faulted ? t('yes') : t('no'),
+          })}
+        </span>
+      </div>
+      {/* ⚠ 这张表就是把 `q/dq/tau/errs/temps/mosTemp/coilTemp` 翻成人话的地方。
+          七轴一行一个, 而不是七个数组并排 —— 后者读起来得自己数位。 */}
+      <div className="overflow-auto">
+        <table className="w-full border-collapse">
+          <thead>
+            <tr className="border-b border-border/60">
+              <th className={`${headClass} text-left`}>{t('jointColumn')}</th>
+              <th className={`${headClass} text-right`}>{t('angleColumn')}</th>
+              <th className={`${headClass} text-right`}>{t('velocityColumn')}</th>
+              <th className={`${headClass} text-right`}>{t('torqueColumn')}</th>
+              <th className={`${headClass} text-right`}>{t('mosColumn')}</th>
+              <th className={`${headClass} text-right`}>{t('coilColumn')}</th>
+              <th className={`${headClass} text-right`}>{t('errorColumn')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {Array.from({ length: joints }, (_, i) => (
+              <tr key={i} className="border-b border-border/30 last:border-0">
+                <td className={`${cellClass} text-left text-muted-foreground`}>J{i + 1}</td>
+                <td className={`${cellClass} text-right`}>{num(q[i], 3)}</td>
+                <td className={`${cellClass} text-right`}>{num(dq[i], 3)}</td>
+                <td className={`${cellClass} text-right`}>{num(tau[i], 2)}</td>
+                <td className={`${cellClass} text-right`}>{num(temps[i]?.mosTemp, 0)}</td>
+                <td className={`${cellClass} text-right`}>{num(temps[i]?.coilTemp, 0)}</td>
+                <td className={`${cellClass} text-right ${(errs[i] ?? 0) !== 0 ? 'text-destructive' : ''}`}>
+                  {typeof errs[i] === 'number' ? errs[i] : '—'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="mt-1 flex flex-wrap gap-x-3 text-[0.625rem] text-muted-foreground">
+        <span>{t('angleColumn')} rad · {t('velocityColumn')} rad/s · {t('torqueColumn')} Nm · {t('mosColumn')}/{t('coilColumn')} °C</span>
       </div>
     </div>
   )
@@ -488,6 +609,12 @@ export function LogsPage() {
                                     {copiedId === key ? t('logs:copiedRecord') : t('logs:copyRecord')}
                                   </Button>
                                 </div>
+                                {entry.kind === 'sample' ? (
+                                  <JointReadings entry={entry} />
+                                ) : null}
+                                <div className="mt-2 text-[0.625rem] font-medium text-muted-foreground">
+                                  {t('logs:rawFields')}
+                                </div>
                                 <pre className="max-h-[18rem] overflow-auto font-mono text-[0.6875rem] leading-relaxed text-ink-muted">
                                   {recordDetail(entry)}
                                 </pre>
@@ -564,25 +691,29 @@ export function LogsPage() {
                           </TableCell>
                           <TableCell>
                             <Badge variant="outline" className="rounded-full px-2.5 py-0.5 text-[0.71875rem] font-semibold">
-                              {summary.state || '—'}
+                              {summary.state
+                                ? t(`common:${summary.state}`, { defaultValue: summary.state })
+                                : '—'}
                             </Badge>
                           </TableCell>
-                          <TableCell className="font-mono text-xs text-foreground">
-                            {summary.temp !== null ? `${summary.temp.toFixed(0)} ${t('logs:unitTemp')}` : '—'}
+                          <TableCell>
+                            <ReadingCell reading={summary.temp} unit={t('logs:unitTemp')} digits={0} />
                           </TableCell>
-                          <TableCell className="font-mono text-xs text-foreground">
-                            {summary.speed !== null ? `${summary.speed.toFixed(3)} ${t('logs:unitSpeed')}` : '—'}
+                          <TableCell>
+                            <ReadingCell reading={summary.speed} unit={t('logs:unitSpeed')} digits={3} />
                           </TableCell>
-                          <TableCell className="font-mono text-xs text-foreground">
-                            {summary.torque !== null ? `${summary.torque.toFixed(2)} ${t('logs:unitTorque')}` : '—'}
+                          <TableCell>
+                            <ReadingCell reading={summary.torque} unit={t('logs:unitTorque')} digits={2} />
                           </TableCell>
                           <TableCell className="text-xs text-foreground">
-                            {summary.faults > 0 ? (
+                            {summary.faults.length > 0 ? (
                               <Badge variant="outline" className="rounded-full px-2.5 py-0.5 text-[0.71875rem] font-semibold text-destructive">
-                                {summary.faults}
+                                {summary.faults
+                                  .map((f) => `J${(f?.joint ?? 0) + 1}`)
+                                  .join(' ')}
                               </Badge>
                             ) : (
-                              <span className="text-muted-foreground">0</span>
+                              <span className="text-muted-foreground">{t('logs:noFaults')}</span>
                             )}
                           </TableCell>
                         </TableRow>
