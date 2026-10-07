@@ -11,9 +11,10 @@ that matters most here: ``control_mit_stream`` has no abort hook of its own
 out ``grasp``, ``goto``, ``move_to`` and ``move_at_speed`` for a console whose
 E-stop has to work inside one tick.  ``open`` and ``close`` are the exceptions
 only because they accept a ``progress`` callback, and the two ``*_plain``
-methods thread the E-stop through it; they are kept out of the control path
-proper so that the blocking calls live in a single, named place rather than
-spread across the FSM.
+methods reach through it for the two things a blocking move still needs: the
+E-stop, and a state frame for the UI while this loop cannot publish one; they
+are kept out of the control path proper so that the blocking calls live in a
+single, named place rather than spread across the FSM.
 
 Two things this class is careful about, both about not lying:
 
@@ -332,6 +333,7 @@ class RealBackend(GripperBackend):
         *,
         speed_mm_s: float | None = None,
         should_abort: Callable[[], bool] | None = None,
+        progress: Callable[[Any], None] | None = None,
     ) -> bool:
         """Open to the open stop with the SDK's own ``open()`` ramp.
 
@@ -348,7 +350,7 @@ class RealBackend(GripperBackend):
         completed move.
         """
         return self._drive_to_limit(
-            "open", self._gripper.open, speed_mm_s, should_abort
+            "open", self._gripper.open, speed_mm_s, should_abort, progress
         )
 
     def close_plain(
@@ -356,6 +358,7 @@ class RealBackend(GripperBackend):
         *,
         speed_mm_s: float | None = None,
         should_abort: Callable[[], bool] | None = None,
+        progress: Callable[[Any], None] | None = None,
     ) -> bool:
         """Close to the closed stop with the SDK's own ``close()`` ramp.
 
@@ -371,7 +374,7 @@ class RealBackend(GripperBackend):
         a completed move.
         """
         return self._drive_to_limit(
-            "close", self._gripper.close, speed_mm_s, should_abort
+            "close", self._gripper.close, speed_mm_s, should_abort, progress
         )
 
     def _drive_to_limit(
@@ -380,16 +383,19 @@ class RealBackend(GripperBackend):
         sdk_call: Callable[..., Any],
         speed_mm_s: float | None,
         should_abort: Callable[[], bool] | None,
+        progress: Callable[[Any], None] | None = None,
     ) -> bool:
         """Drive one end of the travel with the SDK's own ramp.
 
         ``open()``/``close()`` loop inside the SDK with no abort hook of their
-        own, so ``should_abort`` is threaded through the ``progress`` callback
-        the ramp already calls once per sample — raising out of it unwinds the
-        loop and leaves the abort to the caller.  That is what keeps the E-stop
-        able to interrupt a move, which every other move gets by never blocking.
-        What blocking still costs — a frozen telemetry stream on the tick thread
-        for the whole move — is accepted; see the module docstring.
+        own, so the SDK's ``progress`` callback — which the ramp already calls
+        once per sample — is used for both jobs this console needs from a move
+        it cannot tick through: ``should_abort`` is polled there and raising out
+        of it unwinds the loop, and ``progress`` (the caller's) is forwarded each
+        sample so the caller can publish where the jaws are.  The first is what
+        keeps the E-stop able to interrupt a move, which every other move gets
+        by never blocking; the second is what keeps the UI from reading 保持 for
+        the whole move while the tick sits inside this call.
 
         ``speed_mm_s`` is the operator's 速度 setting; ``None`` leaves the SDK
         on its own configured speed, which is the fallback the rest of this
@@ -403,9 +409,11 @@ class RealBackend(GripperBackend):
 
         label = "张开" if direction == "open" else "闭合"
 
-        def _progress(_sample: Any) -> None:
+        def _progress(sample: Any) -> None:
             if should_abort is not None and should_abort():
                 raise MoveAborted(f"{label}被中断")
+            if progress is not None:
+                progress(sample)
 
         try:
             result = sdk_call(speed_mm_s, progress=_progress)

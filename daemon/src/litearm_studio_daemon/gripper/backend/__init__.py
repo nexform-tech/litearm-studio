@@ -240,6 +240,7 @@ class GripperBackend(ABC):
         *,
         speed_mm_s: float | None = None,
         should_abort: Callable[[], bool] | None = None,
+        progress: Callable[[Any], None] | None = None,
     ) -> bool:
         """Drive the jaws to the open stop with the SDK's own ``open()``.
 
@@ -258,9 +259,12 @@ class GripperBackend(ABC):
         ``should_abort`` is polled during the move and aborts it with
         :class:`MoveAborted` when it returns true — the hook that lets the
         E-stop reach a call that would otherwise block the tick thread for the
-        whole move.  ``speed_mm_s`` overrides the SDK's configured speed; the
-        real backend passes the operator's setting so the 速度 slider still
-        means something here.
+        whole move.  ``progress`` receives each of the SDK's own progress
+        samples while the move runs; the caller publishes them, because a
+        blocking move leaves the tick loop no other way to tell the UI where the
+        jaws are.  ``speed_mm_s`` overrides the SDK's configured speed; the real
+        backend passes the operator's setting so the 速度 slider still means
+        something here.
         """
         return False
 
@@ -269,6 +273,7 @@ class GripperBackend(ABC):
         *,
         speed_mm_s: float | None = None,
         should_abort: Callable[[], bool] | None = None,
+        progress: Callable[[Any], None] | None = None,
     ) -> bool:
         """Drive the jaws to the closed stop with the SDK's own ``close()``.
 
@@ -281,9 +286,12 @@ class GripperBackend(ABC):
         ``should_abort`` is polled during the move and aborts it with
         :class:`MoveAborted` when it returns true — the hook that lets the
         E-stop reach a call that would otherwise block the tick thread for the
-        whole move.  ``speed_mm_s`` overrides the SDK's configured speed; the
-        real backend passes the operator's setting so the 速度 slider still
-        means something here.
+        whole move.  ``progress`` receives each of the SDK's own progress
+        samples while the move runs; the caller publishes them, because a
+        blocking move leaves the tick loop no other way to tell the UI where the
+        jaws are.  ``speed_mm_s`` overrides the SDK's configured speed; the real
+        backend passes the operator's setting so the 速度 slider still means
+        something here.
         """
         return False
 

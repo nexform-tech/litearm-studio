@@ -13,11 +13,14 @@ Issue #72：本机夹爪两侧都有约 0.010 rad 的机械死区。守护进程
 2. 后端返回 ``False`` 时回落到 ``_motion.open`` / ``_motion.close``；
 3. 带力的 ``Close(force_n=...)`` 永不走 ``close_plain``（那里位置增益是接近增益，
    SDK 的斜坡会被读成本就要检测的接触）；
-4. 两个方向上，SDK 的进度回调触发中止（急停）时，worker 空转并让本 tick 的急停生效。
+4. 两个方向上，SDK 的进度回调触发中止（急停）时，worker 空转并让本 tick 的急停生效；
+5. 阻塞的行程期间，worker 借 SDK 的 ``progress`` 回调把状态帧发出去，状态报 moving、
+   位置跟着样本走 —— 不再整段行程都停在 保持（issue #84）。
 """
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable, Optional
 
 import pytest
@@ -45,11 +48,15 @@ class _Chan:
     def emit(self, *values: Any) -> None:
         if self._name == "alert":
             self._owner.alerts.append(values)
+        elif self._name == "telemetry":
+            self._owner.frames.append(values[0])
 
 
 class Recorder:
     def __init__(self) -> None:
         self.alerts: list[tuple[Any, ...]] = []
+        #: 每个发出去的 ``TelemetryFrame``，用来钉阻塞行程期间的状态帧。
+        self.frames: list[Any] = []
         for name in ("telemetry", "motion_state", "conn_state", "fault",
                      "gate_state", "calib_info", "calib_progress", "log",
                      "alert", "busy"):
@@ -72,6 +79,9 @@ class PlainSim(SimBackend):
         #: 在 ``*_plain`` 中途调用一次，用来模拟 SDK 的 ``progress`` 回调。
         self.during_open: Optional[Callable[[], None]] = None
         self.during_close: Optional[Callable[[], None]] = None
+        #: 一次 ``*_plain`` 里喂给 SDK 进度回调的样本（``MoveProgress`` 形状）。
+        #: 一次性：喂完清空，免得漏进下一次动作。
+        self.samples: list[Any] = []
         #: 之后 ``poll`` 一律回 False —— 模拟电机一声不吭（帧被 SDK 吃掉、或干脆没上电）。
         self.link_silent = False
         #: 累计发出去的 MIT 帧数，用来钉「链路判死时还发不发帧」。
@@ -93,8 +103,14 @@ class PlainSim(SimBackend):
         label: str,
         speed_mm_s: float | None,
         should_abort: Callable[[], bool] | None,
+        progress: Callable[[Any], None] | None,
     ) -> bool:
-        calls.append({"speed_mm_s": speed_mm_s, "should_abort": should_abort})
+        calls.append({"speed_mm_s": speed_mm_s, "should_abort": should_abort,
+                      "progress": progress})
+        if progress is not None:
+            samples, self.samples = self.samples, []
+            for sample in samples:
+                progress(sample)
         hook: Optional[Callable[[], None]] = getattr(self, attr)
         if hook is not None:
             setattr(self, attr, None)   # 一次性：模拟回调只响一次
@@ -108,18 +124,20 @@ class PlainSim(SimBackend):
         *,
         speed_mm_s: float | None = None,
         should_abort: Callable[[], bool] | None = None,
+        progress: Callable[[Any], None] | None = None,
     ) -> bool:
         return self._plain(self.open_calls, "during_open", "张开",
-                           speed_mm_s, should_abort)
+                           speed_mm_s, should_abort, progress)
 
     def close_plain(
         self,
         *,
         speed_mm_s: float | None = None,
         should_abort: Callable[[], bool] | None = None,
+        progress: Callable[[Any], None] | None = None,
     ) -> bool:
         return self._plain(self.close_calls, "during_close", "闭合",
-                           speed_mm_s, should_abort)
+                           speed_mm_s, should_abort, progress)
 
 
 def _ready_loop(tmp_path: Path) -> tuple[WorkerLoop, PlainSim, Recorder, list[float]]:
@@ -328,4 +346,41 @@ def test_a_dead_link_still_refuses_a_move_but_never_stops_the_frames(
     assert backend.close_calls == [], "链路已断时不应派发新动作"
     assert _refusal_alerts(signals), "应有一条「链路已断」的拒绝"
     assert backend.frames > before, "链路已断也必须继续发帧, 否则永远醒不过来"
+
+
+# ── 阻塞行程期间的状态帧 (issue #84) ────────────────────────────────────────
+
+def test_the_state_follows_the_move_while_the_sdk_blocks(
+        home: Path, tmp_path: Path) -> None:
+    """阻塞的 SDK 行程期间，状态帧要跟着走 —— 不能整段都显示 保持。
+
+    Issue #84：普通张开/闭合由 SDK 的阻塞斜坡驱动，整段行程占住 tick 线程，
+    ``_publish`` 一次都跑不到，界面于是停在移动前那一帧 —— 状态 保持、位置不动。
+    SDK 每约 20 Hz 回调一次 ``progress``，worker 把状态帧发在那里：状态报 moving、
+    位置/力/温度取样本值。
+    """
+    loop, backend, signals, now = _ready_loop(tmp_path)
+    signals.frames.clear()
+    limits = loop.motion.limits
+    backend.samples = [
+        SimpleNamespace(pos_rad=limits.to_rad(20.0), cmd_rad=limits.to_rad(22.0),
+                        torque_nm=0.5, temperature_coil=41),
+        SimpleNamespace(pos_rad=limits.to_rad(40.0), cmd_rad=limits.to_rad(42.0),
+                        torque_nm=0.7, temperature_coil=42),
+    ]
+
+    loop.submit(cmd.Open(source="test"))
+    now[0] += 0.05
+    loop.tick_once(0.005)
+
+    moving = [f for f in signals.frames if f.motion_state == "SERVO"]
+    # 每一帧样本都发了出来，位置跟着样本走（不是移动前那个冻结值）。
+    assert [round(f.position_mm, 3) for f in moving] == [20.0, 40.0], (
+        [f.position_mm for f in signals.frames])
+    assert all(f.moving for f in moving), "行程中应报 moving"
+    # 力/温度取样本：力矩 0.5 N·m × NM_TO_N(10) = 5 N。
+    assert moving[0].force_n == pytest.approx(5.0)
+    assert moving[-1].temperature_coil == 42
+    # 这一动是后端做的，FSM 全程停在 HOLD；motion_state 是 worker 覆盖的标签。
+    assert loop.motion.state.value == "HOLD", loop.motion.state
 

@@ -35,7 +35,7 @@ These are settled; the rest of the document assumes them.
 | D3 | The daemon never calls `load_calibration()` with no argument. It always passes an explicit `path=` or `template=`. | The SDK's no-argument chain falls back to its bundled factory file and reports success either way, so the caller cannot tell which file moved the jaws. |
 | D4 | The factory default is the SDK's `normal` / `reverse` template, loaded **by name**. Nothing is copied into the user calibration directory. | The templates are nominal (120 mm geometry) and exist to declare direction. Copying one into `~/.litegrip/<channel>_calibration.json` would make nominal data pass for a measurement and defeat every provenance check. |
 | D5 | The travel (`max_stroke_mm`) is owned by the host, stored per channel. It starts at `85.0` (the reference unit's measured travel) and the operator confirms it during first-time setup. | The SDK's calibration schema has no field for it, but `zero()` uses it as the numerator of `rad_to_mm`. Left at the SDK default of `120.0` it scales every millimetre reading by about 1.4. |
-| D6 | The daemon drives the gripper with its **own 200 Hz MIT tick**. It does not call the SDK's `grasp` / `move_at_speed` / `goto`, and calls `open()` / `close()` only in their plain forms, through the backend's `open_plain` / `close_plain`. | `grasp` / `move_at_speed` / `goto` block for the whole move and have no abort hook, so an E-stop cannot interrupt them, and `move_at_speed` also ends with a fixed ~100 ms hold that stutters a live control loop. `open()` and `close()` are the one exception: this unit has a mechanical dead-band at *each* end that the daemon's anchored reference cannot break (issue #72) and the SDK's wall-clock ramp can, and both take a `progress` callback that the console wires to the E-stop — so each keeps an abort path. A force-carrying close is *not* delegated; it stays on the FSM, where the position gain is the approach gain. |
+| D6 | The daemon drives the gripper with its **own 200 Hz MIT tick**. It does not call the SDK's `grasp` / `move_at_speed` / `goto`, and calls `open()` / `close()` only in their plain forms, through the backend's `open_plain` / `close_plain`. | `grasp` / `move_at_speed` / `goto` block for the whole move and have no abort hook, so an E-stop cannot interrupt them, and `move_at_speed` also ends with a fixed ~100 ms hold that stutters a live control loop. `open()` and `close()` are the one exception: this unit has a mechanical dead-band at *each* end that the daemon's anchored reference cannot break (issue #72) and the SDK's wall-clock ramp can, and both take a `progress` callback the console reaches through for the two things a blocking move still needs — the E-stop, and a state frame for the UI while the tick loop cannot publish one (issue #84). A force-carrying close is *not* delegated; it stays on the FSM, where the position gain is the approach gain. |
 | D7 | Every SDK call happens on the tick thread. No other thread touches the gripper object. | The SDK is not thread-safe: one socket, one cached motor state, no locks. |
 | D8 | The E-stop is a `threading.Event` checked at the top of every tick. It is not a queued command. | A stop that can queue behind other work is not an emergency stop. |
 | D9 | The tick is also the keepalive. | The drive leaves the enabled state after 0.4 s without a frame from the host. |
@@ -245,6 +245,13 @@ The tick borrows `WorkerLoop.tick_once`, whose order is deliberate:
 4. Poll one status frame.
 5. Advance the active FSM: probe, or motion, or a hold frame.
 6. Evaluate the gate and publish.
+
+One command does not return before the next tick: a plain 张开/闭合 driven by the
+backend's own `open()` / `close()` blocks inside step 1 for the whole move, so
+steps 2–6 do not run until it finishes. To keep the UI honest over that gap, the
+worker publishes a state frame from the SDK's `progress` callback — the only code
+that runs during the move — with the status labelled as motion rather than the
+`holding` the parked FSM would report (issue #84).
 
 ### 5.3 Calibration: resolution, provenance, gate
 

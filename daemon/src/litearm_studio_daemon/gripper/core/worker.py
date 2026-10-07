@@ -66,6 +66,7 @@ import logging
 import threading
 import time
 from collections import deque
+from dataclasses import replace
 from enum import Enum
 from typing import Any, Callable
 
@@ -79,7 +80,7 @@ from ..calibration import (
     CalibrationInfo,
 )
 from ..telemetry import Telemetry, TelemetryFrame
-from ..units import frame_mismatch, rad_per_s_to_mm
+from ..units import force_from_torque, frame_mismatch, rad_per_s_to_mm
 from ..backend import MoveAborted
 from . import commands as cmd
 from .calibration_fsm import GuidedCalibFSM, TwoPointCalibFSM
@@ -366,6 +367,17 @@ class WorkerLoop:
         self._probe_outcome: tuple[int, bool, str] | None = None
         self._tele = Telemetry()
         self._last_frame = _idle_frame(self)
+        #: True while a plain open/close is being driven by the backend's own
+        #: blocking SDK ramp rather than by this loop's tick.  The FSM stays in
+        #: HOLD throughout (it is not what is moving the jaws), so the status
+        #: line reads this flag instead — otherwise the UI would show 保持 for
+        #: the whole move.  See :meth:`_motion_label`.
+        self._delegated = False
+        #: Wall clock and angle of the previous SDK progress sample, so the
+        #: delegated move can report a real velocity.  ``None`` between moves,
+        #: so the first sample of a move is not differenced against the last.
+        self._move_sample_t: float | None = None
+        self._move_sample_rad = 0.0
 
         self._connected = False
         self._enabled = False
@@ -636,12 +648,70 @@ class WorkerLoop:
         probe the motion FSM is idle and *not* what is driving the motor, and a
         status line reading ``IDLE`` while the jaws are being driven into a hard
         stop would be worse than useless.
+
+        A delegated move replaces it for the same reason: while a plain
+        open/close runs inside the backend's SDK ramp the FSM is parked in HOLD
+        and is not what is moving the jaws, so the FSM's own label would read
+        保持 for the whole move.
         """
         if self._probe is not None:
             return self._probe.phase.value
         if self._estop.is_set():
             return "ESTOP"
+        if self._delegated:
+            return MotionState.SERVO.value
         return self._motion.state.value
+
+    def _on_move_sample(self, sample: Any) -> None:
+        """Publish a state frame from inside a blocking SDK move.
+
+        A delegated ``*_plain`` move runs the SDK's wall-clock ramp on this very
+        thread, so the loop cannot return to :meth:`_publish` for the whole move
+        and the UI would otherwise sit on the pre-move frame — reading 保持, with
+        a frozen position, while the jaws travel.  The SDK calls its ``progress``
+        hook once per sample (about 20 Hz) from inside that ramp; that is the
+        only place a frame can be produced for the move, and producing it here
+        keeps the whole gripper on one thread (D7): there is still exactly one
+        writer.
+
+        The sample carries the position, torque and coil temperature itself;
+        the rest of the frame is carried over from the last real frame.  The
+        link-health fields are left as they were on purpose — the SDK is polling
+        status frames for the whole move (it is what feeds ``sample.pos_rad``),
+        so the link is demonstrably alive even though this loop has not polled it
+        this tick.
+        """
+        limits = self._motion.limits
+        now = self._clock()
+        if self._move_sample_t is not None and now > self._move_sample_t:
+            v_rad = (sample.pos_rad - self._move_sample_rad) / (
+                now - self._move_sample_t
+            )
+        else:
+            v_rad = 0.0
+        self._move_sample_t = now
+        self._move_sample_rad = sample.pos_rad
+
+        position_mm = limits.to_mm(sample.pos_rad)
+        cmd_mm = limits.to_mm(sample.cmd_rad)
+        frame = replace(
+            self._last_frame,
+            t=time.time(),
+            position_mm=position_mm,
+            position_rad=sample.pos_rad,
+            velocity_mm_s=rad_per_s_to_mm(
+                v_rad, limits.rad_to_mm, direction=limits.direction
+            ),
+            force_n=force_from_torque(sample.torque_nm),
+            torque_nm=sample.torque_nm,
+            temperature_coil=sample.temperature_coil,
+            moving=True,
+            motion_state=self._motion_label(),
+            cmd_mm=cmd_mm,
+            err_mm=cmd_mm - position_mm,
+        )
+        self._last_frame = frame
+        self._signals.telemetry.emit(frame)
 
     # ── link health ─────────────────────────────────────────────────────────
     def _track_link(self, fresh: bool) -> None:
@@ -1307,6 +1377,7 @@ class WorkerLoop:
             delegate=lambda: self.backend.open_plain(
                 speed_mm_s=self._motion.params.speed_mm_s,
                 should_abort=self._motion_aborted,
+                progress=self._on_move_sample,
             ),
             fallback=lambda: self._motion.open(command.source),
             interrupted="张开被中断（急停或退出）",
@@ -1339,6 +1410,7 @@ class WorkerLoop:
             delegate=lambda: self.backend.close_plain(
                 speed_mm_s=self._motion.params.speed_mm_s,
                 should_abort=self._motion_aborted,
+                progress=self._on_move_sample,
             ),
             fallback=lambda: self._motion.close(command.source, force_n=None),
             interrupted="闭合被中断（急停或退出）",
@@ -1363,7 +1435,14 @@ class WorkerLoop:
         call leaves the axis idle and lets this tick's own E-stop handling
         abandon the gripper; any other failure is reported and the jaws are
         re-anchored where the move left them.
+
+        ``_delegated`` is raised around the call so the status line reports
+        motion while the SDK ramp runs it: the FSM is parked in HOLD and is not
+        what is moving the jaws, so :meth:`_motion_label` reads the flag, and the
+        SDK's own samples reach the UI through :meth:`_on_move_sample`.
         """
+        self._delegated = True
+        self._move_sample_t = None
         try:
             handled = delegate()
         except MoveAborted:
@@ -1378,6 +1457,8 @@ class WorkerLoop:
                         kind=exception_kind(exc))
             self._reanchor_after_blocking_move(settled)
             return
+        finally:
+            self._delegated = False
         if not handled:
             fallback()
             return
