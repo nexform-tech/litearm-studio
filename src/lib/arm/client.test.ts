@@ -116,6 +116,48 @@ describe('ArmClient (daemon WebSocket)', () => {
     expect(ws.lastFrame('connect')).toMatchObject({ t: 'connect' })
   })
 
+  it('carries the chosen serial port on the connect frame, and omits it when none is chosen', () => {
+    // ⚠ 帧上**有**port 与**没有**port 是两件事: 有 = "就这一台, 连不上就报错"; 没有 =
+    //   "按 daemon 自己的顺序来" (上次连上的口 → 自动发现)。所以空选择不能发成 `port: ''`。
+    const { client, ws } = connectedClient()
+
+    client.connect('/dev/ttyACM7')
+    expect(ws.lastFrame('connect')).toEqual({ t: 'connect', port: '/dev/ttyACM7' })
+
+    client.connect()
+    expect(ws.lastFrame('connect')).toEqual({ t: 'connect' })
+  })
+
+  it('keeps a port chosen before the socket is open', () => {
+    // 启动时传输层还在开, 这时操作员先选了口再点连接 —— 那次选择不能丢, 否则连上的是
+    // 自动发现到的另一台, 而界面上显示的是他选的那个。
+    const client = new ArmClient()
+    client.connect('/dev/ttyACM7')
+    const ws = FakeWebSocket.instances.at(-1)!
+
+    ws.open()
+    expect(ws.lastFrame('connect')).toEqual({ t: 'connect', port: '/dev/ttyACM7' })
+  })
+
+  it('lists candidate ports through list_ports and drops entries that are not paths', async () => {
+    const { client, ws } = connectedClient()
+    const pending = client.listPorts()
+    const cmd = ws.lastFrame('cmd')!
+
+    ws.receive({ t: 'res', id: cmd.id, ok: true, v: ['/dev/ttyACM0', 42, '/dev/ttyUSB0'] })
+    await expect(pending).resolves.toEqual(['/dev/ttyACM0', '/dev/ttyUSB0'])
+  })
+
+  it('resolves list_ports to an empty list when the daemon answers something else', async () => {
+    // 「答了但不是数组」与「拒绝」都要落到空列表上 —— 下拉拿到 `undefined` 会当场炸。
+    const { client, ws } = connectedClient()
+    const pending = client.listPorts()
+    const cmd = ws.lastFrame('cmd')!
+
+    ws.receive({ t: 'res', id: cmd.id, ok: true, v: null })
+    await expect(pending).resolves.toEqual([])
+  })
+
   it('goes connecting → connected on the daemon conn frame and notifies status listeners', () => {
     const client = new ArmClient()
     const statuses: string[] = []

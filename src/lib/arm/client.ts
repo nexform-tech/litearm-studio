@@ -254,14 +254,20 @@ export class ArmClient {
   /** `hello` 帧只来一条，存下来供激活时填写诊断信息（见 `versions`）。 */
   private _hello: HelloInfo | null = null
 
+  /** 操作员在端口下拉里选的口；`null` = 交给 daemon 自己解析。 */
+  private _pendingPort: string | null = null
+
   /** 共用的 daemon socket。默认自建一条，`armClient` 用默认值；夹爪注入同一条。 */
   readonly socket: DaemonSocket
 
   constructor(socket: DaemonSocket = new DaemonSocket()) {
     this.socket = socket
     // 一次连接上就请求连接机械臂（夹爪不自动连：它由页面显式连）。
+    // ⚠ 走 `_connectFrame()` 而不是写死 `{t:'connect'}`：socket 还没打开时操作员先选了
+    //   口再点连接，这次选择会存在 `_pendingPort` 里，等到这一帧才发出去 —— 否则那次
+    //   选择会被静默丢掉，daemon 连的是自动发现到的另一台。
     this.socket.onOpen(() => {
-      this.socket.sendFrame({ t: 'connect' })
+      this.socket.sendFrame(this._connectFrame())
     })
     this.socket.onFrame('conn', (msg) => this._applyConn(msg))
     this.socket.onFrame('hello', (msg) => this._applyHello(msg))
@@ -344,16 +350,40 @@ export class ArmClient {
     }
   }
 
-  /** 连接本地 daemon（无参：URL 由当前页面推导）。 */
-  connect() {
+  /** 连接本地 daemon（无参：URL 由当前页面推导）。
+   *
+   *  `port` = **界面上选的那个串口**，随 `connect` 帧发给 daemon，只对这一次连接生效
+   *  （daemon 侧把它当作"明确指定"：连不上会响亮报错，不会偷偷换成自动发现到的另一个
+   *  设备 —— 见 daemon 的 `Session._connect_candidates`）。不传 = 交给 daemon 自己决定
+   *  （记住的口 → 自动发现）。
+   */
+  connect(port?: string) {
+    this._pendingPort = port?.trim() || null
     // 传输层已经通着，说明失败的是 daemon 那边的 connect（没找到 CDC 设备、串口被占）：
     // 原地重发一次就是重试。拆掉重开不会多试任何东西，还会顺手弄断共用这条 socket 的
     // 夹爪会话。
     if (this.socket.open) {
-      this.socket.sendFrame({ t: 'connect' })
+      this.socket.sendFrame(this._connectFrame())
       return
     }
     this.socket.connect()
+  }
+
+  /**
+   * 候选串口（`list_ports`）—— 顶栏端口下拉的数据源。
+   *
+   * ⚠ 这条命令**不要求已连接**（选端口本来就发生在连接之前），daemon 侧是
+   * session-free 的。旧版 daemon 没有这条命令，会回 `UnknownCommandError`；调用方
+   * （`useArmPorts`）据此退回"只能自动发现"，而不是把界面卡住。
+   */
+  async listPorts(): Promise<string[]> {
+    const value = await this._sendCmd('list_ports')
+    return Array.isArray(value) ? value.filter((p): p is string => typeof p === 'string') : []
+  }
+
+  /** 打开 socket 时自动发的 connect 帧 —— 带上操作员选过的口（如果有）。 */
+  private _connectFrame(): { t: 'connect'; port?: string } {
+    return this._pendingPort ? { t: 'connect', port: this._pendingPort } : { t: 'connect' }
   }
 
   /** 断开：通知 daemon 断开机械臂，并关闭本地 WebSocket。 */
