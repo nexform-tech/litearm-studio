@@ -5,7 +5,6 @@ import { Copy, RefreshCw, ShieldAlert } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import type { LicenseRecord } from '@/lib/arm'
 import { useArmConnection, useArmState } from '@/lib/arm'
 import { useActivation } from './useActivation'
 import { ActivationForm } from './ActivationForm'
@@ -50,7 +49,9 @@ export function ActivationSection() {
   const { conn } = useArmConnection()
   const firmware = conn?.firmware ?? ''
   const snapshot = vm.snapshot
-  const record: LicenseRecord | null = snapshot?.supported === true ? snapshot : null
+  // ⚠ 记录**不从这里现推**。读不到时 hook 会留住上一条并给出 `stale`（见 `useActivation`）:
+  //   从快照推的话, `{supported: null}` 会把记录连同 UID 一起推成空。
+  const record = vm.record
   // ⚠ 固件只在**失能**时写授权记录（使能中会回 `0x3F/0x04`）。状态帧还没来时按"可试"处理：
   // 拿不到状态就不该替用户把按钮锁死，真被拒了固件会说清楚。
   const disarmed = !(armState?.enabled ?? false)
@@ -130,13 +131,9 @@ export function ActivationSection() {
               上是不变的 —— 一次链路抖动就把它从屏幕上抹掉, 等于让操作员重来一遍。但必须
               同时标明这是**旧读数**, 不能让"已激活"看起来像刚刚确认过 (见下面的提示)。
               没有旧记录时才只显示错误。 */}
-          {vm.error && !record ? null : snapshot && snapshot.supported === false ? (
-            <Notice>{t('settings:activation.unsupportedHint')}</Notice>
-          ) : snapshot && snapshot.supported === null ? (
-            <Notice>{t('settings:activation.unreadableHint')}</Notice>
-          ) : record ? (
+          {record ? (
             <>
-              {vm.error ? (
+              {vm.stale ? (
                 <p
                   data-testid="activation-stale"
                   className="text-[0.6875rem] leading-relaxed text-muted-foreground"
@@ -199,6 +196,10 @@ export function ActivationSection() {
             <ActivationForm vm={vm} uid={record.uid} firmware={firmware} disarmed={disarmed} />
           ) : null}
         </>
+      ) : vm.error ? null : snapshot?.supported === false ? (
+        <Notice>{t('settings:activation.unsupportedHint')}</Notice>
+      ) : snapshot?.supported === null ? (
+        <Notice>{t('settings:activation.unreadableHint')}</Notice>
       ) : (
         <Notice>{t('common:loading')}</Notice>
       )}

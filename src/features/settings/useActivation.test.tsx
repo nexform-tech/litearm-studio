@@ -93,6 +93,61 @@ describe('useActivation', () => {
     expect(mocks.warning).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps the last record when a later read comes back with no answer', async () => {
+    // ⚠ 设备不应答时 daemon 回 `{supported: null}` 且应答是 ok —— hook 看不到任何错误, 所以
+    //   不能只靠 catch 保留记录: 读数本身就得决定"留着并标旧", 否则 UID 会被冲成 null。
+    mocks.license.mockResolvedValueOnce(LOCKED).mockResolvedValueOnce({ supported: null })
+
+    const { result } = renderHook(() => useActivation())
+    await waitFor(() => expect(result.current.record).toEqual(LOCKED))
+
+    await act(async () => {
+      await result.current.refresh()
+    })
+
+    expect(result.current.snapshot).toEqual({ supported: null })
+    expect(result.current.error).toBeNull()
+    expect(result.current.record).toEqual(LOCKED)
+    expect(result.current.stale).toBe(true)
+  })
+
+  it('keeps the last record, and marks it stale, when a read fails on the wire', async () => {
+    mocks.license.mockResolvedValueOnce(LOCKED).mockRejectedValueOnce(new Error('boom'))
+
+    const { result } = renderHook(() => useActivation())
+    await waitFor(() => expect(result.current.record).toEqual(LOCKED))
+
+    await act(async () => {
+      await result.current.refresh()
+    })
+
+    expect(result.current.error).toBeTruthy()
+    expect(result.current.record).toEqual(LOCKED)
+    expect(result.current.stale).toBe(true)
+  })
+
+  it('clears the stale mark once a later read answers again', async () => {
+    mocks.license
+      .mockResolvedValueOnce(LOCKED)
+      .mockResolvedValueOnce({ supported: null })
+      .mockResolvedValueOnce(CONFIRMED)
+
+    const { result } = renderHook(() => useActivation())
+    await waitFor(() => expect(result.current.record).toEqual(LOCKED))
+
+    await act(async () => {
+      await result.current.refresh()
+    })
+    expect(result.current.stale).toBe(true)
+
+    await act(async () => {
+      await result.current.refresh()
+    })
+    expect(result.current.snapshot).toEqual(CONFIRMED)
+    expect(result.current.record).toEqual(CONFIRMED)
+    expect(result.current.stale).toBe(false)
+  })
+
   it('clears a stale error once a later read succeeds', async () => {
     mocks.license.mockRejectedValueOnce(new Error('boom'))
     mocks.license.mockResolvedValueOnce(LOCKED)
