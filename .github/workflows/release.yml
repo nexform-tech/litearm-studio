@@ -125,6 +125,19 @@ jobs:
           cp packaging/dist/litearm-studio-daemon \
              "upload/litearm-studio-${VERSION#v}-${{ matrix.suffix }}"
 
+      # Ubuntu and Debian users get a real package. It is the only artifact that can set
+      # the serial-port permission (a udev rule with `uaccess`, so no `dialout` group and
+      # no re-login) and register a desktop entry, which is what "install" means to them.
+      # The standalone executable above is still published for every other Linux.
+      - name: Build the Debian package
+        if: runner.os == 'Linux'
+        working-directory: litearm-studio
+        run: |
+          python packaging/deb.py \
+            --binary packaging/dist/litearm-studio-daemon \
+            --version "$VERSION" \
+            --outdir upload
+
       - name: Name the artifact (windows)
         if: runner.os == 'Windows'
         working-directory: litearm-studio

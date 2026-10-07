@@ -392,21 +392,28 @@ python3 -c "import litearm; arm=litearm.Arm('tcp/127.0.0.1:7447'); arm.home(); a
 #heading(level: 3, numbering: none, outlined: false)[Linux / Ubuntu 系统]
 
 ```bash
-# 单文件可执行程序，免安装；需要 glibc 2.35 及以上（Ubuntu 22.04+ / Debian 12+）
-mkdir -p ~/Applications && cd ~/Applications
-version=0.11.0
+# 方式一：Ubuntu / Debian 安装包（推荐；需要 Ubuntu 22.04+ / Debian 12+）
+mkdir -p ~/Downloads && cd ~/Downloads
+version=0.12.0
 base="https://github.com/nexform-tech/litearm-studio/releases/download/v${version}"
+curl -LO "$base/litearm-studio_${version}_amd64.deb"
+curl -LO "$base/litearm-studio_${version}_amd64.deb.sha256"
+sha256sum -c "litearm-studio_${version}_amd64.deb.sha256"   # 应输出 OK
+sudo apt install "./litearm-studio_${version}_amd64.deb"
+litearm-studio
+
+# 方式二：其他发行版用单文件可执行程序（下载后没有执行权限，需要 glibc 2.35+）
+mkdir -p ~/Applications && cd ~/Applications
 curl -LO "$base/litearm-studio-${version}-linux-amd64"
 curl -LO "$base/litearm-studio-${version}-linux-amd64.sha256"
-
-sha256sum -c "litearm-studio-${version}-linux-amd64.sha256"   # 应输出 OK
-chmod +x "litearm-studio-${version}-linux-amd64"              # 下载后没有执行权限
+sha256sum -c "litearm-studio-${version}-linux-amd64.sha256"
+chmod +x "litearm-studio-${version}-linux-amd64"
 ./"litearm-studio-${version}-linux-amd64"
 ```
 
 #quote-box(rgb("#2563EB"))[
-  发布附件只有上面这两个单文件可执行程序：没有 `.deb` 包，也没有 AppImage。串口权限（`dialout` 组）
-  与首次激活步骤见仓库的 docs/INSTALL.md。
+  `.deb` 会把执行权限、桌面图标和串口访问规则（udev `uaccess`，不必加 `dialout` 组）一次装好；
+  单文件方式这三件事都得手动做。完整的环境要求与首次激活步骤见仓库的 docs/INSTALL.md。
 ]
 
 // ============================================================
