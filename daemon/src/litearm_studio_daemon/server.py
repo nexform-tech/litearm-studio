@@ -135,8 +135,14 @@ def _is_energy_down_frame(raw: str) -> bool:
     return method in ENERGY_DOWN_COMMANDS or method == "gripper.stop"
 
 
+#: `pick_free_http_port` 从 `start` 起最多试几个端口。⚠ 复用探测
+#: (`instance.find_running`) **必须扫同一个范围**: 上一个实例可能因为 8765 被别的程序
+#: 占着而挪到了 8766, 只问 `start` 会漏掉它 (issue #75)。
+HTTP_PORT_TRIES = 50
+
+
 def pick_free_http_port(host: str = "127.0.0.1", start: int = 8765,
-                        tries: int = 50) -> int:
+                        tries: int = HTTP_PORT_TRIES) -> int:
     """从 `start` 起找一个能绑的端口 —— 被占用就 +1, 逐个试。找不到抛 `OSError`。
 
     ⚠ 这里是**先探测再交给 uvicorn**, 中间有一个极小的竞态窗口 (探到空 → 别人抢走)。
@@ -596,6 +602,9 @@ def _health(daemon: Daemon) -> dict:
         "ok": True,
         "daemon": daemon.version,
         "sdk": daemon.session.sdk_version,
+        #: 本次会话是不是假传输。复用判据要用它 (`instance.is_same_instance`): 在一条
+        #: `--fake` 的调试进程旁边启动真机版, 复用会让操作员对着假设备操作。
+        "fake": daemon.session.fake,
         "connected": daemon.session.connected,
         "motionBusy": daemon.session.motion_in_flight(),
         "clients": len(daemon.clients),

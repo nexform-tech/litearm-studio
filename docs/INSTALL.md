@@ -74,6 +74,15 @@ opens a window. If that port is taken it picks the next free one, prints it, and
 printed address is the one to use**. The window is the whole interface: closing it does
 not stop the program, and stopping the program disables the arm on exit.
 
+Because the program outlives its window, starting `litearm-studio` again while an instance
+is still running opens a window onto that instance instead of starting a second program.
+This matters: a second program cannot reach the arm, because the first one holds the
+serial port. Options that ask for a specific session — `--port`, `--fake`, `--can-channel`,
+`--ui-dir` and the other session flags — start a separate instance instead, since reusing
+the running one would silently discard them. A running instance of a *different* version
+is not reused either, so after a package upgrade the new launch starts normally while the
+old program is still there.
+
 ### 2.4 What the package sets up
 
 | Path | Purpose |

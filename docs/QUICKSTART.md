@@ -147,3 +147,9 @@ The daemon automatically picks the next free port and prints it; read the printe
 ### Closing the window stopped the UI but not the arm
 
 That is deliberate: closing the browser window does not tear down an arm session. Use **Disconnect** or **STOP** in the UI, or stop the daemon process, to end the session.
+
+Starting the program again while that daemon is still running opens a window onto it, so you get the arm session back rather than a second program that cannot reach the arm.
+
+### The window says the port cannot be opened but the arm is connected
+
+The program that holds the arm is still running and you started a second one by naming a specific session (`--port`, `--fake`, `--can-channel`, …). Check `http://127.0.0.1:8765/api/health` for the running one, close the second window, and start the program again without those options to attach to the session that is already up.
