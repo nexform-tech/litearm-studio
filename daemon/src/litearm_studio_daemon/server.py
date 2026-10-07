@@ -396,8 +396,18 @@ class Daemon:
             return
         kind = msg.get("t")
         if kind == "connect":
+            # `port` (可选) = 顶栏下拉里选的那个口。缺省/空串 ⇒ 交给会话自己解析
+            # (`--port` → 上次连上的口 → 自动发现, 见 `Session._connect_candidates`)。
+            # ⚠ 只在这一帧上生效, 落地成"这次连接的目标", 不改 `--port`。
+            raw_port = msg.get("port")
+            if raw_port is not None and not isinstance(raw_port, str):
+                await self._send_direct(ws, client, {
+                    "t": "res", "id": msg.get("id"), "ok": False,
+                    "err": {"kind": "BadMessage", "msg": "connect 的 port 需是字符串"},
+                })
+                return
             # 幂等, 且**立刻**回: 握手在命令执行器上跑, 进度由 `conn` 帧报。
-            started = self.session.connect()
+            started = self.session.connect(raw_port)
             await self._send_direct(ws, client, {
                 "t": "res", "id": msg.get("id"), "ok": True, "v": {"started": started},
             })

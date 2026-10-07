@@ -24,6 +24,7 @@ from typing import Any
 
 import pytest
 
+from litearm_studio_daemon import ports
 from litearm_studio_daemon.gripper import calibration, constants
 
 #: A valid measured calibration for the reference 85 mm unit, normal mount.
@@ -55,3 +56,20 @@ def measured_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     # above (row 3), which is exactly the kind of surprise this fixture removes.
     monkeypatch.delenv(calibration.CALIB_ENV, raising=False)
     return home
+
+
+@pytest.fixture(autouse=True)
+def private_arm_port_record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A private ``arm.json`` for the "last port the arm connected on" record.
+
+    Autouse, because the leak would bite in both directions.  A successful
+    ``connect()`` **writes** the record, so without this every connecting test
+    would drop a fake port (``fake``, ``/dev/ttyACM0``…) into the home directory
+    of whoever runs the suite.  And a record already sitting there would be read
+    back as the first candidate of ``Session._connect_candidates`` — a developer
+    who once picked a port in the UI would then connect to something else than CI
+    does.
+    """
+    path = tmp_path / "arm.json"
+    monkeypatch.setenv(ports.CONFIG_ENV, str(path))
+    return path
