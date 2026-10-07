@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@/i18n'
 import type { PadCell } from '@/components/DirectionPad'
@@ -56,11 +56,6 @@ function renderPanel(overrides: Partial<Parameters<typeof CartesianPanel>[0]> = 
   )
 }
 
-/** 切到"目标位姿 movel"子模式，露出 movel 按钮。 */
-function openTargetSubMode() {
-  fireEvent.click(screen.getByRole('button', { name: '目标位姿 movel' }))
-}
-
 describe('CartesianPanel capability notice', () => {
   beforeEach(async () => {
     await i18n.changeLanguage('zh')
@@ -71,7 +66,7 @@ describe('CartesianPanel capability notice', () => {
 
     expect(screen.getByText(/未编译笛卡尔规划/)).toBeTruthy()
 
-    openTargetSubMode()
+    // 盘面与 movel 表单同屏并存，不需要先切子模式。
     const movel = screen.getByRole('button', { name: /直线运动到目标位姿/ }) as HTMLButtonElement
     expect(movel.disabled).toBe(true)
     const sync = screen.getByRole('button', { name: /同步当前位姿/ }) as HTMLButtonElement
@@ -83,7 +78,6 @@ describe('CartesianPanel capability notice', () => {
 
     expect(screen.queryByText(/未编译笛卡尔规划/)).toBeNull()
 
-    openTargetSubMode()
     const movel = screen.getByRole('button', { name: /直线运动到目标位姿/ }) as HTMLButtonElement
     expect(movel.disabled).toBe(false)
     expect(screen.getByRole('button', { name: /同步当前位姿/ })).toBeTruthy()

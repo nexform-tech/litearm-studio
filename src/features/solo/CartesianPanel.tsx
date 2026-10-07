@@ -39,13 +39,39 @@ function StepPicker({
   )
 }
 
+/** 目标位姿的一个数字输入：标签在上、输入在下，窄列里两列并排也放得下。 */
+function PoseField({
+  label,
+  value,
+  step,
+  onChange,
+}: {
+  label: string
+  value: number
+  step: string
+  onChange: (v: number) => void
+}) {
+  return (
+    <label className="flex min-w-0 flex-col gap-0.5">
+      <span className="truncate font-mono text-[0.59375rem] text-muted-foreground">{label}</span>
+      <Input
+        type="number"
+        step={step}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="h-7 px-1.5 font-mono text-[0.71875rem]"
+      />
+    </label>
+  )
+}
+
 /**
- * 末端点位微调 —— 图稿的形态：一张卡，标题行右侧放两个步长选择器，卡内是两个
- * 十字点动盘（平移 / 旋转），盘中间那格写明这个盘是干什么的。
+ * 末端点位微调 —— 图稿的形态：一张卡，标题行右侧放两个步长选择器，正文左边是方向
+ * 点动盘、右边是目标位姿（movel）表单，**左右同屏并存**，不再用子模式页签切换。
  *
- * 现有但图稿没有的两个功能收进标题行，不占正文高度：方向点动 / 目标位姿 movel
- * 子模式、基坐标系 / 工具坐标系切换。参考坐标系已经由这个切换器表达，所以不再
- * 单独显示 BASE_LINK / TOOL0 徽标。
+ * 两个盘是十字形（见 `DirectionPad` 的 `PadCell`），中间那格写明这个盘是干什么的。
+ * 参考坐标系由标题行的切换器表达，所以不再单独显示 BASE_LINK / TOOL0 徽标。
+ * 窄窗口放不下时 movel 表单自动换到盘面下方，而不是把盘压到不可按。
  */
 export function CartesianPanel({
   simMode = false,
@@ -82,7 +108,6 @@ export function CartesianPanel({
   onSyncCurrentPose?: () => Promise<{ pos: [number, number, number]; rpy: [number, number, number] } | null>
 }) {
   const { t } = useTranslation(['common', 'solo'])
-  const [subMode, setSubMode] = useState<'jog' | 'target'>('jog')
   const [targetX, setTargetX] = useState<number>(0.32)
   const [targetY, setTargetY] = useState<number>(0)
   const [targetZ, setTargetZ] = useState<number>(0.45)
@@ -92,7 +117,7 @@ export function CartesianPanel({
   const [syncing, setSyncing] = useState(false)
   const [moving, setMoving] = useState(false)
 
-  // 面板主体不可用的两种原因：仿真模式（不下发指令）与固件缺少笛卡尔规划。
+  // 面板不可用的两种原因：仿真模式（不下发指令）与固件缺少笛卡尔规划。
   // 头部控件仍然可点，便于在不可用时查看坐标系/步长设置。
   const inactive = simMode || cartUnsupported
   const disabledStyle = inactive ? { opacity: 0.45, pointerEvents: 'none' as const } : undefined
@@ -144,151 +169,73 @@ export function CartesianPanel({
 
         <div className="flex-1" />
 
-        {/* 子模式切换：点动 vs 绝对目标 */}
-        <div className="flex rounded-lg bg-muted/60 p-0.5 text-[0.71875rem]">
-          <button
-            type="button"
-            onClick={() => setSubMode('jog')}
-            className={`rounded-md px-2.5 py-1 font-semibold transition-colors ${
-              subMode === 'jog' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            {t('solo:cartesian.jogSubMode')}
-          </button>
-          <button
-            type="button"
-            onClick={() => setSubMode('target')}
-            className={`rounded-md px-2.5 py-1 font-semibold transition-colors ${
-              subMode === 'target' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            {t('solo:cartesian.targetSubMode')}
-          </button>
+        <SegmentedControl
+          items={frames}
+          containerStyle={{ display: 'flex', gap: '0.1875rem', background: 'var(--line-soft)', borderRadius: '0.5625rem', padding: '0.1875rem' }}
+          itemStyle={{ padding: '0.25rem 0.625rem', borderRadius: '0.4375rem', fontSize: '0.75rem', color: 'var(--ink-subtle)', fontWeight: 500 }}
+          activeItemStyle={{ background: 'var(--seg-active)', color: 'var(--ink)', fontWeight: 600, boxShadow: '0 0.0625rem 0.125rem rgba(16,24,40,.08)' }}
+        />
+        <div className="h-5 w-px bg-line" />
+        <div className="flex items-center gap-x-2.5">
+          <StepPicker label={t('solo:cartesian.transTitle')} value={transStep} options={transSteps} onChange={setTransStep} />
+          <StepPicker label={t('solo:cartesian.rotTitle')} value={rotStep} options={rotSteps} onChange={setRotStep} />
         </div>
-
-        {subMode === 'jog' && (
-          <>
-            <SegmentedControl
-              items={frames}
-              containerStyle={{ display: 'flex', gap: '0.1875rem', background: 'var(--line-soft)', borderRadius: '0.5625rem', padding: '0.1875rem' }}
-              itemStyle={{ padding: '0.25rem 0.625rem', borderRadius: '0.4375rem', fontSize: '0.75rem', color: 'var(--ink-subtle)', fontWeight: 500 }}
-              activeItemStyle={{ background: 'var(--seg-active)', color: 'var(--ink)', fontWeight: 600, boxShadow: '0 0.0625rem 0.125rem rgba(16,24,40,.08)' }}
-            />
-            <div className="h-5 w-px bg-line" />
-            <div className="flex items-center gap-x-2.5">
-              <StepPicker label={t('solo:cartesian.transTitle')} value={transStep} options={transSteps} onChange={setTransStep} />
-              <StepPicker label={t('solo:cartesian.rotTitle')} value={rotStep} options={rotSteps} onChange={setRotStep} />
-            </div>
-          </>
-        )}
       </div>
 
-      {subMode === 'jog' ? (
-        /* 盘面宽度收到 15.5rem 并居中：图稿里两个盘是紧凑的一对，而不是铺满整张卡 */
-        <div className="flex min-h-0 flex-1 items-center justify-center gap-8 py-1" style={disabledStyle}>
-          <div className="w-full min-w-0 max-w-[15.5rem]">
+      <div className="flex min-h-0 flex-1 flex-wrap items-center gap-x-5 gap-y-4">
+        {/* 左：方向点动 */}
+        <div
+          className="flex flex-[1_1_18rem] items-center justify-center gap-4"
+          style={disabledStyle}
+        >
+          <div className="w-full min-w-0 max-w-[12.5rem]">
             <DirectionPad cells={transCells} onPress={onJogPress} onRelease={onJogRelease} />
           </div>
-          <div className="w-full min-w-0 max-w-[15.5rem]">
+          <div className="w-full min-w-0 max-w-[12.5rem]">
             <DirectionPad cells={rotCells} onPress={onJogPress} onRelease={onJogRelease} />
           </div>
         </div>
-      ) : (
-        <div className="flex min-h-0 flex-1 flex-col gap-3 rounded-xl border bg-muted/20 p-3.5" style={disabledStyle}>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
-              <Compass className="size-4 text-primary" />
-              {t('solo:cartesian.targetPoseTitle')}
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={handleSyncPose}
-              disabled={syncing || inactive}
-              className="h-7 gap-1 text-xs"
-            >
-              <RefreshCw className={`size-3 ${syncing ? 'animate-spin' : ''}`} />
-              {t('solo:cartesian.syncCurrentPose')}
-            </Button>
+
+        {/* 右：目标位姿（movel），与盘面同屏 */}
+        <div
+          className="flex w-[12.5rem] flex-none flex-col gap-2 rounded-xl border bg-muted/20 p-2.5"
+          style={disabledStyle}
+        >
+          <div className="text-[0.78125rem] font-semibold text-foreground">
+            {t('solo:cartesian.targetSubMode')}
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handleSyncPose}
+            disabled={syncing || inactive}
+            className="h-7 w-full gap-1 text-[0.6875rem]"
+          >
+            <RefreshCw className={`size-3 ${syncing ? 'animate-spin' : ''}`} />
+            {t('solo:cartesian.syncCurrentPose')}
+          </Button>
+
+          <div className="grid grid-cols-2 gap-x-2 gap-y-1.5">
+            <PoseField label="X (m)" value={targetX} step="0.005" onChange={setTargetX} />
+            <PoseField label="Y (m)" value={targetY} step="0.005" onChange={setTargetY} />
+            <PoseField label="Z (m)" value={targetZ} step="0.005" onChange={setTargetZ} />
+            <PoseField label="Roll (rad)" value={targetRoll} step="0.05" onChange={setTargetRoll} />
+            <PoseField label="Pitch (rad)" value={targetPitch} step="0.05" onChange={setTargetPitch} />
+            <PoseField label="Yaw (rad)" value={targetYaw} step="0.05" onChange={setTargetYaw} />
           </div>
 
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-6">
-            <div>
-              <label className="font-mono text-[0.6875rem] text-muted-foreground">X (m)</label>
-              <Input
-                type="number"
-                step="0.005"
-                value={targetX}
-                onChange={(e) => setTargetX(Number(e.target.value))}
-                className="mt-0.5 font-mono text-xs"
-              />
-            </div>
-            <div>
-              <label className="font-mono text-[0.6875rem] text-muted-foreground">Y (m)</label>
-              <Input
-                type="number"
-                step="0.005"
-                value={targetY}
-                onChange={(e) => setTargetY(Number(e.target.value))}
-                className="mt-0.5 font-mono text-xs"
-              />
-            </div>
-            <div>
-              <label className="font-mono text-[0.6875rem] text-muted-foreground">Z (m)</label>
-              <Input
-                type="number"
-                step="0.005"
-                value={targetZ}
-                onChange={(e) => setTargetZ(Number(e.target.value))}
-                className="mt-0.5 font-mono text-xs"
-              />
-            </div>
-            <div>
-              <label className="font-mono text-[0.6875rem] text-muted-foreground">Roll (rad)</label>
-              <Input
-                type="number"
-                step="0.05"
-                value={targetRoll}
-                onChange={(e) => setTargetRoll(Number(e.target.value))}
-                className="mt-0.5 font-mono text-xs"
-              />
-            </div>
-            <div>
-              <label className="font-mono text-[0.6875rem] text-muted-foreground">Pitch (rad)</label>
-              <Input
-                type="number"
-                step="0.05"
-                value={targetPitch}
-                onChange={(e) => setTargetPitch(Number(e.target.value))}
-                className="mt-0.5 font-mono text-xs"
-              />
-            </div>
-            <div>
-              <label className="font-mono text-[0.6875rem] text-muted-foreground">Yaw (rad)</label>
-              <Input
-                type="number"
-                step="0.05"
-                value={targetYaw}
-                onChange={(e) => setTargetYaw(Number(e.target.value))}
-                className="mt-0.5 font-mono text-xs"
-              />
-            </div>
-          </div>
-
-          <div className="mt-auto flex justify-end">
-            <Button
-              type="button"
-              onClick={handleMovel}
-              disabled={moving || inactive}
-              className="gap-1.5"
-            >
-              <MoveRight className="size-4" />
-              {moving ? t('solo:cartesian.movelMoving') : t('solo:cartesian.movelBtn')}
-            </Button>
-          </div>
+          <Button
+            type="button"
+            onClick={handleMovel}
+            disabled={moving || inactive}
+            className="mt-auto h-auto w-full gap-1 px-2 py-1.5 text-[0.71875rem] leading-tight whitespace-normal"
+          >
+            <MoveRight className="size-3.5 shrink-0" />
+            {moving ? t('solo:cartesian.movelMoving') : t('solo:cartesian.movelBtn')}
+          </Button>
         </div>
-      )}
+      </div>
     </Card>
   )
 }
