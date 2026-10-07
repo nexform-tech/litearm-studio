@@ -23,15 +23,15 @@ Do not call the stdlib `logging` directly for daemon events. Two reasons: it
 would produce a record without an event name, and it would bypass redaction —
 the one gate that keeps the activation payload out of the file.
 
-Why the standard library and not `structlog` (which was considered): the two
-things a structured-logging library buys are a processor chain and context
-binding, and here they are one `Formatter` and two `ContextVar`s. What is
-actually hard — writing a whole line atomically while the file rotates under a
-concurrent writer — is solved by `logging.handlers.RotatingFileHandler`, which
-already holds the lock across rollover and write. Adding a dependency that does
-not address the hard part, while adding a second way to produce a record, is a
-worse trade than writing the formatter. Revisit only if the record shape ever
-needs many more processors than `schema.RECORD_KEYS` describes.
+The implementation is the standard library: `logging` plus one `Formatter`
+(`handlers.ObsJsonlFormatter`) for the record shape, `contextvars` for trace and
+span context, and `logging.handlers.RotatingFileHandler` for the file. That last
+one is the reason not to hand-roll any of this — writing a whole line atomically
+while the file rotates under a concurrent writer is the hard part, and the stdlib
+handler already holds its lock across both the rollover and the write.
+
+`RECORD_KEYS` in `schema.py` is what the formatter renders, so the record shape
+lives in one place rather than in a chain of processors assembled at startup.
 """
 from __future__ import annotations
 

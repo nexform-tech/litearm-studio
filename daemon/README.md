@@ -212,10 +212,10 @@ litearm-studio-daemon --log-dir /tmp/litearm-logs --log-level DEBUG
 - `--log-max-bytes` / `--log-backups` —— 按体积轮转，默认 5MB × 5 份。
 - `--log-stdout` —— 把同样的 JSONL 也写到 stderr，给 Fluent Bit / Loki / 容器运行时采集用。
 
-实现只用标准库：写入是 `logging.handlers.RotatingFileHandler` 加一个自定义 Formatter，
-trace/span 上下文是 `contextvars`；记录 schema 在本仓的 `obs/schema.py`。**没有**引入
-第三方结构化日志库 —— 评估过 `structlog`，它解决的两件事在这里分别是"一个 Formatter"
-与"两个 ContextVar"，而真正难的"轮转下整行原子写入"它并不解决。
+实现**只用标准库，没有额外依赖**：记录 schema 在本仓的 `obs/schema.py`（字段名照
+OpenTelemetry 的日志数据模型），写入是 `logging.handlers.RotatingFileHandler` 加一个
+自定义 Formatter，trace/span 上下文是 `contextvars`。轮转与整行原子写入交给那个标准库
+handler —— 它已经在轮转与写入之间持锁，这正是自己实现最容易写错的一步。
 
 **不要**把 uvicorn 或 SDK 的 `logging` 也塞进这个文件：那是人读的文本，混进来会让采集器
 解析失败。人读的那一路走 stderr，结构化记录走 `litearm.obs` 这一条独立 logger。
