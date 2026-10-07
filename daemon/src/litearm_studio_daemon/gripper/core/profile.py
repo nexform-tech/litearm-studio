@@ -47,14 +47,21 @@ it at 20.  The jaws then stand still, which is the same thing the contact signal
 above is looking for, and calling that an obstruction is a report of the
 console's own weakness.
 
-:meth:`SpeedProfile.step` therefore takes a ``lead_rad``: while the ideal path is
-ahead of the jaws, the command may lead them by up to that much.  It is bounded —
-which is what keeps the anchoring guarantee, that the servo's position error is
-never larger than the mechanism can safely be asked for — and it is applied only
-where a gap has already opened, so it titrates itself to the friction actually in
-the way and a mechanism that keeps up never sees it.  Commanding the ideal path
-outright would be the unbounded version of the same idea, and would leave every
-move running ``kp·lead/kd`` above the speed it was asked for.
+:meth:`SpeedProfile.step` therefore takes a :class:`LeadCaps`: while the ideal
+path is ahead of the jaws, the command may lead them by up to the cap in force.
+It is bounded — which is what keeps the anchoring guarantee, that the servo's
+position error is never larger than the mechanism can safely be asked for — and
+it is applied only where a gap has already opened, so it titrates itself to the
+friction actually in the way and a mechanism that keeps up never sees it.
+Commanding the ideal path outright would be the unbounded version of the same
+idea, and would leave every move running ``kp·lead/kd`` above the speed it was
+asked for.
+
+The cap has two tiers, and which one is in force is decided by how close the
+move is to its target: a large one while travelling, to break static friction,
+narrowing to a small one inside the press zone so that an arrival is not pressed
+with the travelling squeeze.  See
+:data:`~litearm_studio_daemon.gripper.constants.CONTACT_LEAD_TRAVEL_MM`.
 """
 
 from __future__ import annotations
@@ -108,6 +115,34 @@ def _slew(current: float, target: float, max_delta: float) -> float:
     return target
 
 
+@dataclass(frozen=True)
+class LeadCaps:
+    """The two ceilings on a plain move's lead, and where the low one applies.
+
+    Mirrors the LiteGrip SDK's ``MotionConfig`` (``litegrip/actions.py``):
+    ``travel_mm`` is ``max_lead_mm``, the cap while the move is still
+    travelling; ``press_mm`` is ``stop_lead_mm``, the cap once the jaws are
+    within ``press_zone_mm`` of the target.  The split is what lets a move push
+    hard enough to break static friction without holding that push against a
+    limit it has arrived at — see
+    :data:`~litearm_studio_daemon.gripper.constants.CONTACT_LEAD_TRAVEL_MM`.
+    """
+
+    travel_mm: float
+    press_mm: float
+    press_zone_mm: float
+
+    def cap_mm(self, remaining_mm: float) -> float:
+        """The cap to use this tick, ``remaining_mm`` away from the target."""
+        if remaining_mm <= self.press_zone_mm:
+            return self.press_mm
+        return self.travel_mm
+
+
+#: The zero lead a force-carrying move wants: the plain anchored law.
+NO_LEAD = LeadCaps(0.0, 0.0, 0.0)
+
+
 class SpeedProfile:
     """Stateful wrapper around the trapezoid, one instance per motion.
 
@@ -133,7 +168,7 @@ class SpeedProfile:
         # The unobstructed path, integrated independently of the measurement.
         # ``None`` until the first step, which seeds it from the jaws.
         self.virtual_mm: float | None = None
-        self._was_cruise = False
+        self._was_tracking = False
         self._stall_ticks = 0
         self._last_measured: float | None = None
 
@@ -156,17 +191,18 @@ class SpeedProfile:
         self.virtual_mm = q
         return _output(q, 0.0, 0.0, arrived=True)
 
-    def step(self, measured_mm: float, dt: float, lead_rad: float = 0.0) -> ProfileOutput:
+    def step(self, measured_mm: float, dt: float, lead: LeadCaps = NO_LEAD) -> ProfileOutput:
         """Advance one tick and return what to command.
 
-        ``lead_rad`` is how far the command may run ahead of the measurement, over
-        and above the tick's own step, while the ideal path is ahead of the jaws.
-        It is the fix for the one case the anchored reference cannot serve: at
-        cruise the error it commands is one tick of travel, so the torque behind
-        it falls with the speed and a mechanism with more friction than that stops
-        — see :data:`~litearm_studio_daemon.gripper.constants.CONTACT_LEAD_RAD`.  Zero (the
-        default) is the plain anchored law, and is what a force-carrying move
-        wants.
+        ``lead`` is the two-tier ceiling on how far the command may run ahead of
+        the measurement, over and above the tick's own step, while the ideal path
+        is ahead of the jaws.  It is the fix for the one case the anchored
+        reference cannot serve: at cruise the error it commands is one tick of
+        travel, so the torque behind it falls with the speed and a mechanism with
+        more friction than that stops — see
+        :data:`~litearm_studio_daemon.gripper.constants.CONTACT_LEAD_TRAVEL_MM`.
+        :data:`NO_LEAD` (the default) is the plain anchored law, and is what a
+        force-carrying move wants.
         """
         if math.isnan(measured_mm) or dt <= 0:
             return _output(self.limits.clamp_mm(self.target_mm), 0.0, 0.0)
@@ -216,22 +252,32 @@ class SpeedProfile:
         # are still catching up, which reads as an enormous gap and reports
         # contact on an empty move.
         #
-        # It is only integrated at cruise speed.  While the reference is still
-        # ramping, the plant is chasing a moving target and lags it by a few
+        # It is not integrated while the reference is still accelerating.  The
+        # plant is chasing a moving target there and lags it by a few
         # millimetres — an artefact of acceleration, not of obstruction, and
         # several times larger than the gap a real contact produces in the time
-        # it takes to notice.  Seeding the comparison at the moment cruise is
-        # reached discards that transient instead of trying to threshold past it.
-        at_cruise = abs(self.v_ref) >= self.speed_mm_s - 1e-9
-        if at_cruise:
-            if not self._was_cruise:
-                # The shortfall is measured *from* the moment cruise begins, so
-                # the tick that begins it has none.  Seeding and integrating in
-                # the same tick puts a whole tick of travel into the gap before
-                # the jaws have been given the chance to deliver any of it, and
-                # the gap then never closes: a perfect plant sits one tick of
-                # travel behind the ideal path forever, which at 150 mm/s is
-                # 0.75 mm of the 1 mm contact budget spent on an empty move.
+        # it takes to notice.  Seeding the comparison once the reference has
+        # caught up with the speed the trapezoid allows discards that transient
+        # instead of trying to threshold past it.
+        #
+        # The test is against the speed allowed this tick (``v_allow``), not
+        # against the move's top speed.  A move decelerating toward its target is
+        # not accelerating, and the last millimetres — the press zone above all —
+        # are exactly where the lead has to stay available: with the old
+        # top-speed test a jaw that caught on the closing dead-band just short of
+        # the limit had no push left to break it, so the move ended at its
+        # deadline a few millimetres open (issue #72).
+        tracking = sign * self.v_ref >= 0.0 and abs(self.v_ref) >= v_allow - 1e-9
+        if tracking:
+            if not self._was_tracking:
+                # The shortfall is measured *from* the moment the reference is
+                # tracking, so the tick that begins it has none.  Seeding and
+                # integrating in the same tick puts a whole tick of travel into
+                # the gap before the jaws have been given the chance to deliver
+                # any of it, and the gap then never closes: a perfect plant sits
+                # one tick of travel behind the ideal path forever, which at
+                # 150 mm/s is 0.75 mm of the 1 mm contact budget spent on an
+                # empty move.
                 self.virtual_mm = measured
             else:
                 self.virtual_mm += self.v_ref * dt
@@ -239,17 +285,19 @@ class SpeedProfile:
         else:
             self.virtual_mm = measured
             lost_mm = 0.0
-        self._was_cruise = at_cruise
+        self._was_tracking = tracking
 
         # What to command.  The tick's step is the whole of it on a mechanism
         # that keeps up: ``lost_mm`` is zero and the lead adds nothing.  It is
         # the mechanism that does *not* keep up that needs it, and the gap it has
         # already opened is what sizes it — so the extra push is never more than
         # the friction actually in the way, and it is bounded whatever the
-        # friction turns out to be.  It is charged against the contact threshold
-        # rather than added to it, so a move that meets something still calls it
-        # after ``CONTACT_LOST_MM`` of unmet demand however large the lead is.
-        lead_mm = min(lost_mm, max(lead_rad, 0.0) * self.limits.rad_to_mm)
+        # friction turns out to be.  The cap narrows near the target so an
+        # arrival is not pressed with the travelling squeeze, and it is charged
+        # against the contact threshold rather than added to it, so a move that
+        # meets something still calls it after ``CONTACT_LOST_MM`` of unmet
+        # demand however large the cap is.
+        lead_mm = min(lost_mm, max(lead.cap_mm(rem), 0.0))
         advance = abs(self.v_ref * dt) + lead_mm
         if advance > rem:  # never let the reference overshoot the target
             advance = rem

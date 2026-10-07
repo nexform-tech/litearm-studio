@@ -44,7 +44,20 @@ from enum import Enum
 
 from .. import constants
 from ..units import Limits, clamp_force, clamp_force_torque, mm_to_rad_per_s
-from .profile import SpeedProfile
+from .profile import NO_LEAD, LeadCaps, SpeedProfile
+
+
+#: The two-tier plain-move lead this console drives with, built once from the
+#: policy constants — see
+#: :data:`~litearm_studio_daemon.gripper.constants.CONTACT_LEAD_TRAVEL_MM`.  A
+#: force-carrying move gets :data:`~litearm_studio_daemon.gripper.core.profile.NO_LEAD`
+#: instead; the position gain is the approach gain there, so any lead would read
+#: as the contact it is trying to detect.
+PLAIN_LEAD = LeadCaps(
+    travel_mm=constants.CONTACT_LEAD_TRAVEL_MM,
+    press_mm=constants.CONTACT_LEAD_PRESS_MM,
+    press_zone_mm=constants.CONTACT_PRESS_ZONE_MM,
+)
 
 
 class MotionState(str, Enum):
@@ -364,12 +377,12 @@ class MotionFSM:
         # ── SERVO ───────────────────────────────────────────────────────────
         assert self.profile is not None
         self._elapsed += dt
-        # A plain move gets the bounded lead that keeps its push independent of
-        # the speed it was sent at; a force-carrying one does not, because there
-        # the position gain is the approach gain and the same lead on its own
-        # would read as the contact it is trying to detect.
+        # A plain move gets the bounded two-tier lead that keeps its push
+        # independent of the speed it was sent at; a force-carrying one does not,
+        # because there the position gain is the approach gain and the same lead
+        # on its own would read as the contact it is trying to detect.
         out = self.profile.step(
-            pos_mm, dt, 0.0 if self._force_n > 0.0 else constants.CONTACT_LEAD_RAD
+            pos_mm, dt, NO_LEAD if self._force_n > 0.0 else PLAIN_LEAD
         )
         self.last_profile_out = out
         if self._deadline_s is None:

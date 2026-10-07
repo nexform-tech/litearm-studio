@@ -27,7 +27,7 @@ from __future__ import annotations
 # link — a few per cent of it — while the frames that actually load the bus are
 # the drive's own status stream, which the host does not set.  Lowering this
 # would cost the squeeze margin above and change nothing an operator can hear.
-# See CONTACT_LEAD_RAD below for the same arithmetic from the other end.
+# See CONTACT_LEAD_TRAVEL_MM below for the same arithmetic from the other end.
 CTRL_HZ = 200
 CTRL_DT = 1.0 / CTRL_HZ
 
@@ -153,48 +153,54 @@ CONTACT_STILL_RATIO = 0.25
 # Measured against the plant at 1.0 Nm of Coulomb friction, a 20 mm/s move was
 # declared "位置未随时间变化" 2 mm in, having never reached cruise.
 #
-# So a plain move's command may lead the measured position by this much, on top
-# of the tick's own step.  It is a *bounded* lead, which is what keeps the
-# anchored reference safe: the squeeze a plain move can apply stays
-# ``kp·(CONTACT_LOST_MM + CONTACT_LEAD_RAD·rad_to_mm)/rad_to_mm`` — 25 N on the
-# test rig's 46.7 mm/rad, inside the 40 N rating — instead of growing with an
-# integrator.
+# So a plain move's command may lead the measured position by a bounded amount,
+# on top of the tick's own step.  The lead is what keeps the anchored reference
+# safe: it is a ceiling, not an integrator, and it is applied *only* while the
+# trajectory's ideal path is ahead of the jaws, so it self-titrates — a
+# mechanism that keeps up never sees it, and one that does not is given exactly
+# as much extra push as its own friction, no more.  That is what separates it
+# from simply commanding the ideal path, which would leave the axis
+# ``kp·lead/kd`` — 0.2 rad/s, 9 mm/s — above the speed it was asked for, on every
+# move, healthy or not.
 #
-# It is also applied *only* while the trajectory's ideal path is ahead of the
-# jaws, so it self-titrates: a mechanism that keeps up never sees it, and one
-# that does not is given exactly as much extra push as its own friction, no more.
-# That is what separates it from simply commanding the ideal path, which would
-# leave the axis ``kp·lead/kd`` — 0.2 rad/s, 9 mm/s — above the speed it was
-# asked for, on every move, healthy or not.
+# The lead has two tiers, because one cannot serve both ends of a move.  The
+# closing side of this unit has ~0.010 rad of mechanical dead-band, so the lead
+# has to be large enough to break that while travelling; a lead that large held
+# all the way to a limit would be far more squeeze than an arrival should apply.
+# The LiteGrip SDK's ``MotionConfig`` splits it the same way — ``max_lead_mm``
+# 4.0 travelling, narrowing to ``stop_lead_mm`` 0.7 within ``press_zone_mm`` 2.0
+# of the limit — and those are the numbers used here rather than new ones.  The
+# source is ``litegrip/actions.py``; re-check it when the SDK moves.
 #
-# Sized by measurement, against the plant with Coulomb friction added.  At
-# 20 mm/s the lead below unsticks 1.1 Nm — 11 N of drag, a hundred times the
-# simulated unit's own free travel, and the case an operator meets as "the axis
-# twitches a couple of millimetres per command and reports an obstruction".
-# The flip points came out sharp: 0.002 rad covers 0.9 Nm, 0.003 covers 1.0,
-# 0.004 covers 1.1.  A real mechanism's friction is not known to 10 %, so the
-# margin is deliberate rather than the minimum.
+# The travelling tier is what breaks the closing stiction.  The old single tier
+# was 0.004 rad, which with the tick's own step led by ~0.0085 rad — under the
+# ~0.010 rad dead-band.  That is why a plain 闭合 could not cross it and the
+# jaws shook in the slack until the move deadline (issue #72).  ``kp × lead`` is
+# the push, so 4.0 mm (0.086 rad at this rig's 46.7 mm/rad) is 8.6 Nm at the
+# drive — inside its 10 Nm limit — and unsticks the ~1.0 Nm (``kp × 0.010 rad``)
+# the dead-band wants with a wide margin.
 #
-# How much it covers is not one number, because only ``kp·lead`` in the push is
-# constant: ``kp·v·dt`` and ``kd·v`` both shrink with the speed, so the lead is
-# 60 % of the push at the slider's bottom and 13 % of it at the default.  Measured
-# over the same plant in 0.05 Nm steps, the friction a move can still shift runs
-# from 0.55 Nm at 5 mm/s to 1.1 at 50.  A mechanism stiffer than that at the
-# bottom of the range is genuinely beyond the push the drive is given, and the
-# console reports it as the stall it is instead of creeping a millimetre at a
-# time — which is the honest half of the report this constant answers.
+# The pressing tier is what keeps an arrival bounded.  Within
+# ``CONTACT_PRESS_ZONE_MM`` of the target the cap is 0.7 mm, so the pressing
+# torque is ``kp × 0.7 mm / rad_to_mm`` — 1.5 Nm, 15 N, at rest on this rig —
+# against the 8.6 Nm the travelling cap alone would allow, while 1.5 Nm is still
+# above the dead-band so the last millimetre closes too.
 #
-# The cost is the blocked-move peak, which rises from 29.6 N with no lead to
-# 30.7 N here — still inside the 40 N rating and the bound the test suite
-# derives from it.  A stiffer mechanism is *not* reachable by raising this: 1.5
-# Nm wants 0.008 rad, whose 34.1 N peak is already over that bound.  The honest
-# answer there is more ``kp``/``kd``, not more lead — the ratio of the two is
-# what decides it, ``kp·lead`` being the push and ``kd`` what makes the approach
-# speed right, so this is a gain question wearing a millimetre's clothing.
+# The larger travelling cap does not raise the squeeze a *blocked* move applies.
+# The lead is charged against the contact threshold rather than added to it, so
+# ``CONTACT_LOST_MM`` of shortfall-and-lead still declares contact, and the
+# position error at that moment is at most ``CONTACT_LOST_MM/2 + v·dt`` — about
+# 16 N at the default speed, inside the 40 N rating, whatever the cap.  What the
+# larger cap changes is the case the detector deliberately lets through: a jaw
+# that is moving, but slower than the trajectory asked.  There the extra lead is
+# exactly the push it was missing, and a hard block still collapses the measured
+# speed against the reference and is reported as the stall it is.
 #
 # It does nothing for a force-carrying move, where the position gain is the
 # approach gain and this much lead would read as contact on its own.
-CONTACT_LEAD_RAD = 0.004
+CONTACT_LEAD_TRAVEL_MM = 4.0  # SDK MotionConfig.max_lead_mm
+CONTACT_LEAD_PRESS_MM = 0.7  # SDK MotionConfig.stop_lead_mm
+CONTACT_PRESS_ZONE_MM = 2.0  # SDK MotionConfig.press_zone_mm
 
 # How old the reading may be and still count as evidence.
 #
