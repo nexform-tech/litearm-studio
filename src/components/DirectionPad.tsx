@@ -98,7 +98,7 @@ export function DirectionPad({
           if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') release()
         }}
         onBlur={release}
-        className={cn('h-full min-h-[2.75rem] touch-none p-0', !width && 'w-full')}
+        className={cn('h-full max-h-[3.25rem] min-h-[2.5rem] touch-none p-0', !width && 'w-full')}
       >
         <span className="font-mono text-[1.0625rem] font-semibold">{label}</span>
       </Button>
@@ -119,21 +119,21 @@ export function DirectionPad({
     /* 4 行等高：顶部一对是"一行里居中放两个"，下面三行各自是 3 列。
        按钮宽度 = 3 列里的一格（CELL），行高由这 4 行平分，所以整盘每格完全等大。 */
     <div className="grid h-full min-h-0 grid-rows-4 gap-[0.5rem]">
-      <div className="flex items-stretch justify-center gap-[0.5rem]">
+      <div className="flex items-center justify-center gap-[0.5rem]">
         {button(cells[0], 0, CELL)}
         {button(cells[1], 1, CELL)}
       </div>
-      <div className="grid grid-cols-3 items-stretch gap-[0.5rem]">
+      <div className="grid grid-cols-3 items-center gap-[0.5rem]">
         <div />
         {button(cells[2], 2)}
         <div />
       </div>
-      <div className="grid grid-cols-3 items-stretch gap-[0.5rem]">
+      <div className="grid grid-cols-3 items-center gap-[0.5rem]">
         {button(cells[3], 3)}
         {center(cells[4], 4)}
         {button(cells[5], 5)}
       </div>
-      <div className="grid grid-cols-3 items-stretch gap-[0.5rem]">
+      <div className="grid grid-cols-3 items-center gap-[0.5rem]">
         <div />
         {button(cells[6], 6)}
         <div />

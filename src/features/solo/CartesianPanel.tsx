@@ -156,11 +156,12 @@ export function CartesianPanel({
   return (
     /* 左右两张卡：右卡固定 13rem，左卡吃掉其余宽度。卡片给一个明确的高度下限
        （比"贴合内容"高一截，盘面才不至于挤成一条），剩下的竖向空间留给关节列表。
+       盘面宽度按 12rem 封顶：按钮随之变小，省下的横向空间给右边的 movel 卡。
        注：根字号是流式的 clamp(13px, 1.522vh, 36px)，所以 13rem 在 900px 高的
        窗口下约 178px，不是 208px。 */
-    <div className="grid flex-none grid-cols-[minmax(0,1fr)_13rem] items-stretch gap-3">
+    <div className="grid flex-none grid-cols-[minmax(0,1fr)_15.5rem] items-stretch gap-3">
       {/* 左：方向点动 */}
-      <Card className="gap-3 rounded-[0.875rem] px-4 py-3.5 min-h-[25rem]">
+      <Card className="gap-3 rounded-[0.875rem] px-4 py-3.5 min-h-[23rem]">
         <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2 border-b pb-2.5">
           <div className="flex items-center gap-1.5 text-[0.90625rem] font-semibold text-foreground">
             <Compass className="size-4 text-primary" />
@@ -192,10 +193,10 @@ export function CartesianPanel({
         </div>
 
         <div className="flex min-h-0 flex-1 items-stretch justify-center gap-6 py-1" style={disabledStyle}>
-          <div className="w-full min-w-0 max-w-[18rem]">
+          <div className="w-full min-w-0 max-w-[12rem]">
             <DirectionPad cells={transCells} onPress={onJogPress} onRelease={onJogRelease} />
           </div>
-          <div className="w-full min-w-0 max-w-[18rem]">
+          <div className="w-full min-w-0 max-w-[12rem]">
             <DirectionPad cells={rotCells} onPress={onJogPress} onRelease={onJogRelease} />
           </div>
         </div>
