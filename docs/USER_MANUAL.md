@@ -217,7 +217,7 @@ Supports spatial pose adjustments referenced to the end-effector tool:
 ![Cartesian Linear Motion](images/en/09_solo_cartesian_movel.png)
 
 - Target Pose Input: Enter target `X, Y, Z` coordinates (m) and `Roll, Pitch, Yaw` angles (rad);
-- ⇠ Sync Current: Populate inputs with live TCP pose for precision fine-tuning;
+- Sync Current: Populate inputs with live TCP pose for precision fine-tuning;
 - Execute: the end effector travels the **straight line** from its start to the target (firmware `0x3A`, a Cartesian straight move) and the orientation is interpolated along the shortest arc; the start is the live measured TCP, not the values in the fields;
 - ⚠ The firmware accepting the command does not mean the arm stopped on the target: a later motion can supersede the trajectory, so read the live TCP in the Status card for the real landing point.
 

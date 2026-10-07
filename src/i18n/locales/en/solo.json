@@ -35,7 +35,7 @@
     "rotTitle": "Rotate",
     "transUnit": "(mm)",
     "rotUnit": "(deg)",
-    "syncCurrentPose": "⇠ Sync Current Pose",
+    "syncCurrentPose": "Sync Current Pose",
     "movelBtn": "Move to target pose",
     "movelMoving": "Moving...",
     "pad": {

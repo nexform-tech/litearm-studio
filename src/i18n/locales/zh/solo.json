@@ -35,7 +35,7 @@
     "rotTitle": "旋转",
     "transUnit": "(mm)",
     "rotUnit": "(deg)",
-    "syncCurrentPose": "⇠ 同步当前位姿",
+    "syncCurrentPose": "同步当前位姿",
     "movelBtn": "运动到目标位姿",
     "movelMoving": "正在移动...",
     "pad": {
