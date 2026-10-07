@@ -220,21 +220,21 @@ not disabled: the SDK it needs cannot import there.
 
 ## 7. First run: activation
 
-An arm that has never been activated refuses to enable and answers `ERR{0x10,0x08}`
-to every enable request. Everything else in the UI works, so the first run looks
-half-broken until you finish this.
+A new arm must be activated once before it can move. Until then, pressing
+**Enable** does nothing, while everything else works. Make sure the computer is
+online and the arm is connected, then:
 
-1. Open **Settings → Activation**. The panel shows the device UID, 24 hex characters.
-2. Copy the UID and give it to your supplier, who issues a credential for that
-   machine.
-3. Fill in the registration form (**name, phone, organization, email and region are
-   required**) and accept the consent document.
-4. Disarm the arm. The firmware rejects the licence record while the arm is armed.
-5. Press **Submit and activate**.
+1. Click **Settings**, then **Activation**. If it says **Activated**, you are done.
+2. Fill in the form. Name, phone, organization, email and region are required.
+3. Tick the consent box.
+4. If the arm is enabled, press **Disable** first and hold the arm steady, because it
+   will sag under its own weight.
+5. Press **Submit and activate** and wait a few seconds.
 
-Activation is the only feature that uses the network, and the credential is bound to
-one machine: another arm needs a credential issued for its own UID. The record is
-written once and cannot be erased from the UI.
+Activation is the only feature that needs the internet. It applies to this one arm
+only, so a second arm needs its own activation, and it cannot be undone from the
+software. If the panel says "no credential for this machine", press **Copy** and send
+the copied machine number to your supplier, then submit again.
 
 ## 8. Where settings live
 
@@ -262,5 +262,5 @@ rm -rf ~/.config/litearm-studio
 | The UI loads but the badge stays "Connect failed" | The serial device is missing or not readable. Check § 5, then pass `--port` explicitly |
 | The UI loads but never shows state | The WebSocket is blocked. Same-origin handshakes are required; a proxy or a browser extension that rewrites origins breaks it |
 | Nothing opens, only "无法自动打开浏览器" in the terminal | No browser was found. Open the printed address by hand |
-| `Enable` does nothing and the arm answers `ERR{0x10,0x08}` | The arm is not activated. See § 7 |
-| The activation panel reads "Unsupported" | The firmware predates 1.8.0 and must be upgraded |
+| **Enable** does nothing | The arm is not activated. See § 7 |
+| The activation panel reads **Not supported** | The firmware predates 1.8.0. Update the firmware first (see [user manual](USER_MANUAL.md) §5.7) |

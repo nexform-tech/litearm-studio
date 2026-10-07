@@ -24,26 +24,28 @@ litearm-python  ──USB CDC (1d50:606f)──>  STM32  ──CAN──>  motor
 
 ---
 
-## ✨ Features
+## Features
 
-- 🦾 **Single-arm motion control**
+- **Single-arm motion control**
   - Real-time 3D digital twin (URDF) with interactive frame axes;
   - Joint space sliders (J1–J7) whose ranges come from the controller's own soft limits (`get_joint_params`), with staged/batched dispatch;
   - Cartesian jogging in base and tool frames, plus linear `movel` to a target pose;
   - Ready pose, firmware homing, zero-gravity drag teaching, enable/disable, fault clearing;
   - High-priority **STOP** (emergency stop) that is reachable during motion.
-- 📈 **Telemetry**
+- **Telemetry**
   - 10 Hz joint sampling (angles, velocities, torques, temperatures, driver error codes);
   - Client-side IndexedDB session recording with a configurable retention cap (10–500 MB) and CSV export.
-- 🌐 **Internationalization** — English / 简体中文.
+- **LiteGrip gripper** (Linux only) — enable, open, close, grasp and release, with live position, force, torque and temperature readings and a calibration check on the Gripper page.
+- **Settings and activation** — payload, gravity and inertia, per-joint gains and soft limits, the firmware self-test, USB DFU firmware update, and the one-time arm activation.
+- **Internationalization** — English / 简体中文.
 
 ### Not in this build
 
-Trajectory teaching/playback, the controller-log page, gripper / dexterous-hand panels and per-joint impedance or hold modes are out of scope ([docs/REFACTOR_PLAN.md](docs/REFACTOR_PLAN.md) §5–6). The settings and calibration pages (payload, gains, limits, self-test) are not wired to the daemon yet; the daemon commands exist but no UI reaches them.
+Trajectory teaching/playback, the controller-log page, dexterous-hand panels and per-joint impedance or hold modes are out of scope ([docs/REFACTOR_PLAN.md](docs/REFACTOR_PLAN.md) §5–6). Everything the Settings page exposes (payload, gains, limits, self-test, gripper bus, activation, firmware update) *is* wired to the daemon.
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### 1. Prerequisites
 
@@ -138,18 +140,19 @@ so an untracked icon silently falls back to PyInstaller's default executable ico
 
 ---
 
-## 📖 Documentation
+## Documentation
 
 - **[Installation](docs/INSTALL.md)** — what each release file is, and how to install it on Ubuntu and Windows.
-- 📘 **[User Manual (English)](docs/USER_MANUAL.md)** — ⚠️ still describes the retired server-based build; being rewritten.
-- 📕 **[用户操作手册 (简体中文)](docs/USER_MANUAL_ZH.md)** — ⚠️ 同上。
+- **[User Manual (English)](docs/USER_MANUAL.md)** — operations, settings, safety and troubleshooting. Its trajectory and end-effector sections still describe the retired server-based build and are being rewritten.
+- **[用户操作手册 (简体中文)](docs/USER_MANUAL_ZH.md)** — same caveat.
 - **[Quickstart](docs/QUICKSTART.md)** / **[快速开始](docs/QUICKSTART_ZH.md)**
+- **[Activation contract](docs/ACTIVATION.md)** / **[激活接口约定](docs/ACTIVATION_ZH.md)** — the firmware, daemon and vendor-signer agreement behind activation. For developers changing any of the three.
 - **[Refactor plan](docs/REFACTOR_PLAN.md)** — architecture, interface contract and scope decisions.
 - **[Daemon README](daemon/README.md)**
 
 ---
 
-## 📋 Common Commands
+## Common Commands
 
 | Command | Description |
 | :--- | :--- |
@@ -163,7 +166,7 @@ so an untracked icon silently falls back to PyInstaller's default executable ico
 
 ---
 
-## 📄 License
+## License
 
 Licensed under the **Apache License 2.0** — see [LICENSE](LICENSE).
 

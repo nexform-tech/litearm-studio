@@ -152,7 +152,7 @@ const FALLBACK_ZH: Record<string, string> = {
   gripperEstopped: '夹爪急停已锁存：请排除原因后按「复位急停」',
   gripperBusy: '夹爪正在执行另一项长操作（标定），请等它结束',
   notActivated:
-    '这台机械臂尚未激活，固件拒绝使能。请到「设置 → 授权激活」复制设备 UID，向供应商换取授权凭据',
+    '这台机械臂尚未激活，固件拒绝使能。请到「设置 → 授权激活」填写注册信息并提交激活',
   activationMustDisable: '固件只在失能状态下接受写入授权记录：请先按「失能」，再重新提交',
   activationWriteRejected:
     '固件拒绝了这次写入（已激活过 / 凭据与本机不符 / 写入失败共用一个错误码，无法从码上区分）：请点「刷新」看授权状态；仍未激活就核对设备 UID 后重新申请凭据',
@@ -162,7 +162,7 @@ const FALLBACK_ZH: Record<string, string> = {
   activationUnreachable:
     '连不上激活服务：请检查这台机器的网络',
   activationNotFound:
-    '激活服务上没有这台机器的凭据：请把设备 UID 提供给供应商，拿到凭据后再试',
+    '激活服务上没有这台机器的凭据：请把设备 UID 发给供应商核对补录，然后重新提交',
   activationRateLimited: '激活服务暂时拒绝了本次请求（请求过于频繁）：请过一会儿再试',
   activationMaintenance: '激活服务正在维护：请稍后重试',
   activationServerError: '激活服务出错了：请稍后重试；一直失败请联系供应商',

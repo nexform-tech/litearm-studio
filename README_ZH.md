@@ -24,26 +24,28 @@ litearm-python  ──USB CDC (1d50:606f)──>  STM32  ──CAN──>  电�
 
 ---
 
-## ✨ 核心特性
+## 核心特性
 
-- 🦾 **单臂运动控制**
+- **单臂运动控制**
   - 基于真实 URDF 模型的 3D 数字孪生与坐标系可视化；
   - J1–J7 关节滑条，量程取自控制器自己的软限位（`get_joint_params`），支持实时下发与批量暂存下发；
   - 笛卡尔空间点动（基座/工具坐标系）与目标位姿直线运动（`movel`）；
   - 就绪姿态、固件低速度回零、零重力拖动示教、使能/失能、清除故障；
   - 高优先级 **STOP**（急停），运动过程中依然可达。
-- 📈 **遥测**
+- **遥测**
   - 10 Hz 全轴采样（角度、角速度、力矩、驱动温度、驱动错误码）；
   - 本地 IndexedDB 会话记录，保留上限可配（10–500 MB），支持导出 CSV。
-- 🌐 **国际化** —— 简体中文 / English。
+- **LiteGrip 夹爪**（仅 Linux）—— 使能、张开、闭合、夹取与释放，实时显示位置、夹持力、力矩与温度，并在「夹爪」页提供标定检查。
+- **设置与激活** —— 末端负载、重力与惯量、逐关节增益与软限位、固件自检、USB DFU 固件升级，以及一次性的机械臂激活。
+- **国际化** —— 简体中文 / English。
 
 ### 本版不做
 
-轨迹拖拽示教与回放、控制器日志页、夹爪/灵巧手面板、逐关节阻抗与保持模式（见 [docs/REFACTOR_PLAN.md](docs/REFACTOR_PLAN.md) §5–6）。设置与校准页（负载、增益、限位、自检）**尚未接线**：本地程序已有对应命令，但界面还到不了。
+轨迹拖拽示教与回放、控制器日志页、灵巧手面板、逐关节阻抗与保持模式（见 [docs/REFACTOR_PLAN.md](docs/REFACTOR_PLAN.md) §5–6）。「设置」页暴露的内容（负载、增益、限位、自检、夹爪总线、授权激活、固件升级）**都已接线**到本地程序。
 
 ---
 
-## 🚀 快速开始
+## 快速开始
 
 ### 1. 环境准备
 
@@ -118,7 +120,7 @@ chmod +x "litearm-studio-${version}-linux-amd64"
 ./"litearm-studio-${version}-linux-amd64"            # 真机，自动发现 USB 设备
 ```
 
-完整的环境要求、串口权限与首次激活步骤见 [docs/INSTALL.md](docs/INSTALL.md)。
+完整的环境要求、串口权限与首次激活步骤见 [docs/INSTALL_ZH.md](docs/INSTALL_ZH.md)。
 
 发布附件由 `.github/workflows/release.yml` 的 `package` job 产出；自己构建则先 `pnpm build`
 再执行 `python packaging/build.py`。
@@ -135,18 +137,19 @@ PyInstaller 悄悄退回它自带的默认图标。
 
 ---
 
-## 📖 文档
+## 文档
 
-- **[安装说明](docs/INSTALL.md)** —— 发布附件分别是什么，以及在 Ubuntu / Windows 上怎么装。
-- 📕 **[用户操作手册 (简体中文)](docs/USER_MANUAL_ZH.md)** —— ⚠️ 仍在描述已下线的 server 版，正在重写。
-- 📘 **[User Manual (English)](docs/USER_MANUAL.md)** —— ⚠️ 同上。
+- **[安装说明](docs/INSTALL_ZH.md)** —— 发布附件分别是什么，以及在 Ubuntu / Windows 上怎么装。
+- **[用户操作手册 (简体中文)](docs/USER_MANUAL_ZH.md)** —— 操作、设置、安全与故障排查。其中轨迹与末端执行器两节仍在描述已下线的 server 版，正在重写。
+- **[User Manual (English)](docs/USER_MANUAL.md)** —— 同样情况。
 - **[快速开始](docs/QUICKSTART_ZH.md)** / **[Quickstart](docs/QUICKSTART.md)**
+- **[激活接口约定](docs/ACTIVATION_ZH.md)** / **[Activation contract](docs/ACTIVATION.md)** —— 激活功能在固件、本地程序与厂商签发工具之间的约定，改其中任何一个之前先读它。
 - **[重构计划](docs/REFACTOR_PLAN.md)** —— 架构、接口契约与范围决策。
 - **[本地程序说明](daemon/README.md)**
 
 ---
 
-## 📋 常用命令
+## 常用命令
 
 | 命令 | 说明 |
 | :--- | :--- |
@@ -160,7 +163,7 @@ PyInstaller 悄悄退回它自带的默认图标。
 
 ---
 
-## 📄 授权许可
+## 授权许可
 
 本项目采用 **Apache License 2.0** 开源授权协议 - 详见 [LICENSE](LICENSE) 文件。
 

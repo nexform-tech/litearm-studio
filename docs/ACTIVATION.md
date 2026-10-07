@@ -1,9 +1,11 @@
-LiteArm Studio can read whether an arm is activated and, once the credential
-format is settled, will submit the vendor-issued credential. This document is the
-contract shared by the Studio activation panel, the daemon's `license` command,
-and the vendor signer; read it before changing any of the three.
+LiteArm Studio reads whether an arm is activated and submits the vendor-issued
+credential to the device. This document is the contract shared by the Studio
+activation panel, the daemon's `license` command, and the vendor signer; read it
+before changing any of the three.
 
 # Activation
+
+**English** | [简体中文](ACTIVATION_ZH.md)
 
 ## 1. What the firmware does
 
@@ -67,7 +69,10 @@ Two rules follow.
 - The UID comes from the license record, never from the USB serial string. They
   are different values and only the former is signed.
 - A credential is bound to one machine. The panel must show the UID prominently
-  while the arm is locked, because handing it over is the operator's next action.
+  while the arm is locked, so the operator can identify the machine when the service
+  has no credential for it. The vendor records the credential for that UID before
+  shipping, so the ordinary next action is to submit the registration form — sending
+  the UID to the supplier is the exception, not the first step.
 - When the record cannot be read, the daemon **sends nothing**: it never falls back
   to the UID the client supplied. Registration details filed under an unverified UID
   would be attached to the wrong machine, and the write could not succeed anyway. The
@@ -197,9 +202,9 @@ believe". The file name carries that information instead
   document, which covers only what Studio sends.
 - `code` is reserved for an order/activation code. Studio sends it when non-empty;
   no input for it exists yet. It stays unused because the service answers only for a
-  UID whose credential an operator entered in advance on the website's admin side:
-  possession of the machine is not enough to obtain a credential, so no second factor
-  is needed here.
+  UID whose credential the vendor entered in advance on the website's admin side
+  (normally before shipping): possession of the machine is not enough to obtain a
+  credential, so no second factor is needed here.
 - The daemon reads the UID from the device **before** anything goes out. When that
   read fails it refuses with `device_uid_unavailable`; when the firmware predates the
   license command it says `firmware_unsupported` instead. Both refuse without sending
@@ -252,7 +257,7 @@ promise this path cannot keep.
   one code. Read the record back: `state != 0` means the arm is activated and the
   submission succeeded.
 - **Never disable the arm to satisfy the "must be disarmed" gate** (`0x3F/0x04`).
-  Dropping motor power is the operator's decision, not a side effect of a licence
+  Dropping motor power is the operator's decision, not a side effect of a license
   submission.
 - **Activation must not freeze the arm.** The request runs outside the daemon's single
   command thread, so movement commands keep working while the credential is being
