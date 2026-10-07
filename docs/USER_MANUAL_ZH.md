@@ -44,8 +44,11 @@ STM32 固件 ──USB CDC（1d50:606f）──> CAN ──> 电机
 
 | 平台 | 文件 | 运行方式 |
 | :--- | :--- | :--- |
-| Windows | `litearm-studio-<版本号>-windows.exe` | 双击运行 |
-| Linux | `litearm-studio-<版本号>-linux` | `chmod +x` 后运行 |
+| Windows | `litearm-studio-<版本号>-windows-amd64.exe` | 双击运行 |
+| Linux | `litearm-studio-<版本号>-linux-amd64` | `chmod +x` 后运行 |
+
+Linux 版下载后没有执行权限，且需要 glibc 2.35 及以上（Ubuntu 22.04+、Debian 12+）；下载命令、
+校验方法、串口权限与首次激活见 [INSTALL.md](INSTALL.md)。
 
 程序是**自包含**的：不需要预装 Python，也不需要单独打开浏览器标签页——本地程序会自行开窗（检测到 Chromium 系浏览器时以应用窗口方式打开，否则退回普通标签页）。启动后会打印实际监听的地址，默认 `http://127.0.0.1:8765/`；端口被占用时会自动往后找并打印新端口，**以打印出的地址为准**。
 

@@ -44,8 +44,12 @@ Download the executable for your platform and verify it against the `.sha256` pu
 
 | Platform | File | How to run |
 | :--- | :--- | :--- |
-| Windows | `litearm-studio-<version>-windows.exe` | Double-click |
-| Linux | `litearm-studio-<version>-linux` | `chmod +x`, then run |
+| Windows | `litearm-studio-<version>-windows-amd64.exe` | Double-click |
+| Linux | `litearm-studio-<version>-linux-amd64` | `chmod +x`, then run |
+
+The Linux file is not executable as downloaded, and it needs glibc 2.35 or newer (Ubuntu 22.04+,
+Debian 12+). [INSTALL.md](INSTALL.md) has the download commands, the checksum verification, the
+serial-port permission and the first-run activation in full.
 
 The program is self-contained: it needs no Python install and no browser tab opened by hand — it opens a window itself (in `--app=` mode when a Chromium-based browser is present, otherwise a normal tab). It prints the address it listens on, `http://127.0.0.1:8765/` by default; if that port is taken it picks the next free one and prints it — **use the printed address**.
 

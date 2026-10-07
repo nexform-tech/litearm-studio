@@ -385,20 +385,29 @@ python3 -c "import litearm; arm=litearm.Arm('tcp/127.0.0.1:7447'); arm.home(); a
 
 #heading(level: 3, numbering: none, outlined: false)[Windows 系统]
 
-+ 双击运行 `LiteArm Studio-Setup-<版本号>.exe`，按向导完成安装并从桌面快捷方式启动。
-+ 若提示缺少 WebView2 运行时，请下载安装 #link("https://developer.microsoft.com/microsoft-edge/webview2/")[Microsoft Edge WebView2 Runtime]。
++ 从发布页下载 `litearm-studio-<版本号>-windows-amd64.exe`，双击运行即可，没有安装向导。
++ 程序未做代码签名，首次运行 Windows 会提示"Windows 已保护你的电脑"，选择"更多信息"→"仍要运行"。
++ 校验下载：`certutil -hashfile litearm-studio-<版本号>-windows-amd64.exe SHA256`，与同目录的 `.sha256` 比对。
 
 #heading(level: 3, numbering: none, outlined: false)[Linux / Ubuntu 系统]
 
 ```bash
-# 方式一：DEB 包安装（推荐）
-sudo dpkg -i "LiteArm Studio_<版本号>_amd64.deb"
-litearm-studio
+# 单文件可执行程序，免安装；需要 glibc 2.35 及以上（Ubuntu 22.04+ / Debian 12+）
+mkdir -p ~/Applications && cd ~/Applications
+version=0.11.0
+base="https://github.com/nexform-tech/litearm-studio/releases/download/v${version}"
+curl -LO "$base/litearm-studio-${version}-linux-amd64"
+curl -LO "$base/litearm-studio-${version}-linux-amd64.sha256"
 
-# 方式二：AppImage 免安装运行
-chmod +x "LiteArm Studio_<版本号>_amd64.AppImage"
-./"LiteArm Studio_<版本号>_amd64.AppImage"
+sha256sum -c "litearm-studio-${version}-linux-amd64.sha256"   # 应输出 OK
+chmod +x "litearm-studio-${version}-linux-amd64"              # 下载后没有执行权限
+./"litearm-studio-${version}-linux-amd64"
 ```
+
+#quote-box(rgb("#2563EB"))[
+  发布附件只有上面这两个单文件可执行程序：没有 `.deb` 包，也没有 AppImage。串口权限（`dialout` 组）
+  与首次激活步骤见仓库的 docs/INSTALL.md。
+]
 
 // ============================================================
 // 3. 首次联调与测试

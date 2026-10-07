@@ -2,7 +2,14 @@
   "branches": ["main", "master"],
   "plugins": [
     "@semantic-release/commit-analyzer",
-    "@semantic-release/release-notes-generator",
+    [
+      "@semantic-release/release-notes-generator",
+      {
+        "writerOpts": {
+          "headerPartial": "{{#if isPatch~}}\n  ##\n{{~else~}}\n  #\n{{~/if}} {{#if @root.linkCompare~}}\n  [{{version}}](\n  {{~#if @root.repository~}}\n    {{~#if @root.host}}\n      {{~@root.host}}/\n    {{~/if}}\n    {{~#if @root.owner}}\n      {{~@root.owner}}/\n    {{~/if}}\n    {{~@root.repository}}\n  {{~else}}\n    {{~@root.repoUrl}}\n  {{~/if~}}\n  /compare/{{previousTag}}...{{currentTag}})\n{{~else}}\n  {{~version}}\n{{~/if}}\n{{~#if title}} \"{{title}}\"\n{{~/if}}\n{{~#if date}} ({{date}})\n{{/if}}\n\n## Install\n\nLiteArm Studio ships as one self-contained file per platform: no Python, no Node.js and no installer.\n\n* Linux: `litearm-studio-{{version}}-linux-amd64` — verify the `.sha256`, `chmod +x` it, then run it.\n* Windows: `litearm-studio-{{version}}-windows-amd64.exe` — verify the `.sha256`, then double-click it.\n\nThe Linux file needs glibc 2.35 or newer (Ubuntu 22.04+, Debian 12+). Serial-port permission and\nfirst-run activation are covered in [docs/INSTALL.md]({{@root.host}}/{{@root.owner}}/{{@root.repository}}/blob/{{currentTag}}/docs/INSTALL.md).\n"
+        }
+      }
+    ],
     "@semantic-release/github"
   ]
 }

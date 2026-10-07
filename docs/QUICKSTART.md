@@ -33,6 +33,10 @@ litearm-python  ──USB CDC (1d50:606f @921600)──>  STM32  ──CAN──
 
 ## 2. Installation
 
+There are two routes. To run a released build, download the one-file executable and follow
+[INSTALL.md](INSTALL.md) — no Python, no pnpm and no checkout. The commands below build from
+source, which is what development needs.
+
 `litearm-python` is not published on PyPI, so install it from its checkout first:
 
 ```bash

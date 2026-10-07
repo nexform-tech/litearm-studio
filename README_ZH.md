@@ -87,14 +87,25 @@ pnpm dev        # http://localhost:5173 —— 把 /ws 与 /api 代理到 127.0.
 
 ### 4. 预打包可执行文件
 
-每个 release 都会附带 Windows / Linux 的单文件可执行程序（`litearm-studio-<版本>-<平台>`）
-以及每个附件旁的 `.sha256` 校验和。它们把本地程序、`litearm` SDK 与构建好的界面都打在里面，**目标机器
-不需要装 Python、不需要 pnpm、也不需要克隆仓库** —— 直接运行，控制台窗口就会打开：
+每个 release 都会附带两个单文件可执行程序 —— `litearm-studio-<版本号>-linux-amd64` 与
+`litearm-studio-<版本号>-windows-amd64.exe`，以及每个附件旁的 `.sha256` 校验和。它们把本地程序、
+`litearm` SDK 与构建好的界面都打在里面，**目标机器不需要装 Python、不需要 pnpm、也不需要克隆
+仓库**。Linux 那个文件下载后**没有执行权限**，先校验、再 `chmod +x`、然后运行：
 
 ```bash
-./litearm-studio-0.5.0-linux-amd64 --fake     # 离线，不碰硬件
-./litearm-studio-0.5.0-linux-amd64            # 真机，自动发现 USB 设备
+mkdir -p ~/Applications && cd ~/Applications
+version=0.11.0
+base="https://github.com/nexform-tech/litearm-studio/releases/download/v${version}"
+curl -LO "$base/litearm-studio-${version}-linux-amd64"
+curl -LO "$base/litearm-studio-${version}-linux-amd64.sha256"
+sha256sum -c "litearm-studio-${version}-linux-amd64.sha256"   # 输出 ...: OK
+chmod +x "litearm-studio-${version}-linux-amd64"
+./"litearm-studio-${version}-linux-amd64" --fake     # 离线，不碰硬件
+./"litearm-studio-${version}-linux-amd64"            # 真机，自动发现 USB 设备
 ```
+
+Linux 版需要 glibc 2.35 及以上（Ubuntu 22.04+、Debian 12+）；完整的环境要求、串口权限与首次
+激活步骤见 [docs/INSTALL.md](docs/INSTALL.md)。
 
 发布附件由 `.github/workflows/release.yml` 的 `package` job 产出；自己构建则先 `pnpm build`
 再执行 `python packaging/build.py`。
@@ -113,6 +124,7 @@ PyInstaller 悄悄退回它自带的默认图标。
 
 ## 📖 文档
 
+- **[安装说明](docs/INSTALL.md)** —— 发布附件分别是什么，以及在 Ubuntu / Windows 上怎么装。
 - 📕 **[用户操作手册 (简体中文)](docs/USER_MANUAL_ZH.md)** —— ⚠️ 仍在描述已下线的 server 版，正在重写。
 - 📘 **[User Manual (English)](docs/USER_MANUAL.md)** —— ⚠️ 同上。
 - **[快速开始](docs/QUICKSTART_ZH.md)** / **[Quickstart](docs/QUICKSTART.md)**
