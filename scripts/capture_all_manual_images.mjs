@@ -2,7 +2,28 @@ import { chromium } from 'playwright';
 import fs from 'fs';
 import path from 'path';
 
+// Panel headings each locale renders. These are the identifiers the script
+// matches on, so keep them in sync with src/i18n/locales/<locale>/solo.json
+// (solo:preview.title, solo:cartesian.*) and common.json (common:metrics.title).
+const LABELS = {
+  en: {
+    preview: '3D Live Preview',
+    metrics: 'Live Curves',
+    cartesian: 'Cartesian Space',
+    jogSubMode: 'Directional Jog',
+    targetSubMode: 'Target Pose movel',
+  },
+  zh: {
+    preview: '3D 实时预览',
+    metrics: '实时曲线',
+    cartesian: '笛卡尔空间',
+    jogSubMode: '方向点动',
+    targetSubMode: '目标位姿 movel',
+  },
+};
+
 async function captureLocale(locale = 'zh') {
+  const labels = LABELS[locale] ?? LABELS.en;
   const outDir = path.resolve(process.cwd(), `docs/images/${locale}`);
   if (fs.existsSync(outDir)) {
     fs.rmSync(outDir, { recursive: true, force: true });
@@ -26,114 +47,34 @@ async function captureLocale(locale = 'zh') {
     window.localStorage.setItem('litearm_language', lang);
   }, locale);
 
-  console.log(`[${locale.toUpperCase()}] 1. Capturing Solo Console...`);
+  console.log(`[${locale.toUpperCase()}] Capturing the control page...`);
   await page.goto('http://localhost:5173/control', { waitUntil: 'networkidle' });
   await page.waitForTimeout(2500);
 
-  // 01: Full Solo Overview
-  await page.screenshot({ path: path.join(outDir, '01_solo_overview.png') });
+  // Every panel is a shadcn Card carrying data-slot="card", so match on the
+  // heading text instead of the column index — the columns get reshuffled and
+  // the old positional selectors silently captured the wrong panel.
+  const card = (text) => page.locator('[data-slot="card"]', { hasText: text }).first();
 
-  // 02: Endpoint Modal
-  const editBtn = page.locator('#topbar-edit-endpoint-btn').first();
-  if (await editBtn.count() > 0) {
-    await editBtn.click();
-    await page.waitForTimeout(500);
-    await page.screenshot({ path: path.join(outDir, '02_header_endpoint_modal.png') });
-    await page.keyboard.press('Escape');
-    await page.waitForTimeout(300);
-  }
+  // 03: 3D preview panel
+  await card(labels.preview).screenshot({ path: path.join(outDir, '03_solo_3d_preview.png') });
 
-  const soloContainer = page.locator('#root > div > div.flex.min-w-0 > div.flex.min-h-0 > div');
-  const col0 = soloContainer.locator('> div').nth(0);
-  const col1 = soloContainer.locator('> div').nth(1);
-  const col2 = soloContainer.locator('> div').nth(2);
+  // 06: live telemetry curves panel
+  await card(labels.metrics).screenshot({ path: path.join(outDir, '06_solo_telemetry.png') });
 
-  // 03: 3D Preview Panel
-  const previewPanel = col0.locator('> div').nth(0);
-  await previewPanel.screenshot({ path: path.join(outDir, '03_solo_3d_preview.png') });
+  const cartesianPanel = card(labels.cartesian);
 
-  // 04: Pose Card - Joint
-  const poseCard = col0.locator('> div').nth(1);
-  await poseCard.screenshot({ path: path.join(outDir, '04_solo_pose_joint.png') });
-
-  // 05: Pose Card - Cartesian
-  const cartToggleBtn = poseCard.locator('button[value="cart"], button:has-text("笛卡尔"), button:has-text("Cartesian")').first();
-  if (await cartToggleBtn.count() > 0) {
-    await cartToggleBtn.click();
-    await page.waitForTimeout(500);
-    await poseCard.screenshot({ path: path.join(outDir, '05_solo_pose_cartesian.png') });
-    const jointToggleBtn = poseCard.locator('button[value="joint"], button:has-text("关节"), button:has-text("Joint")').first();
-    if (await jointToggleBtn.count() > 0) await jointToggleBtn.click();
-  }
-
-  // 06: Telemetry Panel
-  const metricsPanel = col0.locator('> div').nth(2);
-  await metricsPanel.screenshot({ path: path.join(outDir, '06_solo_telemetry.png') });
-
-  // 07: Control Bar + Joint Space Panel
-  await col1.screenshot({ path: path.join(outDir, '07_solo_control_and_joints.png') });
-
-  // 08: Cartesian Jog Panel
-  const cartesianPanel = col1.locator('> div:nth-child(2) > div').nth(1);
+  // 08: cartesian directional jog pad (the default sub-mode)
+  await cartesianPanel.getByRole('button', { name: labels.jogSubMode, exact: true }).click();
+  await page.waitForTimeout(500);
   await cartesianPanel.screenshot({ path: path.join(outDir, '08_solo_cartesian_jog.png') });
 
-  // 09: Cartesian Movel Panel
-  const movelSubModeBtn = cartesianPanel.locator('button:has-text("movel"), button:has-text("Target Pose"), button:has-text("目标位姿")').first();
-  if (await movelSubModeBtn.count() > 0) {
-    await movelSubModeBtn.click();
-    await page.waitForTimeout(500);
-    await cartesianPanel.screenshot({ path: path.join(outDir, '09_solo_cartesian_movel.png') });
-    const jogSubModeBtn = cartesianPanel.locator('button:has-text("方向点动"), button:has-text("Jog")').first();
-    if (await jogSubModeBtn.count() > 0) await jogSubModeBtn.click();
-  }
+  // 09: cartesian target-pose movel form
+  await cartesianPanel.getByRole('button', { name: labels.targetSubMode, exact: true }).click();
+  await page.waitForTimeout(500);
+  await cartesianPanel.screenshot({ path: path.join(outDir, '09_solo_cartesian_movel.png') });
 
-  // 10: Trajectory Panel
-  const trajPanel = col2.locator('> div').nth(0);
-  await trajPanel.screenshot({ path: path.join(outDir, '10_solo_trajectory.png') });
-
-  // 11: Gripper Panel
-  const gripperPanel = col2.locator('> div').nth(1);
-  await gripperPanel.screenshot({ path: path.join(outDir, '11_solo_gripper.png') });
-
-  console.log(`[${locale.toUpperCase()}] 3. Capturing Telemetry & Logs...`);
-  await page.goto('http://localhost:5173/log', { waitUntil: 'networkidle' });
-  await page.waitForTimeout(2000);
-  // 13: Telemetry Samples Tab
-  await page.screenshot({ path: path.join(outDir, '13_telemetry_samples.png') });
-
-  // 14: Telemetry Retention Modal
-  const editRetentionBtn = page.locator('button:has(svg.lucide-pencil)').first();
-  if (await editRetentionBtn.count() > 0) {
-    await editRetentionBtn.click();
-    await page.waitForTimeout(500);
-    await page.screenshot({ path: path.join(outDir, '14_telemetry_retention_modal.png') });
-    await page.keyboard.press('Escape');
-    await page.waitForTimeout(300);
-  }
-
-  // 15: Controller Logs Tab
-  const logsTabTrigger = page.locator('[role="tab"][value="logs"], button[value="logs"], button:has-text("控制器日志"), button:has-text("Controller Logs")').first();
-  if (await logsTabTrigger.count() > 0) {
-    await logsTabTrigger.click();
-    await page.waitForTimeout(1000);
-    await page.screenshot({ path: path.join(outDir, '15_controller_logs.png') });
-  }
-
-  console.log(`[${locale.toUpperCase()}] 4. Capturing Settings Pages...`);
-  const settingsTabs = [
-    { tab: 'payload', file: '16_settings_payload.png' },
-    { tab: 'safety', file: '17_settings_safety.png' },
-    { tab: 'gains', file: '18_settings_gains.png' },
-    { tab: 'endEffector', file: '20_settings_end_effector.png' },
-    { tab: 'system', file: '19_settings_system.png' },
-  ];
-  for (const { tab, file } of settingsTabs) {
-    await page.goto(`http://localhost:5173/settings?tab=${tab}`, { waitUntil: 'networkidle' });
-    await page.waitForTimeout(1000);
-    await page.screenshot({ path: path.join(outDir, file) });
-  }
-
-  console.log(`[${locale.toUpperCase()}] All screenshots captured successfully!`);
+  console.log(`[${locale.toUpperCase()}] Screenshots captured.`);
   await browser.close();
 }
 

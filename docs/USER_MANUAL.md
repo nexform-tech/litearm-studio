@@ -16,7 +16,7 @@ date: "October 6, 2026"
 
 ### 1.1 Overview
 
-LiteArm Studio is the graphical host software for LiteArm 7-DoF (J1–J7) robotic arms. It provides real-time motion control, trajectory teaching, status monitoring, and system management.
+LiteArm Studio is the graphical host software for LiteArm 7-DoF (J1–J7) robotic arms. It provides real-time motion control, status monitoring, and system management.
 
 The software is **one local program** (`litearm-studio-daemon`) plus **one browser UI**: the program owns the arm's USB serial port and serves the UI, which talks to it over the loopback interface. **There is no backend server, and no IP address to configure.**
 
@@ -33,7 +33,6 @@ STM32 firmware ──USB CDC (1d50:606f)──> CAN ──> motors
 | Core Module | Key Features |
 | :--- | :--- |
 | Control | 3D pose monitoring & simulation, joint angle control, Cartesian jog & linear interpolation, mode switching, one-click homing |
-| Trajectory | Zero-gravity manual lead-through teaching, trajectory library, multi-speed & loop playback, safe takeover |
 | Telemetry | Joint telemetry sampling & recording, session details, CSV export |
 | Settings | End-effector payload, gravity & inertia, gains & limits, diagnostics, gripper & bus, activation |
 | Activation | Fill in a registration form once, before first use, to unlock the arm |
@@ -121,15 +120,13 @@ The right side of the top bar continuously displays core operational metrics:
 
 ## 2. User Interface Overview
 
-![LiteArm Studio Interface Overview](images/en/01_solo_overview.png)
-
 LiteArm Studio consists of the left navigation rail, top status bar, and central workspace. Use the navigation rail to switch between functional modules.
 
 ---
 
 ## 3. Solo Control
 
-The Solo Control page provides real-time 3D pose monitoring, state readouts, joint and Cartesian motion control, trajectory teaching, and end-effector gripper or dexterous hand operations.
+The Solo Control page provides real-time 3D pose monitoring, state readouts, joint and Cartesian motion control, and LiteGrip gripper operation.
 
 ### 3.1 3D Robot Pose Viewport
 
@@ -148,10 +145,6 @@ The Solo Control page provides real-time 3D pose monitoring, state readouts, joi
 ### 3.2 Pose Monitor
 
 Displays real-time joint and end-effector pose readings:
-
-![Joint Space Readings](images/en/04_solo_pose_joint.png)
-
-![Cartesian TCP Readings](images/en/05_solo_pose_cartesian.png)
 
 - Joint Space: Real-time angles for all seven axes J1–J7 (rad);
 - Cartesian Space: Tool Center Point (TCP) spatial coordinates (`X, Y, Z` in meters) and Euler angles (`Roll, Pitch, Yaw` in radians) relative to the base coordinate frame.
@@ -173,8 +166,6 @@ Shows one real-time waveform at a time; you pick which metric it plots:
 
 Consolidates global robot controls and operating mode selection:
 
-![Control Bar and Joint Panels](images/en/07_solo_control_and_joints.png)
-
 #### Primary Controls
 
 - Enable / Disable: Controls motor power and holding state.
@@ -189,7 +180,6 @@ Consolidates global robot controls and operating mode selection:
 
 - Position Mode: Standard closed-loop servo control mode, high-stiffness position hold, precisely executing joint micro-stepping or Cartesian trajectory commands;
 - Drag Mode: Enables dynamic gravity compensation and zero-force teaching algorithms; motors cancel arm gravity in real time, allowing smooth manual lead-through by hand;
-- Impedance Mode: Compliant joint impedance control with tunable virtual stiffness and damping, buffering external contacts to enhance human-robot collaboration safety;
 - Global Speed Scale: Slider adjusting global speed ceiling from 1% to 100% across all motions (mapped to underlying driver and planner speed scaling).
 
 ---
@@ -228,56 +218,27 @@ Supports spatial pose adjustments referenced to the end-effector tool:
 
 ---
 
-### 3.7 Trajectory Lead-Through Teaching & Playback
+### 3.7 LiteGrip Gripper
 
-Teach complex operational motions intuitively by dragging:
+The LiteGrip two-finger parallel gripper shares the arm's CAN bus and lives in a panel at the bottom of the control page's right column. It has its own connection, enable and stop controls; the CAN channel, mounting, calibration and travel are configured in **Settings → Gripper & bus** (§5.4).
 
-![Trajectory Recording and Playback](images/en/10_solo_trajectory.png)
+- Connect / Disconnect: open or close the gripper session. **Connect** is available only when the program reports a gripper session — the Linux daemon has one, the Windows build does not;
+- Enable / Disable: energise or release the gripper drive. Opening, closing and calibration need the drive enabled;
+- Opening: the slider sets the target opening in millimetres and sends it on release; the live reading sits next to the panel title;
+- Open / Close: drive to the open or closed mechanical stop;
+- Grasp: close with the **target force** limit, so a fragile part is not crushed;
+- Zero gravity: release the drive so the jaws can be moved by hand;
+- Stop / Reset stop / Clear fault: stop immediately, release a latched stop, and clear a drive fault;
+- Gripper parameters (collapsed by default): **target force** (0–40 N) and **move speed** (5–150 mm/s);
+- Calibration: the panel names the calibration in effect (measured, nominal template, or factory fallback). With the nominal template it refuses millimetre targets until you run the zero calibration.
 
-#### Recording Workflow
+## 4. Telemetry
 
-1. Enter a trajectory name (e.g., `pick_and_place_01`);
-2. Click "Start Recording"; the arm automatically switches to zero-gravity drag mode and records poses;
-3. Manually guide the arm through the desired motion sequence;
-4. Click "Stop & Save"; the trajectory file is saved to the backend host.
-
-#### Playback Controls
-
-- Select Trajectory: Expand trajectory card to view duration and sampled point count;
-- Speed Scale: Choose 0.25×, 0.5×, 1.0×, or 2.0× speed (actual speed = global speed × scale);
-- Loop: Toggle continuous looped execution;
-- Play / Stop: Click "Play" to start; manual controls lock during playback to prevent collisions;
-- Takeover / Abort: Click "Takeover" or STOP to halt playback immediately and restore manual control;
-- Delete: Click trash icon to remove trajectory.
-
----
-
-### 3.8 End-Effector (Grippers & Hands)
-
-The system natively supports electric parallel grippers and multi-DoF dexterous hands. Attached tools are detected automatically to open specialized control panels:
-
-![End-Effector Control Panel](images/en/11_solo_gripper.png)
-
-- Electric Parallel Gripper Control:
-  - Stroke & Opening: Continuously adjust target stroke via slider; the jaws move smoothly upon release;
-  - Quick Actions: "Open" and "Close" buttons for rapid full-stroke clamping;
-  - Clamping Force: Set clamping force limits (1–40 N) to safeguard fragile parts;
-  - Travel Speed: Configure jaw opening/closing velocity (5–150 mm/s);
-  - Clear Fault: Reset stall or overcurrent alarms with a single click.
-- Multi-DoF Dexterous Hand Control:
-  - Independent finger joint angle and bending commands;
-  - Preset grasp gestures (fist, open, pinch, etc.) for rapid recall;
-  - Real-time thermal and torque monitoring across finger actuators.
-
-## 4. Telemetry & System Logs
-
-The Logs page manages sampled motion telemetry and system diagnostic logs.
+The Telemetry page manages sampled motion telemetry.
 
 ### 4.1 Telemetry Sampling & Session History
 
 Telemetry recording begins automatically upon connection, saving 10 Hz samples of joint angles, velocities, torques, temperatures, and fault states locally.
-
-![Telemetry Session Records](images/en/13_telemetry_samples.png)
 
 - Session List: Chronologically displays recording sessions with start time, duration, sample count, and storage size;
 - Detailed Inspection: Expand any session to inspect per-timestamp joint angles, velocities, torques, and driver temperatures;
@@ -285,8 +246,6 @@ Telemetry recording begins automatically upon connection, saving 10 Hz samples o
   - Click the "Retention: N MB" edit button at the top;
   - Configure storage quota between 10 MB and 500 MB;
   - Oldest sessions are pruned automatically upon reaching quota.
-
-![Telemetry Retention Modal](images/en/14_telemetry_retention_modal.png)
 
 ### 4.2 CSV Data Export
 
@@ -306,8 +265,6 @@ The Settings page is organised into seven tabs: **Payload / Gravity & Inertia / 
 
 Configure the tool/workpiece mass and centre of mass used by the firmware's gravity feed-forward.
 
-![Payload](images/en/16_settings_payload.png)
-
 - **Mass** (kg) and **centre of mass X / Y / Z** (metres, relative to the tool flange), corresponding to feed-forward items 4 and 5;
 - ⚠ The firmware **silently clamps** these values (mass to ≥ 0, centre of mass to ±1 m) instead of rejecting them, so the "effective" line on the panel is the truth — it is what was read back after writing.
 
@@ -323,8 +280,6 @@ Configure the tool/workpiece mass and centre of mass used by the firmware's grav
 ---
 
 ### 5.3 Gains & Limits
-
-![Gains and Limits](images/en/18_settings_gains.png)
 
 - **Per-joint gains and soft limits**: MIT stiffness / damping / torque clamp for each joint, plus the soft limits `q_min` / `q_max` (rad) that set the slider range on the control page;
 - **Persist to flash**: the firmware only allows flash writes while the arm is **disarmed**; it refuses while enabled;
@@ -418,6 +373,5 @@ The page then reports that the update finished and shows the device's current ve
 | "Arm is moving, please wait" | In-flight motion in progress; mutex guard active | Normal safety behavior; wait for move completion or click STOP |
 | Red fault indicator: "Joint N Fault" | Collision obstruction, overcurrent, or driver overtemperature (>80°C) | 1. Clear physical obstructions and allow cooling<br>2. Click "Clear Fault" on control bar<br>3. If persistent, support arm, disable, and re-enable |
 | "Controller in fault state" | Safety protection triggered (overspeed, boundary limit, communication timeout) | System-level safety protection triggered; support the arm, disable and re-enable. If it does not recover, restart the local program |
-| Gripper shows "Disconnected" | Cable loose, device offline, or power drop | 1. Check end-effector aviation connector<br>2. Reconnect arm in Studio to trigger auto-reconnect<br>3. Click "Clear Fault" in Gripper panel |
-| Trajectory list empty | 1. In Simulation mode<br>2. No files saved on backend host | 1. Switch to "Real" mode and connect<br>2. Record a new trajectory |
+| Gripper shows "Disconnected" | Cable loose, device offline, or power drop | 1. Check the end-effector connector<br>2. Click **Connect** in the gripper panel<br>3. Click **Clear fault** once the cause is gone |
 | No telemetry recorded | Arm is not in "Connected" status | Telemetry starts automatically upon live connection |
