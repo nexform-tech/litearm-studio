@@ -54,9 +54,10 @@ SEVERITY_NUMBERS: Final[Mapping[str, int]] = {
     "FATAL": 21,
 }
 
-#: Spellings that mean the same bucket. Python logging says `WARNING`, structlog
-#: accepts both, and JavaScript says `warning`; normalising here is what lets the
-#: frontend treat a daemon record and a browser-side record identically.
+#: Spellings that mean the same bucket. Python's `logging` says `WARNING`, the
+#: frontend's own normaliser has to cope with `warning` and `warn`, and OTLP says
+#: `WARN`; normalising here is what lets the frontend treat a daemon record and a
+#: browser-side record identically.
 SEVERITY_ALIASES: Final[Mapping[str, str]] = {
     "TRACE": "TRACE",
     "DEBUG": "DEBUG",
