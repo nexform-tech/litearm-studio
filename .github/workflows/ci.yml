@@ -93,9 +93,13 @@ jobs:
           pip install ../litegrip-python
           pip install -e "daemon[test]"
 
-      - name: Daemon unit tests (pytest)
+      # The packaging tests run here too: `packaging/tests` builds a real `.deb` with
+      # dpkg-deb, and the release-time `package` job only runs when a new version is
+      # published. Without this step the packaging path would have no per-PR verification
+      # at all.
+      - name: Python unit tests (pytest)
         working-directory: litearm-studio
-        run: python -m pytest daemon/tests -q
+        run: python -m pytest daemon/tests packaging/tests -q
 
       - name: Validate repository standards
         working-directory: litearm-studio

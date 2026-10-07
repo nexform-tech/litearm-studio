@@ -85,27 +85,40 @@ pnpm dev        # http://localhost:5173 — proxies /ws and /api to 127.0.0.1:87
 
 Run `litearm-studio-daemon --fake --no-open` alongside it.
 
-### 4. Prebuilt executables
+### 4. Prebuilt artifacts
 
-Each release also attaches standalone one-file executables,
-`litearm-studio-<version>-linux-amd64` and `litearm-studio-<version>-windows-amd64.exe`, plus a
-`.sha256` next to each. They bundle the daemon, the `litearm` SDK and the built UI, so a target
-machine needs **no Python, no pnpm and no repository checkout**. The Linux file is not executable
-as downloaded — verify it, `chmod +x` it, then run it:
+Each release attaches a Debian package, standalone one-file executables for other Linux and for
+Windows, and a `.sha256` next to each. They bundle the daemon, the `litearm` SDK and the built UI,
+so a target machine needs **no Python, no pnpm and no repository checkout**.
+
+On Ubuntu 22.04+ and Debian 12+, install the package: it makes itself executable, grants the
+serial-port permission and adds an entry to the application list.
+
+```bash
+cd ~/Downloads
+version=0.12.0
+base="https://github.com/nexform-tech/litearm-studio/releases/download/v${version}"
+curl -LO "$base/litearm-studio_${version}_amd64.deb"
+curl -LO "$base/litearm-studio_${version}_amd64.deb.sha256"
+sha256sum -c "litearm-studio_${version}_amd64.deb.sha256"   # prints: ...: OK
+sudo apt install ./litearm-studio_${version}_amd64.deb
+litearm-studio --fake     # offline, no hardware
+```
+
+Everywhere else — and on Windows — use the standalone file. It is not executable as downloaded, so
+`chmod +x` it first; the Linux one needs glibc 2.35 or newer:
 
 ```bash
 mkdir -p ~/Applications && cd ~/Applications
-version=0.11.0
-base="https://github.com/nexform-tech/litearm-studio/releases/download/v${version}"
+# $base and $version are the ones set above
 curl -LO "$base/litearm-studio-${version}-linux-amd64"
 curl -LO "$base/litearm-studio-${version}-linux-amd64.sha256"
-sha256sum -c "litearm-studio-${version}-linux-amd64.sha256"   # prints: ...: OK
+sha256sum -c "litearm-studio-${version}-linux-amd64.sha256"
 chmod +x "litearm-studio-${version}-linux-amd64"
 ./"litearm-studio-${version}-linux-amd64" --fake     # offline, no hardware
 ./"litearm-studio-${version}-linux-amd64"            # real arm, USB auto-discovery
 ```
 
-The Linux file needs glibc 2.35 or newer (Ubuntu 22.04+, Debian 12+).
 [docs/INSTALL.md](docs/INSTALL.md) covers the requirements, the serial-port permission and
 first-run activation in full.
 

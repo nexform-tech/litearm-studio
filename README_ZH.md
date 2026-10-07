@@ -85,17 +85,31 @@ pnpm dev        # http://localhost:5173 —— 把 /ws 与 /api 代理到 127.0.
 
 另开一个终端跑 `litearm-studio-daemon --fake --no-open` 即可。
 
-### 4. 预打包可执行文件
+### 4. 预打包产物
 
-每个 release 都会附带两个单文件可执行程序 —— `litearm-studio-<版本号>-linux-amd64` 与
-`litearm-studio-<版本号>-windows-amd64.exe`，以及每个附件旁的 `.sha256` 校验和。它们把本地程序、
-`litearm` SDK 与构建好的界面都打在里面，**目标机器不需要装 Python、不需要 pnpm、也不需要克隆
-仓库**。Linux 那个文件下载后**没有执行权限**，先校验、再 `chmod +x`、然后运行：
+每个 release 都会附带三种东西 —— Ubuntu / Debian 用的 `.deb` 安装包、其他 Linux 与 Windows 用的
+单文件可执行程序，以及每个附件旁的 `.sha256` 校验和。它们把本地程序、`litearm` SDK 与构建好的
+界面都打在里面，**目标机器不需要装 Python、不需要 pnpm、也不需要克隆仓库**。
+
+Ubuntu 22.04+ / Debian 12+ 直接装 `.deb`：执行权限、串口访问与桌面图标都由它一次办好。
+
+```bash
+cd ~/Downloads
+version=0.12.0
+base="https://github.com/nexform-tech/litearm-studio/releases/download/v${version}"
+curl -LO "$base/litearm-studio_${version}_amd64.deb"
+curl -LO "$base/litearm-studio_${version}_amd64.deb.sha256"
+sha256sum -c "litearm-studio_${version}_amd64.deb.sha256"   # 输出 ...: OK
+sudo apt install "./litearm-studio_${version}_amd64.deb"
+litearm-studio --fake     # 离线，不碰硬件
+```
+
+其他发行版与 Windows 用单文件可执行程序：它下载后**没有执行权限**，先 `chmod +x`；Linux 版需要
+glibc 2.35 及以上。
 
 ```bash
 mkdir -p ~/Applications && cd ~/Applications
-version=0.11.0
-base="https://github.com/nexform-tech/litearm-studio/releases/download/v${version}"
+# $base 与 $version 沿用上面的赋值
 curl -LO "$base/litearm-studio-${version}-linux-amd64"
 curl -LO "$base/litearm-studio-${version}-linux-amd64.sha256"
 sha256sum -c "litearm-studio-${version}-linux-amd64.sha256"   # 输出 ...: OK
@@ -104,8 +118,7 @@ chmod +x "litearm-studio-${version}-linux-amd64"
 ./"litearm-studio-${version}-linux-amd64"            # 真机，自动发现 USB 设备
 ```
 
-Linux 版需要 glibc 2.35 及以上（Ubuntu 22.04+、Debian 12+）；完整的环境要求、串口权限与首次
-激活步骤见 [docs/INSTALL.md](docs/INSTALL.md)。
+完整的环境要求、串口权限与首次激活步骤见 [docs/INSTALL.md](docs/INSTALL.md)。
 
 发布附件由 `.github/workflows/release.yml` 的 `package` job 产出；自己构建则先 `pnpm build`
 再执行 `python packaging/build.py`。
