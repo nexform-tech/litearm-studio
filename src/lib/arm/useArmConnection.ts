@@ -15,7 +15,16 @@ export function useArmConnection() {
 
   /** 连接。`port` = 顶栏下拉里选的那个串口（不传 = 交给 daemon 自己解析）。 */
   const connect = useCallback((port?: string) => armClient.connect(port), [])
-  const disconnect = useCallback(() => armClient.disconnect(), [])
+
+  // 断开是**带确认的请求**（见 `ArmClient.disconnect`）：daemon 没确认时它**不**谎报已断开
+  // 而是抛错。那条失败必须让操作员看见，否则他会以为断了、其实臂还连着 —— 与 `requestStop`
+  // 走同一条提示通道。
+  const disconnect = useCallback(() => {
+    void armClient.disconnect().catch((err) => {
+      const message = formatArmError(err) || String(err)
+      toast.error(i18n.t('common:errors.disconnectFailed', { message }), { id: 'disconnect-failed' })
+    })
+  }, [])
 
   // 急停失败必须让操作员看见。`client.requestStop()` 刻意不吞拒绝（见那里的注释），
   // 因为「按了 STOP 但 daemon 拒绝」是最不能静默的一条路径。

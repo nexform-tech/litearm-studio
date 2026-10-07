@@ -103,6 +103,7 @@
     "portChangeWhileConnected": "The arm is already connected on another serial port: press Disconnect, then connect the new port",
     "stopFailed": "Emergency stop was not delivered: {{message}}",
     "jogFailed": "Jog did not run: {{message}}",
+    "disconnectFailed": "Disconnect was not confirmed: {{message}}. The arm may still be connected — please retry",
     "notEnabled": "Robot arm is not enabled — enable it before commanding motion",
     "cartUnsupported": "This firmware was built without cartesian planning: movel and cartesian jog are unavailable, use joint space instead",
     "jointLimitsFallback": "Could not read the joint soft limits from the controller; the sliders fell back to built-in ranges",
