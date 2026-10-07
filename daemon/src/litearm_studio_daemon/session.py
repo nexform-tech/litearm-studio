@@ -524,18 +524,18 @@ class Session:
                 except Exception as e:  # noqa: BLE001 - 见上
                     last = e
                     log.info("连接 %s 失败: %s: %s", target, type(e).__name__, e)
-                    obs.emit(obs.CONNECT_FAILED,
-                             body=f"连接 {target} 失败: {type(e).__name__}: {e}",
-                             fields={"port": target, "phase": "dial",
-                                     "error_kind": type(e).__name__},
-                             exception=e, trace_id=trace)
                     continue
                 self._commit_link(arm, target, gen, trace)
                 return
             if last is None:
                 last = litearm.TransportError(
                     "未发现 STM32 CDC 设备 (VID:PID 1d50:606f); 请插好设备或用 --port 指定")
-            self._connect_failed(last, None, gen)
+            # ⚠ 记录排在 `_connect_failed` **之后**: 那条路才把会话落进 `error` 态, 而
+            # "试过哪些口、最后为什么没成"是这次连接的**结局**, 不是某一跳的插曲。
+            # 顺序反了还会在状态位与日志之间留一个窗口 —— 观察到"已经试过了"的那一刻
+            # 会话却还在 `connecting`, 于是紧接着的第二次 `connect` 被判成"正在连接中"
+            # 而返回 False (真机不会, 但那是靠时序侥幸)。
+            self._connect_failed(last, None, gen, targets)
 
         # ⚠ 在 trace 上下文**之内**提交: 执行器线程继承提交那一刻的 contextvars,
         # 于是 `_open`/`_commit_link` 里的记录自动带上同一个 trace_id。
@@ -701,7 +701,8 @@ class Session:
             log.warning("关闭会话时抛出异常 (已忽略)", exc_info=True)
 
     def _connect_failed(self, exc: BaseException, arm: Optional[Arm],
-                        gen: Optional[int] = None) -> None:
+                        gen: Optional[int] = None,
+                        candidates: Optional[List[str]] = None) -> None:
         """连接（或连接收尾）失败 —— 落 `error` 态并推一条带原因的 `conn`。
 
         ⚠ **必须把异常转成状态, 不许让它逃出去**: 本方法跑在命令执行器的那条 Future
@@ -728,9 +729,15 @@ class Session:
             self._last_error = f"{type(exc).__name__}: {exc}"
             self._resolved_port = None
         log.warning("连接失败: %s", self._last_error)
+        # ⚠ 这里是**所有**连接失败的收口 (握手、dial、收尾), 所以终局记录只在这里发一次。
+        # 调用方若再补一条, 一条失败的连接会留下两条 `session.connect.failed` ——
+        # 页面上的"几次失败"就成了两倍。
         obs.error(obs.CONNECT_FAILED, body=f"连接失败: {self._last_error}",
                   fields={"port": self._port or "auto", "fake": self._fake,
-                          "error_kind": type(exc).__name__},
+                          "error_kind": type(exc).__name__,
+                          # 试过哪些口是排障的第一手材料 ("我明明插着它"), 而它只有
+                          # 候选循环那一层知道。
+                          **({"candidates": candidates} if candidates else {})},
                   exception=exc)
         self._broadcast({"t": "conn", **self.arm_info()})
 
