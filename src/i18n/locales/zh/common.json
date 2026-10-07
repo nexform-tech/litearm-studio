@@ -133,6 +133,7 @@
     "gripperCalibration": "夹爪标定不允许这个动作：{{message}}",
     "gripperEstopped": "夹爪急停已锁存：请排除原因后按「复位急停」",
     "gripperBusy": "夹爪正在执行另一项长操作（标定），请等它结束",
+    "gripperBrowse": "打不开这个目录：{{message}}",
     "activationServerError": "激活服务出错了：请稍后重试；一直失败请联系供应商",
     "activationInvalidRequest": "激活服务拒绝了这份注册信息：请核对带 * 的字段后重新提交（若反复出现，说明网站的字段规则已更新）",
     "activationCodeRequired": "激活服务要求提供订单号 / 激活码：请升级上位机，或联系供应商",

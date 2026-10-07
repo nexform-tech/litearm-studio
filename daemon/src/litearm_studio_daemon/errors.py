@@ -156,6 +156,19 @@ class GripperBusyError(DaemonError):
     """A second long operation (a probe) was requested while one was running."""
 
 
+class GripperBrowseError(DaemonError):
+    """``gripper.list_dir`` was pointed at a path that is not a readable directory.
+
+    Three causes share one kind on purpose: the path does not exist, it exists
+    but is not a directory, and it is a directory this user cannot read.  They
+    share one operator action —— pick a different folder —— and one display
+    string; the specific cause travels in ``msg`` as the detail.
+    """
+
+    def __init__(self, detail: str = ""):
+        super().__init__(detail or "不是一个可读取的目录")
+
+
 class NotConnectedCommandError(DaemonError):
     """会话未连接时就发命令。
 

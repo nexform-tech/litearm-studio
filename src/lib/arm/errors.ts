@@ -33,6 +33,7 @@ const KIND_KEYS: Record<string, string> = {
   GripperCalibrationError: 'gripperCalibration',
   GripperEstoppedError: 'gripperEstopped',
   GripperBusyError: 'gripperBusy',
+  GripperBrowseError: 'gripperBrowse',
   // 激活（凭据/注册）。具体原因看 `err.reason`（见下面的 REASON_KEYS）。
   ActivationError: 'activationFailed',
   LicenseFileError: 'licenseUnreadable',
@@ -155,6 +156,7 @@ const FALLBACK_ZH: Record<string, string> = {
   gripperCalibration: '夹爪标定不允许这个动作：{{message}}',
   gripperEstopped: '夹爪急停已锁存：请排除原因后按「复位急停」',
   gripperBusy: '夹爪正在执行另一项长操作（标定），请等它结束',
+  gripperBrowse: '打不开这个目录：{{message}}',
   notActivated:
     '这台机械臂尚未激活，固件拒绝使能。请到「设置 → 授权激活」填写注册信息并提交激活',
   activationMustDisable: '固件只在失能状态下接受写入授权记录：请先按「失能」，再重新提交',

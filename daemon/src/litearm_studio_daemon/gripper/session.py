@@ -81,14 +81,15 @@ GRIPPER_COMMANDS: Dict[str, str] = {
     "gripper.set_motion": "改速度/夹持力 → 生效中的设置",
     "gripper.load_template": "声明装配方向 (normal|reverse), 按名载入模板 → {mount, source}",
     "gripper.list_calibrations": "列出本通道可用的标定及其来源/校验 → [ … ]",
+    "gripper.list_dir": "列出某目录下的子目录与 *.json 标定并逐个校验 → {path, parent, entries}",
     "gripper.import_calibration": "载入指定标定文件并记住它 → {path, source}",
     "gripper.zero": "引导式实测 (travelMm) → {closedRad, openRad, radToMm}",
     "gripper.set_allow_factory": "确认/撤销「允许出厂标定」(持久化) → {allowFactory}",
 }
 
-#: Commands that need a connected session.  ``gripper.list_calibrations`` is
-#: deliberately absent: listing files is a filesystem question, and the settings
-#: page asks it before it connects.
+#: Commands that need a connected session.  ``gripper.list_calibrations`` and
+#: ``gripper.list_dir`` are deliberately absent: listing files is a filesystem
+#: question, and the settings page asks it before it connects.
 _NEEDS_CONNECTION = frozenset({
     "gripper.enable", "gripper.disable", "gripper.clear_fault",
     "gripper.open", "gripper.close", "gripper.grasp", "gripper.move_to",
@@ -948,6 +949,32 @@ class GripperSession:
             items.insert(0, {**calibration.candidate_dict(active, config.channel),
                              "inUse": True})
         return items
+
+    def _cmd_list_dir(self, p: dict) -> dict:
+        """One directory of the **control machine**, for the file picker.
+
+        Also a filesystem question, and likewise answered without a connection
+        (see ``_NEEDS_CONNECTION``).  The listing itself lives in ``browse.py``;
+        this only feeds it the two things the session knows —— this channel's
+        travel and channel, which is what a ``*.json`` row is validated against
+        —— and marks the file currently in effect.
+        """
+        from .browse import list_dir
+
+        path = p.get("path")
+        if path is not None and not isinstance(path, str):
+            raise ValueError("path 需为字符串")
+        config = self.config
+        result = list_dir(path, travel_mm=config.travel_mm, channel=config.channel)
+        # Same reasoning as ``_cmd_list_calibrations``: "which row is in effect"
+        # is the session's answer, not the lister's.
+        active = self.loop.info
+        active_path = getattr(active, "path", None) if active is not None else None
+        if active_path:
+            for entry in result["entries"]:
+                if entry.get("type") == "file" and entry.get("path") == active_path:
+                    entry["inUse"] = True
+        return result
 
     def _cmd_import_calibration(self, p: dict) -> dict:
         """Pin and apply a calibration file the operator chose."""

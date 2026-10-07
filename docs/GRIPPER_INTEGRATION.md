@@ -176,6 +176,7 @@ progress, so the page can say why it is waiting.
 | `gripper.set_motion` | `speedMmS?`, `forceN?` | the settings now in effect |
 | `gripper.load_template` | `mount` (`normal` or `reverse`) | `{"mount":…,"source":"template"}` |
 | `gripper.list_calibrations` | — | `[{"path","source","valid","problems":[],"warnings":[],"closedRad","openRad","fileRadToMm","template","mount"}]` |
+| `gripper.list_dir` | `path?` (on the control machine) | `{"path":…,"parent":…\|null,"truncated":bool,"entries":[{"name","path","type":"dir"\|"file","readable","symlink"}[,"size","mtime", candidate fields…]]}` |
 | `gripper.import_calibration` | `path` (on the control machine) | `{"path":…,"source":"measured"}` |
 | `gripper.zero` | `travelMm` | `{"closedRad":…,"openRad":…,"radToMm":…,"source":…,"warnings":[]}` |
 | `gripper.set_allow_factory` | `allow` (bool) | `{"allowFactory":true}` |
@@ -199,6 +200,15 @@ Rules:
   opens. It is an addition to the table above, needed by §5.3 row 6.
 - `gripper.list_calibrations` needs no connection: it is a filesystem question,
   and the settings page asks it while deciding what to load.
+- `gripper.list_dir` likewise needs no connection. It lists the **control
+  machine's** filesystem: sub-directories plus `*.json` files, directories
+  first, then names case-insensitively. Without `path` (or with an empty one) it
+  starts at the daemon user's home directory. Each `*.json` carries the same
+  fields as a `gripper.list_calibrations` entry (inspected and validated the same
+  way), plus `size`/`mtime`; the `path` it reports is exactly what
+  `gripper.import_calibration` accepts, with unchanged semantics. Listing is
+  capped (`truncated: true` past the limit), and a path that is not a readable
+  directory is refused with `GripperBrowseError`.
 
 ### 4.3 Error kinds
 
@@ -212,6 +222,7 @@ Reuse `{"kind","msg"}`. New kinds map to new `common:errors.*` keys:
 | `GripperCalibrationError` | No usable calibration for the requested motion. |
 | `GripperEstoppedError` | Motion refused while the stop latch is engaged. |
 | `GripperBusyError` | A second long operation (probe) was requested. |
+| `GripperBrowseError` | `gripper.list_dir` pointed at a path that is not a readable directory. |
 
 ## 5. Daemon implementation
 
@@ -385,8 +396,9 @@ There are two surfaces, matching the retired product:
   aperture, open/close/grasp/release, force and speed, live position and
   temperature, fault clearing, E-stop state, and the CAN channel it connects on.
 - **A section in the existing settings page**, for configuring it: CAN channel,
-  CAN ids, mount, which calibration file is in effect, import a calibration,
-  run `zero()`, and the per-channel travel.
+  CAN ids, mount, which calibration file is in effect, import a calibration
+  (typed path or a **Browse…** button that opens a control-machine directory
+  picker), run `zero()`, and the per-channel travel.
 
 The CAN channel appears on both surfaces on purpose: the operator connects and
 drives the gripper from the control page, so switching the CAN line from there
@@ -426,6 +438,14 @@ The i18n namespace is `locales/{en,zh}/gripper.json`, registered in
   charts — but they must be in the DOM and one click away, not summarised away.
 - Only one component may mount `useGripperAlerts()` at a time: each mount is an
   independent subscription, so two of them raise every alert twice.
+- The import **Browse…** dialog (`GripperBrowserDialog`) lists the **control
+  machine's** filesystem via `gripper.list_dir`, so opening it needs no
+  connection (only the eventual import does). It starts in the parent of the
+  typed path, offers Up/Home, greys out unreadable directories, shows a
+  `*.json`'s validation inline on its row, and on pick writes the absolute path
+  back into the same import field and closes. Its errors are shown inline, not
+  as a toast. Directory rows and file rows render through the same
+  `CalibrationRow` the settings list uses, so the two cannot drift apart.
 
 ### 6.4 What to reuse from the retired panels
 
