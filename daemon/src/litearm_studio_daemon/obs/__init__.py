@@ -89,9 +89,11 @@ from .schema import (  # re-exported: emitters use `obs.CONNECT_STARTED`
     RECOVER_ERROR,
     RECOVER_FAILED,
     RECOVER_GAVE_UP,
+    KIND_SAMPLE,
     SERVICE_NAME,
     SESSION_CLOSED,
     STARTUP_REFUSED,
+    STATE_SAMPLE,
     UPGRADE_CRASHED,
     UPGRADE_FINISHED,
     UPGRADE_STARTED,
@@ -139,6 +141,11 @@ _hostname: str = ""
 _pid: int = 0
 _configured = False
 _lock = threading.Lock()
+
+#: 每条记录的写入序号 (见 `schema.RECORD_KEYS` 里 `_seq` 的说明)。进程内单调递增,
+#: **跨进程重启会重新计数** —— 它只用来给同一纳秒里的记录定序, 不做跨进程比较。
+_record_seq = 0
+_seq_lock = threading.Lock()
 
 
 def _resolve_hostname() -> str:
@@ -285,9 +292,13 @@ def build_record(event: str, *, body: str = "", fields: Optional[Mapping[str, An
     tests need to assert the shape without parsing a file. It is pure: no clock
     is read unless one is asked for, no handler is touched.
     """
+    global _record_seq
     severity = schema.normalize_severity(
         severity if severity is not None else EVENT_SEVERITIES.get(event, "INFO"))
     now = observed_ts_ns if observed_ts_ns is not None else time_ns()
+    with _seq_lock:
+        _record_seq += 1
+        seq = _record_seq
     safe_fields = redact.sanitize(dict(fields or {}))
     if exception is not None:
         safe_fields["exception"] = redact.sanitize(handlers.resolve_exception(exception))
@@ -297,6 +308,7 @@ def build_record(event: str, *, body: str = "", fields: Optional[Mapping[str, An
     record: Dict[str, Any] = {
         "ts": _iso_utc(now),
         "ts_ns": now,
+        "_seq": seq,
         "observed_ts_ns": now,
         "severity": severity,
         "severity_number": schema.severity_number(severity),

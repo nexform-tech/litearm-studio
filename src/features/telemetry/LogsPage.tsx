@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, Copy, Download, Pencil, RefreshCw, Trash2 } from 'lucide-react'
+import { ChevronDown, ChevronRight, Copy, Download, History, Pencil, RefreshCw, Trash2 } from 'lucide-react'
 import { Fragment, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useTelemetryState } from './useTelemetryState'
@@ -95,6 +95,23 @@ function jointDetailLines(sample: TelemetrySample): string[] {
   if (sample.errs?.length) lines.push(`errs=[${sample.errs.join(',')}]`)
   if (sample.faults?.length) lines.push(`faults=${JSON.stringify(sample.faults)}`)
   return lines
+}
+
+/** 采样记录 (`kind=sample`) 的各轴最大值 —— 与采样表同一口径。 */
+function sampleSummary(entry: LogEntry) {
+  const q = entry.fields.q as number[] | undefined
+  const dq = entry.fields.dq as number[] | undefined
+  const tau = entry.fields.tau as number[] | undefined
+  const temps = entry.fields.temps as { mosTemp?: number; coilTemp?: number }[] | undefined
+  const faults = (entry.fields.fault as unknown[] | undefined) ?? []
+  return {
+    state: typeof entry.fields.state === 'string' ? entry.fields.state : '',
+    joints: q?.length ?? 0,
+    temp: maxAbs((temps ?? []).map((t) => Math.max(t?.mosTemp ?? 0, t?.coilTemp ?? 0))),
+    speed: maxAbs(dq),
+    torque: maxAbs(tau),
+    faults: faults.length,
+  }
 }
 
 /** 一条记录的详情: `fields` 逐项展开, 异常单独成块 (它是排障时要读的第一样东西)。 */
@@ -259,7 +276,7 @@ export function LogsPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="ALL">{t('logs:allKinds')}</SelectItem>
-                  {(['session', 'command', 'gripper', 'firmware', 'system'] as const).map((kind) => (
+                  {(['session', 'command', 'gripper', 'firmware', 'system', 'sample'] as const).map((kind) => (
                     <SelectItem key={kind} value={kind}>
                       {t(`logs:kind.${kind}`)}
                     </SelectItem>
@@ -288,6 +305,17 @@ export function LogsPage() {
                   variant="outline"
                   size="sm"
                   className="h-8 gap-1.5 text-[0.78125rem] font-semibold"
+                  onClick={logs.loadEarlier}
+                  disabled={logs.status.loadingHistory || !logs.status.historyAvailable}
+                >
+                  <History size="0.8125rem" />
+                  {logs.status.loadingHistory ? t('common:loading') : t('logs:loadEarlier')}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1.5 text-[0.78125rem] font-semibold"
                   onClick={exportJsonl}
                   disabled={logs.visible.length === 0}
                 >
@@ -308,10 +336,17 @@ export function LogsPage() {
                 </Button>
               </div>
             </div>
-            <div className="text-[0.6875rem] text-muted-foreground">
-              {logs.cacheCount > 0
-                ? t('logs:cacheSize', { count: logs.cacheCount, size: formatBytes(logs.cacheBytes) })
-                : t('logs:logDirUnknown')}
+            <div className="flex flex-wrap items-center gap-x-3 text-[0.6875rem] text-muted-foreground">
+              <span>
+                {logs.status.logDir
+                  ? t('logs:logFileHint', { path: logs.status.logDir })
+                  : t('logs:logDirUnknown')}
+              </span>
+              {logs.cacheCount > 0 ? (
+                <span>
+                  {t('logs:cacheSize', { count: logs.cacheCount, size: formatBytes(logs.cacheBytes) })}
+                </span>
+              ) : null}
             </div>
 
             <div className="min-h-0 flex-1 overflow-auto">
@@ -415,7 +450,88 @@ export function LogsPage() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="samples" className="flex min-h-0 flex-1 gap-3">
+        <TabsContent value="samples" className="flex min-h-0 flex-1 flex-col gap-3">
+          {/* daemon 侧的采样 (1Hz 抽稀, `kind=sample`) —— 与事件同一套 schema。
+              ⚠ 与下面那张会话表不是一回事: 那张是本浏览器以 10Hz 记的, 可以导出 CSV;
+              这一张是守护进程记的, 关掉页面、换台机器都还在。 */}
+          <Card className="flex max-h-[16rem] min-h-0 flex-none flex-col gap-2 rounded-[0.875rem] px-4 py-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-[0.8125rem] font-semibold text-foreground">
+                {t('logs:daemonSamples')}
+              </div>
+              <span className="text-[0.6875rem] text-muted-foreground">
+                {t('logs:daemonSampleHint', { count: logs.samples.length })}
+              </span>
+            </div>
+            <div className="min-h-0 flex-1 overflow-auto">
+              {logs.samples.length === 0 ? (
+                <div className="px-4 py-6 text-center text-xs text-muted-foreground">
+                  {t('logs:noDaemonSamples')}
+                </div>
+              ) : (
+                <Table className="table-fixed">
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead style={{ width: '9rem' }} className="text-[0.6875rem] font-semibold text-muted-foreground">
+                        {t('logs:time')}
+                      </TableHead>
+                      <TableHead style={{ width: '7rem' }} className="text-[0.6875rem] font-semibold text-muted-foreground">
+                        {t('logs:state')}
+                      </TableHead>
+                      <TableHead style={{ width: '7rem' }} className="text-[0.6875rem] font-semibold text-muted-foreground">
+                        {t('logs:maxTemp')}
+                      </TableHead>
+                      <TableHead style={{ width: '7rem' }} className="text-[0.6875rem] font-semibold text-muted-foreground">
+                        {t('logs:maxSpeed')}
+                      </TableHead>
+                      <TableHead style={{ width: '7rem' }} className="text-[0.6875rem] font-semibold text-muted-foreground">
+                        {t('logs:maxTorque')}
+                      </TableHead>
+                      <TableHead style={{ width: '5rem' }} className="text-[0.6875rem] font-semibold text-muted-foreground">
+                        {t('logs:faultCount')}
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {logs.samples.slice(-200).reverse().map((entry) => {
+                      const summary = sampleSummary(entry)
+                      return (
+                        <TableRow key={`sample-${entry.seq}-${entry.tsNs}`}>
+                          <TableCell className="font-mono text-xs text-ink-muted">
+                            {formatRecordTime(entry.tsNs, i18n.language)}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className="rounded-full px-2.5 py-0.5 text-[0.71875rem] font-semibold">
+                              {summary.state || '—'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="font-mono text-xs text-foreground">
+                            {summary.temp !== null ? `${summary.temp.toFixed(0)} ${t('logs:unitTemp')}` : '—'}
+                          </TableCell>
+                          <TableCell className="font-mono text-xs text-foreground">
+                            {summary.speed !== null ? `${summary.speed.toFixed(3)} ${t('logs:unitSpeed')}` : '—'}
+                          </TableCell>
+                          <TableCell className="font-mono text-xs text-foreground">
+                            {summary.torque !== null ? `${summary.torque.toFixed(2)} ${t('logs:unitTorque')}` : '—'}
+                          </TableCell>
+                          <TableCell className="text-xs text-foreground">
+                            {summary.faults > 0 ? (
+                              <Badge variant="outline" className="rounded-full px-2.5 py-0.5 text-[0.71875rem] font-semibold text-destructive">
+                                {summary.faults}
+                              </Badge>
+                            ) : (
+                              <span className="text-muted-foreground">0</span>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              )}
+            </div>
+          </Card>
+
           {vm.error ? (
             <div className="px-4 py-6 text-center text-sm text-destructive">{vm.error}</div>
           ) : (

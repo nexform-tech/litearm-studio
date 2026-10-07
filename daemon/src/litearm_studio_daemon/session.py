@@ -70,6 +70,16 @@ POLL_PERIOD_S = 0.02
 #: ⚠ **状态串变化 / 故障变化一律立即推** (见 `_poll_loop`), 节流只管"同样内容重复推"。
 STATE_PUSH_INTERVAL_S = 0.02
 
+#: 采样记录的抽稀间隔 (秒)。50Hz 的状态轮询**不是**日志: 每一拍都写一条, 10MB 的
+#: 文件半小时就见底, 而操作员真正要读的是事件。1Hz 足够画出趋势与"那一刻的读数",
+#: 完整的 10Hz 采样仍由页面写在自己的采样表里 (见 `telemetryRecorder`)。
+SAMPLE_RECORD_INTERVAL_S = 1.0
+
+#: 采样记录的抽稀间隔 (秒)。50Hz 的状态轮询**不是**日志: 每一拍都写一条, 5MB 的文件
+#: 几分钟就见底, 而操作员真正要读的是事件。1Hz 足够画出趋势与"那一刻的读数"; 完整的
+#: 10Hz 采样仍由页面写在自己的采样表里 (见 `telemetryRecorder`)。
+SAMPLE_RECORD_INTERVAL_S = 1.0
+
 #: 链路"没声音"多久即判为断 (秒) —— 判据是**固件那条 100Hz 被动状态流的到达时刻**。
 #:
 #: 为什么必须由守护进程自己判: `_status` 从前只记"上次握手成功", 而 50Hz 轮询读的是
@@ -319,6 +329,10 @@ class Session:
         self._connected_at = 0.0
         self._last_emit_key: Any = None
         self._last_emit_at = 0.0
+        #: 上一次落采样记录的时刻 (见 `SAMPLE_RECORD_INTERVAL_S`)。
+        self._last_sample_at = 0.0
+        #: 上一次落采样记录的时刻 (见 `SAMPLE_RECORD_INTERVAL_S`)。
+        self._last_sample_at = 0.0
         self._zero_g_since: Optional[float] = None
         #: 运动在飞计数 (不是 bool: 同一瞬间可能既有在途、又有刚提交的)
         self._motion_count = 0
@@ -1020,7 +1034,23 @@ class Session:
                 return None
             self._last_emit_key = key
             self._last_emit_at = now
+            # ⚠ 采样记录的节拍与**推送**节拍是两件事: 推送 50Hz/变化即推, 采样 1Hz。
+            sample_due = (now - self._last_sample_at) >= SAMPLE_RECORD_INTERVAL_S
+            if sample_due:
+                self._last_sample_at = now
+        if sample_due:
+            # 记录在锁外发: `obs.emit` 要走广播扇出, 不该在持有会话锁时做。
+            self._note_sample(doc)
         return {"t": "state", "stamp": round(now, 4), "state": doc}
+
+    def _note_sample(self, doc: dict) -> None:
+        """把这一拍的状态落成一条**采样记录** —— 与事件同一套 schema, `kind=sample`。
+
+        ⚠ 它只写 `fields`, 不写 `body` 之外的任何文本: 采样是数值记录, 页面要拿它画
+        趋势、算最大值, 不是拿它读句子。
+        """
+        obs.debug(obs.STATE_SAMPLE, body=f"state={doc.get('state', '')}",
+                  fields=sample_fields(doc))
 
     def _is_link_stale(self, msg: Any, now: float) -> bool:
         """这一拍还"听得见"这条链路吗 —— 判据是**被动状态流的到达时刻**。
@@ -1718,6 +1748,21 @@ class Session:
             f"固件已写入并通过读回校验, 但 {UPGRADE_RECONNECT_WINDOW_S:.0f}s 内没能"
             f"重新连上 ({attempts} 次): {last or '没有发现 STM32 CDC 设备'} —— "
             f"断电重上电即可")
+
+
+#: 采样记录里保留的状态字段。**刻意不是全部**: `flagNames`/`faultDetail` 这类给人读的
+#: 文本每一条都带着, 文件会胖一倍, 而它们在事件 (`conn` 帧与故障记录) 里已经有了。
+SAMPLE_FIELDS = ("q", "dq", "tau", "errs", "temps", "fault", "state",
+                 "enabled", "faulted", "cartBusy", "seq", "mode", "modeName")
+
+
+def sample_fields(doc: dict) -> dict:
+    """`state` 帧的字典 → 采样记录要落的那几项。
+
+    ⚠ 白名单而不是整份拷贝: 状态帧的字段会随版本增加, 而"日志文件里突然多出一堆
+    没人读的字段"是缓慢发生的体积泄漏。要加一项就在这里加。
+    """
+    return {key: doc[key] for key in SAMPLE_FIELDS if key in doc}
 
 
 def _is_permission_error(exc: BaseException) -> bool:

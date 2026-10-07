@@ -98,6 +98,11 @@ SEVERITY_TO_LOGGING_LEVEL: Final[Mapping[str, int]] = {
 RECORD_KEYS: Final[Tuple[str, ...]] = (
     "ts",
     "ts_ns",
+    #: 本进程内单调递增的写入序号。它解决的是**排序的最后一公里**: 同一纳秒里写下的
+    #: 两条记录 (完全可能 —— 一次命令同时落"命令"与"状态"两条) 单靠时间戳分不出先后,
+    #: 而分页需要一个全序。取 `seq` 这个名字与线上帧的 `seq` 同义, 且是整数, 对日志
+    #: 平台无害 (字段名带下划线前缀是为了不与自定义属性撞车, 见下面的说明)。
+    "_seq",
     "observed_ts_ns",
     "severity",
     "severity_number",
@@ -149,9 +154,12 @@ KIND_COMMAND: Final[str] = "command"
 KIND_GRIPPER: Final[str] = "gripper"
 KIND_FIRMWARE: Final[str] = "firmware"
 KIND_SYSTEM: Final[str] = "system"
+#: 状态采样 —— 与事件同一套字段的**数值**记录 (`state.sample`)。放进来是为了让采样
+#: 也走同一条保留/查询/导出通道, 而不是再养第二套数据模型 (issue #79 第 5 点)。
+KIND_SAMPLE: Final[str] = "sample"
 
 KINDS: Final[Tuple[str, ...]] = (
-    KIND_SESSION, KIND_COMMAND, KIND_GRIPPER, KIND_FIRMWARE, KIND_SYSTEM,
+    KIND_SESSION, KIND_COMMAND, KIND_GRIPPER, KIND_FIRMWARE, KIND_SYSTEM, KIND_SAMPLE,
 )
 
 #: Every event the daemon can emit, as (name, kind, default severity, summary).
@@ -251,6 +259,8 @@ EVENTS: Final[Tuple[Tuple[str, str, str, str], ...]] = (
      "慢客户端导致 log 帧被丢弃"),
     ("daemon.started", KIND_SYSTEM, "INFO",
      "守护进程已启动"),
+    ("state.sample", KIND_SAMPLE, "DEBUG",
+     "机械臂状态采样 (1Hz 抽稀)"),
     ("daemon.startup_refused", KIND_SYSTEM, "ERROR",
      "启动参数非法, 进程拒绝启动"),
 )
@@ -316,6 +326,8 @@ COMMAND_TIMEOUT: Final[str] = "daemon.command.timeout"
 LOG_DROPPED: Final[str] = "daemon.log.dropped"
 DAEMON_STARTED: Final[str] = "daemon.started"
 STARTUP_REFUSED: Final[str] = "daemon.startup_refused"
+
+STATE_SAMPLE: Final[str] = "state.sample"
 
 #: Commands whose *success* is worth an INFO record. Reads and settings changes
 #: (`get_tcp`, `set_payload`, `get_joint_params`, …) stay at DEBUG: the page can

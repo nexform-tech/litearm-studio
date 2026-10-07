@@ -33,6 +33,7 @@ const EMPTY_FILTERS: LogFilters = { level: 'ALL', kind: 'ALL', query: '' }
 export function useLogRecords() {
   const { t, i18n } = useTranslation('logs')
   const [entries, setEntries] = useState<LogEntry[]>(() => logStore.getEntries())
+  const [samples, setSamples] = useState<LogEntry[]>(() => logStore.getSamples())
   const [status, setStatus] = useState<LogStreamStatus>(() => logStore.getStatus())
   const [filters, setFilters] = useState<LogFilters>(EMPTY_FILTERS)
   const [cacheCount, setCacheCount] = useState(0)
@@ -45,6 +46,7 @@ export function useLogRecords() {
     () =>
       logStore.subscribe(() => {
         setEntries([...logStore.getEntries()])
+        setSamples([...logStore.getSamples()])
         setStatus(logStore.getStatus())
       }),
     [],
@@ -54,6 +56,7 @@ export function useLogRecords() {
   useEffect(() => {
     void logStore.hydrate().then(() => {
       setEntries([...logStore.getEntries()])
+      setSamples([...logStore.getSamples()])
       setStatus(logStore.getStatus())
     })
     let cancelled = false
@@ -99,6 +102,10 @@ export function useLogRecords() {
   }, [])
   const clearFilters = useCallback(() => setFilters(EMPTY_FILTERS), [])
 
+  const loadEarlier = useCallback(() => {
+    void logStore.loadEarlier()
+  }, [])
+
   const clearCache = useCallback(async () => {
     try {
       await logStore.clear()
@@ -117,6 +124,7 @@ export function useLogRecords() {
     t,
     locale: i18n.language,
     entries,
+    samples,
     visible,
     total: filtered.length,
     truncated: filtered.length > visible.length,
@@ -125,6 +133,7 @@ export function useLogRecords() {
     setKind,
     setQuery,
     clearFilters,
+    loadEarlier,
     filteredActive:
       filters.level !== 'ALL' || filters.kind !== 'ALL' || filters.query.trim() !== '',
     status,

@@ -15,8 +15,10 @@ const mock = vi.hoisted(() => {
   const listeners = new Set<() => void>()
   const state = {
     entries: [] as unknown[],
+    samples: [] as unknown[],
     status: {
       seq: 0, dropped: 0, clients: 0, missed: 0, metaAt: 0, buffered: 0, writeErrors: 0,
+      logDir: null as string | null, historyAvailable: true, loadingHistory: false,
     },
   }
   return {
@@ -64,7 +66,9 @@ vi.mock('@/lib/log/logStore', () => ({
       return () => mock.listeners.delete(cb)
     },
     getEntries: () => mock.state.entries,
+    getSamples: () => mock.state.samples,
     getStatus: () => mock.state.status,
+    loadEarlier: () => Promise.resolve(0),
     hydrate: () => Promise.resolve(),
     clear: () => Promise.resolve(),
     start: () => undefined,
@@ -109,8 +113,10 @@ function record(overrides: Record<string, unknown> = {}) {
 describe('LogsPage — records tab', () => {
   beforeEach(async () => {
     mock.state.entries = []
+    mock.state.samples = []
     mock.state.status = {
       seq: 0, dropped: 0, clients: 0, missed: 0, metaAt: 0, buffered: 0, writeErrors: 0,
+      logDir: null, historyAvailable: true, loadingHistory: false,
     }
     await import('@/i18n').then((m) => m.default.changeLanguage('en'))
   })

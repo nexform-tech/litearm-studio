@@ -40,7 +40,7 @@ from starlette.exceptions import HTTPException
 from starlette.responses import Response
 from starlette.types import Scope
 
-from . import __version__, obs
+from . import __version__, logread, obs
 from .errors import error_to_dict
 from .statemap import jsonable
 from .session import ENERGY_DOWN_COMMANDS, Session
@@ -753,6 +753,44 @@ def create_app(session: Session, *, gripper: Optional[Any] = None,
 
     app.add_api_route("/api/health", lambda: JSONResponse(_health(daemon)),
                       methods=["GET"])
+
+    # ── 日志历史回读 (issue #79 第 5 点 / #80) ──────────────────────────────
+    #
+    # ⚠ 这两条路由服务的才是**权威历史**: daemon 的 JSONL 文件。页面自己那份 IndexedDB
+    # 缓存会随 origin 漂移 (issue #80), 而这里的路径由 `--log-dir` 决定, 与端口无关。
+    # 倒读与游标在 `logread.py` 里。
+    reader = logread.LogReader()
+
+    @app.api_route("/api/logs", methods=["GET"])
+    async def _logs(limit: int = logread.DEFAULT_LIMIT,
+                    before: Optional[str] = None,
+                    level: Optional[str] = None,
+                    kind: Optional[str] = None,
+                    event: Optional[str] = None,
+                    q: Optional[str] = None) -> JSONResponse:
+        result = await asyncio.to_thread(
+            reader.history,
+            limit=limit,
+            before=logread.Cursor.parse(before),
+            keep=logread.combine(
+                logread.severity_filter(level),
+                logread.kind_filter(kind),
+                logread.event_filter(event),
+                logread.query_filter(q),
+            ),
+        )
+        return JSONResponse({
+            "records": result["records"],
+            "cursor": result["cursor"],
+            "more": result["more"],
+            "fileCount": result["fileCount"],
+            "dir": str(reader.directory) if reader.directory is not None else None,
+        })
+
+    @app.api_route("/api/logs/events", methods=["GET"])
+    async def _log_events() -> JSONResponse:
+        """事件目录 + 实际出现过的条数 —— 页面拿它做标签与筛选, 不自己维护一份名单."""
+        return JSONResponse(await asyncio.to_thread(reader.events))
 
     @app.websocket("/ws")
     async def _ws(ws: WebSocket) -> None:      # pragma: no cover - 由 TestClient 覆盖

@@ -28,7 +28,7 @@ export const SEVERITY_NUMBERS: Record<Severity, number> = {
 }
 
 /** 事件分组 —— 页面用它做一级筛选, `event` 仍是精确身份。 */
-export type LogKind = 'session' | 'command' | 'gripper' | 'firmware' | 'system'
+export type LogKind = 'session' | 'command' | 'gripper' | 'firmware' | 'system' | 'sample'
 
 export type LogRecord = {
   /** 稳定事件名, 机器读这一个 (`arm.command.failed`)。 */
@@ -63,7 +63,9 @@ export type LogEntry = LogRecord & {
   id?: number
 }
 
-const KIND_SET = new Set<string>(['session', 'command', 'gripper', 'firmware', 'system'])
+const KIND_SET = new Set<string>([
+  'session', 'command', 'gripper', 'firmware', 'system', 'sample',
+])
 
 /**
  * 任何严重性拼写 → 六档之一。

@@ -224,7 +224,10 @@ trace/span 上下文是 `contextvars`；记录 schema 在本仓的 `obs/schema.p
 UID、从激活服务取回的凭据、固件镜像的字节、任何叫 `token`/`password`/`secret` 的字段。
 新增一条日志时**不要**自己拼字段绕过 `obs.emit` —— 脱敏是那条路上的唯一一道闸。
 
-字段含义（完整表见 `obs/schema.py`）：`ts`（RFC 3339 UTC）、`ts_ns`
+字段含义的完整表、事件目录、以及**永远不会写进文件的东西**见
+[../docs/LOGS.md](../docs/LOGS.md); 代码里的权威定义是 `obs/schema.py`。
+
+字段含义（速查）：`ts`（RFC 3339 UTC）、`ts_ns`
 （OTLP `time_unix_nano`）、`severity`/`severity_number`（OTLP 六档）、`event`
 （稳定事件名，机器读这一个）、`body`（人读的一句话）、`trace_id`（一次浏览器连接）、
 `span_id`（一条命令）、`service`/`version`/`host`/`pid`/`thread`/`source`、`fields`。
