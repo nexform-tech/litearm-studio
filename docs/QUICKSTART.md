@@ -86,13 +86,15 @@ The daemon prints the address it actually bound to (default `http://127.0.0.1:87
 
 ### Step 1 — Activate
 
-An unactivated arm **refuses to enable** (the firmware answers `ERR{0x10,0x08}`) while every other command keeps working. Open **Settings → Activation**:
+A new arm must be activated once before it can move. Until then, pressing **Enable** does nothing; everything else works. Make sure the computer is online and the arm is connected, then:
 
-1. The panel reads **Not activated** and shows the **device UID** (24 hex characters). The program reads that UID from the arm — **you never type it, and you do not normally send it anywhere**: your supplier recorded the licence for it before shipping.
-2. Fill in the registration form (**name, phone, organization, email and region are required**) and accept the *Activation Registration Consent*.
-3. **Disarm the arm first** — the firmware only accepts the licence record while disarmed — then press **Submit and activate**.
+1. Click **Settings**, then **Activation**. If it says **Activated**, you are done.
+2. If it says **Not activated**, fill in the form. Name, phone, organization, email and region are required; the rest is optional.
+3. Tick the consent box.
+4. If the arm is enabled, press **Disable** first, and hold the arm steady: it will sag under its own weight.
+5. Press **Submit and activate** and wait a few seconds.
 
-The panel then reads **Activated**, and only then will the firmware accept `enable`. Press **Copy** and send the UID to your supplier only if the panel reports "no credential for this machine". Details: user manual §1.4.
+When the panel reads **Activated**, you can enable the arm. If the panel says "no credential for this machine", press **Copy** and send the copied machine number to your supplier. Other messages and fixes: user manual §1.4.
 
 ### Step 2 — Connect and enable
 
@@ -129,11 +131,9 @@ Open the **Telemetry** page: a session is created automatically when the arm con
 - If it shows up under a different path, pass it explicitly: `litearm-studio-daemon --port /dev/ttyACM1`.
 - On Linux, make sure your user can open the serial device (`dialout` group).
 
-### "Enable" does nothing / the arm reports it is not activated
+### "Enable" does nothing
 
-This arm has not been activated. The firmware checks the licence as the **first** predicate of `enable` and refuses with `ERR{0x10,0x08}`; retrying changes nothing.
-
-Go to **Settings → Activation** and follow step 1 of §4. Nothing except `enable` is affected while unactivated.
+This arm has not been activated yet. Go to **Settings → Activation** and follow step 1 of §4. Nothing except Enable is affected in the meantime.
 
 ### The UI loads but never shows state
 

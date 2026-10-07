@@ -36,7 +36,7 @@ STM32 firmware ──USB CDC (1d50:606f)──> CAN ──> motors
 | Trajectory | Zero-gravity manual lead-through teaching, trajectory library, multi-speed & loop playback, safe takeover |
 | Telemetry | Joint telemetry sampling & recording, session details, CSV export |
 | Settings | End-effector payload, gravity & inertia, gains & limits, diagnostics, gripper & bus, activation |
-| Activation | Read the licence state and device UID; submit registration details to obtain this machine's credential and write it to the device |
+| Activation | Fill in a registration form once, before first use, to unlock the arm |
 
 ### 1.2 Install and run
 
@@ -74,26 +74,39 @@ On start, the local program **finds the arm's USB CDC device automatically** (VI
 
 The **Connect / Disconnect** buttons on the top bar open or close the session by hand. **There is no IP address or port to fill in**; if the device appears at a non-default path, pass `--port`.
 
-### 1.4 Activation (required on first use)
+### 1.4 Activating the arm (required before first use)
 
 > [!IMPORTANT]
-> An unactivated arm **refuses to enable** (the firmware answers `ERR{0x10,0x08}`) while every other command keeps working. Complete this section before first use.
+> A new arm must be activated before it can move. Until then, pressing **Enable** does nothing. Everything else works.
 
-Open **Settings → Activation**. The panel shows this machine's licence state and device UID. The program reads that UID (24 hex characters) from the arm — **you never type it**, and normally you have nothing to do with it either: your supplier records the licence for it before shipping.
+Activation takes about a minute and is done once. Before you start, make sure the computer is online and the arm is connected.
 
-1. Confirm the panel reads **Not activated** (an activated machine does not need this section);
-2. Fill in the registration form — **name, phone, organization, email and region are required**; WeChat ID, industry and purpose are optional — and read and accept the *Activation Registration Consent*.
-3. **Disarm the arm first**: the firmware only accepts the licence record while the arm is disarmed, otherwise the submission is rejected with "disarm first".
-4. Press **Submit and activate**. The program sends the registration details together with the device UID to the activation service, receives this machine's credential, writes it to the device, and reads it back to confirm.
+1. Click **Settings**, then **Activation**.
+2. If the page says **Activated**, this arm is already done.
+3. If it says **Not activated**, fill in the form. Name, phone, organization, email and region are required; the rest is optional.
+4. Tick the box to accept the *Activation Registration Consent*.
+5. If the arm is enabled, press **Disable** on the control bar first. **The arm will sag under its own weight**, so hold it steady.
+6. Press **Submit and activate** and wait a few seconds.
 
-Once it succeeds the panel reads **Activated** and lists the customer ID, issue date and record version, and the firmware will accept `enable`.
+When the page says **Activated**, you can enable the arm.
 
-If the panel reports **"no license for this machine"**, the activation service has no record for this UID (it was never recorded, or the recorded UID does not match the arm): press **Copy** and send the UID to your supplier so they can record it, then submit again.
+**If something goes wrong:**
 
-- **The credential is bound to one machine**: a different arm needs a credential issued for its own UID.
-- **The record is written once and cannot be erased**: the UI offers no "deactivate"; clearing it means returning the unit to the factory and erasing the licence sector with a debug probe (SWD).
-- Activation is the **only action in the whole application that uses the network**. The consent document lists every field that is sent; no internal addresses or host names are collected.
-- If the panel reads **Unreadable** or **Unsupported**: press Refresh for the former; the latter means the firmware predates 1.8.0 and must be upgraded.
+| Message | What to do |
+| :--- | :--- |
+| No credential for this machine | Press **Copy**, send the copied machine number to your supplier, and submit again once they confirm |
+| Disarm first | Press **Disable** on the control bar, then submit again |
+| Cannot reach the activation service | Check that the computer is online, then try again |
+| Too many requests | Wait a few minutes and try again |
+| Cannot read the device's licence record | Check the USB cable and the arm's power, press **Refresh**, and try again |
+| Firmware has no licence feature | The arm's firmware is too old; ask your supplier to upgrade it |
+| Anything else | Press **Refresh** and see whether it now says **Activated**; if not, contact your supplier |
+
+**Good to know:**
+
+- Activation applies to this one arm. A second arm needs its own activation.
+- Activation cannot be undone from the software.
+- Activation is the only action in the application that uses the internet. It sends only what you typed into the form.
 
 #### Real-time Health Metrics
 
@@ -338,7 +351,7 @@ Configure the LiteGrip gripper on this CAN channel: **channel, CAN ID, mounting 
 
 ### 5.6 Activation
 
-See §1.4. The panel shows this machine's licence state and device UID, and is where you submit the registration details to activate it.
+See §1.4 for the activation steps.
 
 ---
 
@@ -359,15 +372,8 @@ See §1.4. The panel shows this machine's licence state and device UID, and is w
 | Issue | Probable Cause | Recommended Action |
 | :--- | :--- | :--- |
 | Top bar shows "Connect Failed" | 1. Arm not powered, or the USB cable is loose<br>2. The device did not enumerate as `1d50:606f`<br>3. On Linux the current user lacks serial permission<br>4. Another process holds the serial port | 1. Check the USB cable and controller power<br>2. Confirm enumeration: `lsusb` should list `1d50:606f` on Linux, a COM port on Windows<br>3. On Linux, add the user to `dialout` and log in again (see §1.2)<br>4. Close the other program, or pass `--port` explicitly |
-| **"Enable" does nothing / not activated** | The arm is not activated. The firmware checks the licence as the **first** predicate of `enable` and refuses with `ERR{0x10,0x08}`; retrying changes nothing | Complete §1.4: fill in the registration form and submit it. Everything except `enable` works while unactivated |
-| Activation says "no credential for this machine" | The activation service has no record for this device UID: it was never recorded before shipping, or the recorded UID does not match the arm | Press **Copy** and send the **device UID** (24 hex characters, read from the arm by the program) from Settings → Activation to your supplier to have it recorded, then submit again |
-| Activation says "too many requests" | Too many submissions from this IP or for this UID in a short window | Wait a while and retry |
-| Activation says "cannot reach the activation service" | This machine has no internet access, or the activation service address is wrong | Check the local network; release builds already carry the production address |
-| Activation says "cannot read the device's licence record" | The device did not return its licence record, so **nothing was sent** — a credential must be bound to this machine's UID, and guessing one would file the registration under another machine | Check the USB link (port, power) and retry; if it keeps failing, check the firmware version |
-| Activation says "this firmware has no activation support" | The firmware predates 1.8.0 and has no licence command; on such firmware the refusal looks like a failed read to the current SDK, which is why the firmware is named here | Update the firmware to 1.8.0 or newer |
-| Activation says "the firmware only accepts the license record while the arm is disarmed" | The firmware requires the **disarmed** state to write the licence record (same rule as saving parameters: motors must not stay energised unsupervised during a flash write) | Press **Disarm** on the control bar, then submit again |
-| Activation says "the firmware refused this write" | The firmware folds "already activated / credential does not match this machine / write failed" into one code, so the code **cannot tell them apart** (which is why the message does not conclude for you) | Press **Refresh** to read the state; if it is still not activated, check the device UID and request a new credential |
-| Activation says "consent required" | The *Activation Registration Consent* box is not ticked | Tick it and submit again |
+| **"Enable" does nothing** | The arm has not been activated yet | Follow §1.4. Everything except Enable works in the meantime |
+| Activation shows an error | The message and its fix are listed in the table in §1.4 | Follow that table; if the consent box was not ticked, tick it and submit again |
 | "Arm is moving, please wait" | In-flight motion in progress; mutex guard active | Normal safety behavior; wait for move completion or click STOP |
 | Red fault indicator: "Joint N Fault" | Collision obstruction, overcurrent, or driver overtemperature (>80°C) | 1. Clear physical obstructions and allow cooling<br>2. Click "Clear Fault" on control bar<br>3. If persistent, support arm, disable, and re-enable |
 | "Controller in fault state" | Safety protection triggered (overspeed, boundary limit, communication timeout) | System-level safety protection triggered; support the arm, disable and re-enable. If it does not recover, restart the local program |

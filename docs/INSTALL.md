@@ -220,23 +220,21 @@ not disabled: the SDK it needs cannot import there.
 
 ## 7. First run: activation
 
-An arm that has never been activated refuses to enable and answers `ERR{0x10,0x08}`
-to every enable request. Everything else in the UI works, so the first run looks
-half-broken until you finish this.
+A new arm must be activated once before it can move. Until then, pressing
+**Enable** does nothing, while everything else works. Make sure the computer is
+online and the arm is connected, then:
 
-1. Open **Settings → Activation**. The panel shows the device UID, 24 hex characters.
-   The program reads it from the arm: you never type it, and your supplier recorded
-   the licence for it before shipping, so there is normally nothing to send.
-2. Fill in the registration form (**name, phone, organization, email and region are
-   required**) and accept the consent document.
-3. Disarm the arm. The firmware rejects the licence record while the arm is armed.
-4. Press **Submit and activate**.
+1. Click **Settings**, then **Activation**. If it says **Activated**, you are done.
+2. Fill in the form. Name, phone, organization, email and region are required.
+3. Tick the consent box.
+4. If the arm is enabled, press **Disable** first and hold the arm steady, because it
+   will sag under its own weight.
+5. Press **Submit and activate** and wait a few seconds.
 
-Activation is the only feature that uses the network, and the credential is bound to
-one machine: another arm needs a credential issued for its own UID. The record is
-written once and cannot be erased from the UI. If the service answers that it has no
-credential for this machine, press **Copy** and send the UID to your supplier so they
-can record it, then submit again.
+Activation is the only feature that needs the internet. It applies to this one arm
+only, so a second arm needs its own activation, and it cannot be undone from the
+software. If the panel says "no credential for this machine", press **Copy** and send
+the copied machine number to your supplier, then submit again.
 
 ## 8. Where settings live
 
