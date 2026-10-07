@@ -99,7 +99,7 @@ When the page says **Activated**, you can enable the arm.
 | Cannot reach the activation service | Check that the computer is online, then try again |
 | Too many requests | Wait a few minutes and try again |
 | Cannot read the device's licence record | Check the USB cable and the arm's power, press **Refresh**, and try again |
-| Firmware has no licence feature | The arm's firmware is too old; ask your supplier to upgrade it |
+| Firmware has no licence feature | The arm's firmware is too old; upgrade it first (see §5.7) |
 | Anything else | Press **Refresh** and see whether it now says **Activated**; if not, contact your supplier |
 
 **Good to know:**
@@ -300,7 +300,7 @@ The current version has no separate "Controller Logs" page. For link health, use
 
 ## 5. System & Algorithm Settings
 
-The Settings page is organised into six tabs: **Payload / Gravity & Inertia / Gains & Limits / Diagnostics / Gripper & Bus / Activation** (activation is covered in §1.4).
+The Settings page is organised into seven tabs: **Payload / Gravity & Inertia / Gains & Limits / Diagnostics / Gripper & Bus / Activation / Firmware Upgrade** (activation is covered in §1.4, firmware upgrade in §5.7).
 
 ### 5.1 Payload
 
@@ -352,6 +352,47 @@ Configure the LiteGrip gripper on this CAN channel: **channel, CAN ID, mounting 
 ### 5.6 Activation
 
 See §1.4 for the activation steps.
+
+---
+
+### 5.7 Firmware upgrade
+
+> [!IMPORTANT]
+> The arm is disabled during an upgrade and the emergency stop is unavailable. Before you start, make sure the arm is supported and nobody is within reach.
+
+Get the firmware file (`.hex` or `.bin`) from your supplier first, and check that:
+
+- the computer is connected to the arm over USB and the top bar reads Connected;
+- the status badge at the top of the page reads Ready;
+- you will not unplug USB or cut power during the upgrade.
+
+**Steps:**
+
+1. Click **Settings**, then **Firmware Upgrade**.
+2. Click **Select firmware file** and choose the file from your supplier.
+3. Check the version in the image summary.
+4. Read the confirmation notes and tick the box confirming the arm is safe.
+5. Click **Start upgrade** and wait for the progress bar to finish.
+
+The page then reports that the upgrade is complete and shows the device's current version. You can cancel before the firmware starts being written; after that it cannot be cancelled.
+
+**If something goes wrong:**
+
+| Message | What to do |
+| :--- | :--- |
+| Controller not connected | Connect the arm, then upgrade |
+| Flashing engine unavailable | Contact your supplier |
+| This firmware image cannot be used | Wrong file; get the correct one from your supplier |
+| The arm is not disabled; aborted | Press **Disable** on the control bar and retry. The arm will sag under its own weight, so hold it steady |
+| DFU device not found | Check the USB cable and retry; Windows also needs ST's WinUSB driver |
+| Cannot open the DFU device (permission denied) | Linux only. Add the udev rule `SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="df11", MODE="0666"`, replug USB, and retry |
+| Flashing failed | Retry; if it keeps failing, contact your supplier |
+| Firmware written but the controller did not reconnect | Replug the USB cable and click **Connect** on the top bar |
+
+**Good to know:**
+
+- An upgrade does not change activation or factory calibration data.
+- Use only firmware files supplied by your supplier.
 
 ---
 
