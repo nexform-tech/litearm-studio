@@ -172,16 +172,16 @@ Consolidates global robot controls and operating mode selection:
 
 - Enable / Disable: Controls motor power and holding state.
   - Click Enable: Energizes motors and locks current pose into ready state;
-  - Click Disable: Prompts for confirmation. Note: Disabling cuts motor holding torque; the arm will drop under gravity. Always support the arm or rest it on a secure surface before disabling;
-- Clear Fault: Resets driver error alarms (such as overcurrent or overtemperature). Once all joints are healthy, the arm automatically returns to ready state;
-- Ready Pose: Smoothly moves all axes to the default operating configuration, serving as an ideal baseline for operations;
-- Zero Position: Smoothly moves all axes to the upright zero position (all joints at 0 rad), typically used for initial calibration or recovery;
+  - Click Disable (the same button reads "Disable" while the arm is energised): cuts motor holding torque immediately; the arm will drop under gravity. Always support the arm or rest it on a secure surface before disabling;
+- Reset: Resets driver error alarms (such as overcurrent or overtemperature). Once all joints are healthy, the arm automatically returns to ready state;
+- Ready Pose: Smoothly moves all axes to the default operating configuration, serving as an ideal baseline for operations. The button sits in the Joint Space card header, not in the control bar row;
+- Go Home: Smoothly moves all axes to the upright zero point (all joints at 0 rad), typically used for initial calibration or recovery;
 - STOP (Emergency Stop): Immediately aborts all ongoing motions and locks the arm in place. In case of personnel danger or equipment collision, cut main power immediately.
 
 #### Operational Modes
 
 - Position Mode: Standard closed-loop servo control mode, high-stiffness position hold, precisely executing joint micro-stepping or Cartesian trajectory commands;
-- Drag Mode: Enables dynamic gravity compensation and zero-force teaching algorithms; motors cancel arm gravity in real time, allowing smooth manual lead-through by hand;
+- Zero Gravity Mode: Enables dynamic gravity compensation and zero-force teaching algorithms; motors cancel arm gravity in real time, allowing smooth manual lead-through by hand;
 - Global Speed Scale: Its own row; the `−` / `+` stepper at the right end of the slider nudges it by 1%. Range 1%–100% across all motions (mapped to underlying driver and planner speed scaling).
 
 ---

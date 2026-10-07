@@ -1,7 +1,8 @@
 {
   "modes": {
     "position": "Position",
-    "drag": "Drag"
+    "drag": "Zero Gravity",
+    "label": "Control Mode"
   },
   "submodes": {
     "joint": "Joint",
@@ -12,11 +13,16 @@
     "jointLabel": "Joint {{n}}"
   },
   "controlBar": {
-    "clearFault": "Clear Error",
+    "enable": "Enable",
+    "enableTitle": "Energise the drives and hold the current pose",
+    "disable": "Disable",
+    "disableTitle": "Cut motor torque: the arm drops under gravity, support it first",
+    "reset": "Reset",
+    "resetTitle": "Clear latched drive faults and return the arm to an operable state",
+    "home": "Go Home",
+    "homeTitle": "Move to the zero pose (all axes 0 rad)",
     "readyPose": "Ready Pose",
     "readyPoseTitle": "Move to recommended ready pose Home",
-    "zeroPose": "Zero Pose",
-    "zeroPoseTitle": "Move to zero pose (all axes 0 rad)",
     "speed": "Speed",
     "speedDown": "Decrease speed",
     "speedUp": "Increase speed"

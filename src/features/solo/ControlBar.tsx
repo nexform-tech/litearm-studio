@@ -1,107 +1,88 @@
 import { TriangleAlert } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { SegmentedControl, type SegItem } from '../../components/SegmentedControl'
+import { cn } from '@/lib/utils'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Toggle } from '@/components/ui/toggle'
 import { Slider } from '@/components/ui/slider'
-import { Separator } from '@/components/ui/separator'
+
+/** 一行三颗等宽大按钮（使能开关 / 复位 / 回零点），撑满卡片宽度 —— 就是速度滑条上方那一行。
+ *  皮肤全部交给现有 Button / Toggle 变体：扁平纯色、无渐变、无投影，尺寸与排版只在这里加。 */
+const BIG_BUTTON = 'h-11! w-full cursor-pointer gap-2.5! rounded-[0.6875rem]! text-[0.9375rem]! font-semibold!'
+
+/** 「复位」是这一行唯一的主操作：`--ok-solid` 实心绿，其余两颗走 outline 变体，
+ *  一行里只留一颗实心，层次才不会糊。 */
+const RESET_BUTTON = cn(BIG_BUTTON, 'border-transparent! bg-ok-solid! text-ok-solid-fg! hover:bg-ok-solid/85!')
+
+/** 使能开关按下 = 机械臂已使能，用 `--ok-soft` 压一层扁平的绿底，配合左侧圆点说明
+ *  "现在带电" —— 这颗按钮一点就会失力下坠，状态不能只靠文字。 */
+const ENABLE_BUTTON = cn(BIG_BUTTON, 'aria-pressed:bg-ok-soft! data-[state=on]:bg-ok-soft!')
 
 export function ControlBar({
-  enableBg,
-  enableFg,
-  enableBd,
-  enableDot,
   enabled,
+  enableDot,
   toggleEnable,
-  modes,
   speed,
   setSpeed,
-  fault,
   faultReason,
   clearFault,
-  homeJoints,
   zeroJoints,
 }: {
-  enableBg: string
-  enableFg: string
-  enableBd: string
-  enableDot: string
   enabled: boolean
+  enableDot: string
   toggleEnable: () => void
-  modes: SegItem[]
   speed: number
   setSpeed: (v: number) => void
-  fault: boolean
   faultReason: string | null
   clearFault: () => void
-  homeJoints: () => void
   zeroJoints: () => void
 }) {
-  const { t } = useTranslation(['common', 'solo'])
+  const { t } = useTranslation('solo')
 
   // 速度滑条只接受 (0,1]：0% 会被服务端拒绝，所以步进器把下限钳在 1。
   const nudge = (delta: number) => setSpeed(Math.min(100, Math.max(1, speed + delta)))
 
   return (
     <Card className="flex-none flex-col gap-2.5 rounded-[0.875rem] px-[0.8125rem] py-[0.6875rem]">
-      {/* 第一行：使能与三个一次性动作，模式切换靠右 */}
-      <div className="flex flex-wrap items-center gap-2.5">
+      {/* 第一行：三个大按钮。模式切换（位置 / 零重力）不在这里 —— 它是控制模式而不是
+          一次性动作，已经挪到 3D 预览卡片下方，见 PreviewPanel。 */}
+      <div className="grid grid-cols-3 gap-2.5">
         <Toggle
+          variant="outline"
           pressed={enabled}
           onPressedChange={toggleEnable}
-          // 背景/描边走内联样式（会盖掉 hover:bg-*），所以用 brightness 做悬停反馈。
-          className="h-11 min-w-[8.25rem] cursor-pointer gap-2.5 rounded-[0.6875rem] border px-4 text-[0.9375rem] font-semibold shadow-[0_0.0625rem_0.125rem_rgba(16,24,40,.06)] hover:brightness-95 active:brightness-90"
-          style={{ background: enableBg, color: enableFg, borderColor: enableBd }}
+          title={enabled ? t('controlBar.disableTitle') : t('controlBar.enableTitle')}
+          className={ENABLE_BUTTON}
         >
-          <div className="size-[0.5625rem] rounded-full" style={{ background: enableDot }} />
-          {enabled ? t('common:enabled') : t('common:disabled')}
+          <div className="size-[0.5625rem] flex-none rounded-full" style={{ background: enableDot }} />
+          {enabled ? t('controlBar.disable') : t('controlBar.enable')}
         </Toggle>
 
-        <div className="flex gap-[0.4375rem]">
-          <Button
-            type="button"
-            variant="outline"
-            disabled={!fault}
-            onClick={clearFault}
-            className="h-11 rounded-[0.6875rem] px-3 text-sm font-medium text-ink-strong"
-          >
-            {t('solo:controlBar.clearFault')}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={homeJoints}
-            title={t('solo:controlBar.readyPoseTitle')}
-            className="h-11 rounded-[0.6875rem] px-3 text-sm font-medium text-ink-strong"
-          >
-            {t('solo:controlBar.readyPose')}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={zeroJoints}
-            title={t('solo:controlBar.zeroPoseTitle')}
-            className="h-11 rounded-[0.6875rem] px-3 text-sm font-medium text-ink-strong"
-          >
-            {t('solo:controlBar.zeroPose')}
-          </Button>
-        </div>
+        {/* 复位不锁状态：故障发生时它必须一点就有，不该先去想为什么它是灰的。 */}
+        <Button
+          type="button"
+          variant="outline"
+          onClick={clearFault}
+          title={t('controlBar.resetTitle')}
+          className={RESET_BUTTON}
+        >
+          {t('controlBar.reset')}
+        </Button>
 
-        <div className="ml-auto flex items-center gap-2.5">
-          <Separator orientation="vertical" className="h-7" />
-          <SegmentedControl
-            items={modes}
-            containerStyle={{ display: 'flex', gap: '0.1875rem', background: 'var(--line-soft)', borderRadius: '0.6875rem', padding: '0.1875rem' }}
-            itemStyle={{ padding: '0.5rem 0.8125rem', borderRadius: '0.5rem', fontSize: '0.84375rem', color: 'var(--ink-subtle)', fontWeight: 500 }}
-            activeItemStyle={{ background: 'var(--seg-active)', color: 'var(--ink)', fontWeight: 650, boxShadow: '0 0.0625rem 0.125rem rgba(16,24,40,.1)' }}
-          />
-        </div>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={zeroJoints}
+          title={t('controlBar.homeTitle')}
+          className={BIG_BUTTON}
+        >
+          {t('controlBar.home')}
+        </Button>
       </div>
 
       {/* 第二行：速度值独占一行，滑条 + 步进器 */}
       <div className="flex items-center gap-[0.5625rem]">
-        <div className="text-[0.84375rem] font-semibold text-ink-strong">{t('solo:controlBar.speed')}</div>
+        <div className="text-[0.84375rem] font-semibold text-ink-strong">{t('controlBar.speed')}</div>
         <Slider
           value={[speed]}
           min={1}
@@ -112,8 +93,8 @@ export function ControlBar({
         <div className="flex flex-none items-center overflow-hidden rounded-[0.5625rem] border border-line-strong">
           <button
             type="button"
-            aria-label={t('solo:controlBar.speedDown')}
-            title={t('solo:controlBar.speedDown')}
+            aria-label={t('controlBar.speedDown')}
+            title={t('controlBar.speedDown')}
             onClick={() => nudge(-1)}
             className="h-8 w-8 cursor-pointer text-[1rem] leading-none text-muted-foreground transition-colors hover:bg-[var(--hover)] hover:text-foreground"
           >
@@ -124,8 +105,8 @@ export function ControlBar({
           </div>
           <button
             type="button"
-            aria-label={t('solo:controlBar.speedUp')}
-            title={t('solo:controlBar.speedUp')}
+            aria-label={t('controlBar.speedUp')}
+            title={t('controlBar.speedUp')}
             onClick={() => nudge(1)}
             className="h-8 w-8 cursor-pointer text-[1rem] leading-none text-muted-foreground transition-colors hover:bg-[var(--hover)] hover:text-foreground"
           >

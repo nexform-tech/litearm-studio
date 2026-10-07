@@ -1,7 +1,8 @@
 {
   "modes": {
     "position": "位置",
-    "drag": "拖动"
+    "drag": "零重力",
+    "label": "控制模式"
   },
   "submodes": {
     "joint": "关节",
@@ -12,11 +13,16 @@
     "jointLabel": "关节 {{n}}"
   },
   "controlBar": {
-    "clearFault": "清错",
+    "enable": "使能",
+    "enableTitle": "使能驱动，锁住当前姿态",
+    "disable": "下使能",
+    "disableTitle": "切断力矩输出：机械臂会在自重下下坠，下使能前请先扶稳",
+    "reset": "复位",
+    "resetTitle": "清除驱动锁存故障，让机械臂回到可操作状态",
+    "home": "回零点",
+    "homeTitle": "移动至零位 (各轴 0 rad)",
     "readyPose": "就绪姿态",
     "readyPoseTitle": "移动至推荐工作就绪姿态 Home",
-    "zeroPose": "回零位",
-    "zeroPoseTitle": "移动至零位 (各轴 0 rad)",
     "speed": "速度",
     "speedDown": "降低速度",
     "speedUp": "提高速度"

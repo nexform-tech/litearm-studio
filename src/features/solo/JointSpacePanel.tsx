@@ -17,6 +17,7 @@ export function JointSpacePanel({
   onDispatch,
   onDispatchAll,
   radOfPct,
+  onHomePose,
 }: {
   joints: Joint[]
   releaseOnly: boolean
@@ -25,6 +26,7 @@ export function JointSpacePanel({
   onDispatch: (key: number, pct: number) => void
   onDispatchAll: (targetPct: number[]) => void
   radOfPct: (pct: number, joint: number) => string
+  onHomePose: () => void
 }) {
   const { t } = useTranslation('solo')
   // “松手即下发”关闭时，各关节滑条调整后的暂存值（以关节 key 为索引）
@@ -73,6 +75,17 @@ export function JointSpacePanel({
           <div className="text-xs text-muted-foreground">{jointRangeLabel(joints.length)}</div>
         </div>
         <div className="flex flex-wrap items-center gap-[0.5625rem]">
+          {/* 就绪姿态从控制栏搬来这里：它是关节空间的一次 movej 到预设 Home 姿态，
+              和这几根滑条同属一组；留在速度行上会把三个大按钮挤掉。 */}
+          <Button
+            type="button"
+            variant="outline"
+            onClick={onHomePose}
+            title={t('controlBar.readyPoseTitle')}
+            className="h-auto rounded-[0.4375rem] px-2.5 py-1 text-[0.78125rem] font-normal text-ink-strong"
+          >
+            {t('controlBar.readyPose')}
+          </Button>
           {!releaseOnly && (
             <Button
               type="button"

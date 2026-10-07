@@ -18,7 +18,7 @@ export function SoloConsole() {
     <div style={{ flex: 1, display: 'flex', gap: '0.875rem', padding: '0.875rem', minHeight: '0rem', ...ROW_OVERFLOW }}>
       {/* LEFT: 状态 —— 3D 吃掉剩余高度，关节与笛卡尔合成一张卡，曲线压扁垫在最底下 */}
       <div style={{ ...SCROLL_COLUMN, ...SIDE_COL_WIDE, gap: '0.75rem' }}>
-        <PreviewPanel viewTabs={vm.viewTabs} viewBadge={vm.viewBadge} preview={vm.preview} />
+        <PreviewPanel viewTabs={vm.viewTabs} viewBadge={vm.viewBadge} preview={vm.preview} modes={vm.modes} />
         <PosePanel jointPose={vm.poseJoint} cartPose={vm.poseCart} />
         <MetricsPanel
           compact
@@ -40,19 +40,13 @@ export function SoloConsole() {
       {/* MIDDLE: 操作 */}
       <div style={{ ...SCROLL_COLUMN, flex: '1 1 26rem', minWidth: '23rem', gap: '0.75rem' }}>
         <ControlBar
-          enableBg={vm.enableBg}
-          enableFg={vm.enableFg}
-          enableBd={vm.enableBd}
           enableDot={vm.enableDot}
           enabled={vm.enabled}
           toggleEnable={vm.toggleEnable}
-          modes={vm.modes}
           speed={vm.speed}
           setSpeed={vm.setSpeed}
-          fault={vm.fault}
           faultReason={vm.faultReason}
           clearFault={vm.clearFault}
-          homeJoints={vm.homeJoints}
           zeroJoints={vm.zeroJoints}
         />
 
@@ -67,6 +61,7 @@ export function SoloConsole() {
             onDispatch={vm.dispatchJoint}
             onDispatchAll={vm.dispatchJoints}
             radOfPct={vm.radOfPct}
+            onHomePose={vm.homeJoints}
           />
           <CartesianPanel
             simMode={simMode}

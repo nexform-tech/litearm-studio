@@ -33,7 +33,7 @@ import type { JointLimits } from './soloUtils'
 export { HOME_JOINTS, JOINT_LIMITS, ZERO_JOINTS, normalizeLimits, pctToRad, pctToRadNum, radToPct, readStoredSpeed } from './soloUtils'
 
 type Frame = 'base' | 'tool'
-type ArmMode = '位置' | '拖动'
+type ArmMode = '位置' | '零重力'
 
 export type { SeriesSample }
 
@@ -174,9 +174,9 @@ export function useSoloState() {
   const armStateRef = useRef(armState)
   armStateRef.current = armState
 
-  // 广播里的真实模式（zero_gravity ⇔ 拖动）；仿真/未连接时为 null。
+  // 广播里的真实模式（zero_gravity ⇔ 零重力）；仿真/未连接时为 null。
   const broadcastMode: ArmMode | null =
-    s.real && armState ? (armState.state === 'zero_gravity' ? '拖动' : '位置') : null
+    s.real && armState ? (armState.state === 'zero_gravity' ? '零重力' : '位置') : null
 
   // 模式意图对账：广播追上意图即清除意图，回到"以广播为准"。依赖的是派生出的
   // 模式字符串而非 armState 本身，否则 10Hz 广播会不停重置下面的超时定时器。
@@ -303,11 +303,11 @@ export function useSoloState() {
   // 实机模式展示真实状态；仿真模式保留本地开关（纯前端临时模拟）。
   const enableOn = s.real ? realEnabled : s.enabled
 
-  // 实机模式以广播的真实状态为准（zero_gravity ⇔ 拖动），避免 UI 与实际不符；
+  // 实机模式以广播的真实状态为准（zero_gravity ⇔ 零重力），避免 UI 与实际不符；
   // 切换指令在途时先按意图显示（modeIntent），仿真/未连接时退回本地选择。
   const realMode: ArmMode = s.modeIntent ?? broadcastMode ?? s.mode
 
-  const modes = (['位置', '拖动'] as const).map((name) => ({
+  const modes = (['位置', '零重力'] as const).map((name) => ({
     key: name,
     label: name === '位置' ? t('solo:modes.position') : t('solo:modes.drag'),
     active: realMode === name,
@@ -317,12 +317,12 @@ export function useSoloState() {
         return
       }
       update({ mode: name, modeIntent: name })
-      // 拖动模式 = 固件零重力；位置模式 = 退出零重力（固件没有 hold 指令）。
-      const action = name === '拖动' ? armClient.zeroGStart() : armClient.zeroGStop()
+      // 零重力模式 = 固件的 zero_g_start；位置模式 = 退出零重力（固件没有 hold 指令）。
+      const action = name === '零重力' ? armClient.zeroGStart() : armClient.zeroGStop()
       action
         .then(() => setLastError(null))
         .catch((err) => {
-          reportError(name === '拖动' ? '切换到拖动模式' : '退出拖动模式', err)
+          reportError(name === '零重力' ? '切换到零重力模式' : '退出零重力模式', err)
           setS((p) => ({ ...p, modeIntent: null }))
         })
     },
@@ -534,15 +534,11 @@ export function useSoloState() {
           .setSpeed(s.speed)
           .then(() => armClient.home())
           .then(() => setLastError(null))
-          .catch((err) => reportError('回零位', err))
+          .catch((err) => reportError('回零点', err))
       }
     },
-    enableBg: enableOn ? 'var(--chip)' : 'var(--card)',
-    enableFg: enableOn ? 'var(--chip-fg)' : 'var(--ink-strong)',
-    // 失能态与卡片同底（浅色白 / 深色卡片色）：必须给描边，否则看不出是个按钮。
-    enableBd: enableOn ? 'var(--ink)' : 'var(--line-strong)',
+    // 使能按钮只吃一颗状态点的颜色：按钮皮肤统一在 ControlBar（描边 + 圆点）。
     enableDot: enableOn ? '#4ade80' : '#f5a524',
-    enableLabel: enableOn ? t('common:enabled') : t('common:disabled'),
     modes,
 
     joints,

@@ -309,15 +309,15 @@ describe('useSoloState mode-intent reconciliation', () => {
     const { result, rerender } = await renderSolo()
     expect(result.current.viewBadge).toBe('位置 · 实机')
 
-    act(() => modeOf(result, '拖动').onClick())
+    act(() => modeOf(result, '零重力').onClick())
     // 指令在途时先按意图显示（广播还是"位置"）。
-    expect(result.current.viewBadge).toBe('拖动 · 实机')
+    expect(result.current.viewBadge).toBe('零重力 · 实机')
     expect(mocks.zeroGStart).toHaveBeenCalledTimes(1)
 
-    // 广播追上意图：进入零重力（拖动）。
+    // 广播追上意图：进入零重力。
     mocks.armState = enabledArm({ state: 'zero_gravity' })
     act(() => rerender())
-    // 再让广播回到"位置"：意图若已对账清除，显示就跟随广播；否则会残留"拖动"。
+    // 再让广播回到"位置"：意图若已对账清除，显示就跟随广播；否则会残留"零重力"。
     mocks.armState = enabledArm({ state: 'ready' })
     act(() => rerender())
     expect(result.current.viewBadge).toBe('位置 · 实机')
@@ -330,14 +330,14 @@ describe('useSoloState mode-intent reconciliation', () => {
   it('drops the optimistic intent when the broadcast never confirms it', async () => {
     const { result } = await renderSolo()
 
-    act(() => modeOf(result, '拖动').onClick())
-    expect(result.current.viewBadge).toBe('拖动 · 实机')
+    act(() => modeOf(result, '零重力').onClick())
+    expect(result.current.viewBadge).toBe('零重力 · 实机')
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(MODE_INTENT_TIMEOUT_MS - 1)
     })
     // 超时前一直保留乐观显示。
-    expect(result.current.viewBadge).toBe('拖动 · 实机')
+    expect(result.current.viewBadge).toBe('零重力 · 实机')
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1)
@@ -350,11 +350,11 @@ describe('useSoloState mode-intent reconciliation', () => {
   it('keeps a mode switch local in simulation instead of sending a zero-g command', async () => {
     const { result } = await renderSolo()
 
-    // 仿真模式是纯前端 dry-run：切到"拖动"只改本地显示，不能真去动机械臂。
+    // 仿真模式是纯前端 dry-run：切到"零重力"只改本地显示，不能真去动机械臂。
     act(() => result.current.viewTabs.find((tab) => tab.key === 'sim')!.onClick())
-    act(() => modeOf(result, '拖动').onClick())
+    act(() => modeOf(result, '零重力').onClick())
 
-    expect(modeOf(result, '拖动').active).toBe(true)
+    expect(modeOf(result, '零重力').active).toBe(true)
     expect(mocks.zeroGStart).not.toHaveBeenCalled()
     expect(mocks.zeroGStop).not.toHaveBeenCalled()
   })
