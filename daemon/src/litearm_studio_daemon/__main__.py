@@ -10,12 +10,28 @@ import asyncio
 import logging
 import os
 import sys
+from pathlib import Path
 from typing import List, Optional
 
-from . import __version__, activation
+from . import __version__, activation, obs
 from .instance import find_running
+from .obs import handlers as obs_handlers
+from .obs import schema as obs_schema
 from .server import HTTP_PORT_TRIES, _is_loopback, _open_browser, serve
 from .session import Session
+
+
+def _log_level(value: str) -> str:
+    """Normalise a ``--log-level`` spelling to a schema severity name.
+
+    Accepts what a person would type (`debug`, `warning`) as well as the schema's
+    own spelling (`WARN`), and rejects anything else at parse time — a silently
+    ignored level is how "why is DEBUG not working" gets asked.
+    """
+    name = obs_schema.normalize_severity(value, default="")
+    if name not in obs_schema.SEVERITY_NUMBERS:
+        raise argparse.ArgumentTypeError(f"未知日志级别 {value!r}")
+    return name
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -62,6 +78,27 @@ def build_parser() -> argparse.ArgumentParser:
                         "浏览器对 WebSocket 不做同源限制, 所以放行一个来源等于让"
                         "该来源的页面能驱动机械臂 —— 只在你确知用途时才加。")
     p.add_argument("--verbose", "-v", action="store_true", help="打印调试日志")
+
+    # ── 结构化日志 (issue #79 / #80) ─────────────────────────────────────────
+    # 日志文件是**权威历史**: 页面可以因为端口漂移换掉 IndexedDB 库 (issue #80),
+    # 这个文件不会。默认目录按平台惯例 (见 `obs.handlers.default_log_dir`)。
+    p.add_argument("--log-dir", metavar="DIR", default=None,
+                   help="结构化日志目录 (默认按平台惯例: Linux 为 "
+                        "$XDG_STATE_HOME/litearm-studio; 也可用环境变量 "
+                        f"{obs_handlers.LOG_DIR_ENV})")
+    p.add_argument("--log-level", metavar="LEVEL", default="INFO",
+                   type=_log_level, choices=sorted(obs_schema.SEVERITY_NUMBERS),
+                   help="写入日志文件的最低级别: TRACE/DEBUG/INFO/WARN/ERROR/FATAL "
+                        "(默认 INFO; DEBUG 会记下每条命令)")
+    p.add_argument("--log-max-bytes", metavar="N", type=int,
+                   default=obs_handlers.DEFAULT_MAX_BYTES,
+                   help="单个日志文件的上限字节数, 超过即轮转 (默认 %(default)s)")
+    p.add_argument("--log-backups", metavar="N", type=int,
+                   default=obs_handlers.DEFAULT_BACKUPS,
+                   help="轮转后保留的旧文件数 (默认 %(default)s)")
+    p.add_argument("--log-stdout", action="store_true",
+                   help="把同样的 JSONL 记录也写到 stderr —— 前台运行或交给 "
+                        "Fluent Bit / 容器运行时采集时用; 不改变文件行为")
     return p
 
 
@@ -147,19 +184,36 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
     #: 一份"什么都没指定"的对照 —— 复用判据要拿它逐项比较 (见 `_SESSION_SHAPING`)。
     defaults = parser.parse_args([])
+    # 结构化日志 (issue #79): 文件是权威历史, 页面只是它的一个视图。**排在任何有副作用
+    # 的构造之前** —— 启动失败本身也要留下一条能读的记录。
+    log_dir = Path(args.log_dir).expanduser() if args.log_dir else None
+    obs.configure(log_dir=log_dir, version=__version__, level=args.log_level,
+                  max_bytes=args.log_max_bytes, backups=args.log_backups,
+                  stderr=args.log_stdout)
+    # 人读的那条仍走 stdlib: uvicorn / SDK 的 logging 不该被塞进 JSONL, 那会在同一个
+    # 文件里混进两种格式, 让 Fluent Bit 之类的采集器解析失败。
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
     if not _is_loopback(args.host):
         # 早退: 与其把异常抛到 uvicorn 那一层, 不如在这里把理由说清楚。
         print(f"只允许监听本机 (127.0.0.1), 拒绝 --host {args.host!r}", file=sys.stderr)
+        obs.error(obs.STARTUP_REFUSED, body="拒绝监听非本机地址",
+                  fields={"host": args.host, "reason": "non_loopback_host"})
         return 2
     if not args.fake and not args.fake_activated:
         # 组合无意义时明确报错, 而不是静默忽略: 用户以为"未激活的假设备"起来了,
         # 实际上会去连真硬件 (或者连不上), 排障时这是最费时间的一种失败。
         print("--fake-unactivated 只在 --fake 下有意义 (它说的是**假设备**的状态)",
               file=sys.stderr)
+        obs.error(obs.STARTUP_REFUSED, body="--fake-unactivated 未配合 --fake",
+                  fields={"reason": "invalid_option_combination"})
         return 2
+    obs.info(obs.DAEMON_STARTED, body=f"守护进程启动 (LiteArm Studio {__version__})",
+             fields={"fake": bool(args.fake), "http_port": int(args.http_port),
+                     "log_dir": str(log_dir or obs_handlers.default_log_dir()),
+                     "log_file": str(obs.log_path() or ""),
+                     "open_browser": not args.no_open})
     # 已经在跑同一个构建 ⇒ 把窗口指向它, 本进程不起 (issue #75)。这一步排在 Session /
     # 夹爪的构造**之前**: 夹爪的构造会连 CAN, 一旦连上就已经是"第二个会话"了。
     reused = _reuse_the_running_instance(args, defaults)
@@ -178,6 +232,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                           allow_origins=args.allow_origin))
     except KeyboardInterrupt:
         return 0
+    finally:
+        # 进程退出前把缓冲刷出去: 少了这一步, 最后几条 (往往是"为什么退出") 会丢。
+        obs.flush()
+        obs.shutdown()
     return 0
 
 

@@ -582,7 +582,10 @@ def test_ws_estop_does_not_wait_for_a_command_in_flight() -> None:
     """
     session, app = _client()
     try:
-        def fake_execute(m, p=None, *, on_event=None):
+        def fake_execute(m, p=None, *, on_event=None, trace=None):
+            # `trace` 是服务端为这次连接绑定的 trace id (见 `Daemon._traced_execute`)。
+            # 假件必须接受它: 少了这个参数, 注入会以 TypeError 的形式静默变成
+            # "命令失败", 而这条用例真正想钉的是「急停不排队」。
             if m == "movej":
                 time.sleep(0.5)
             return None

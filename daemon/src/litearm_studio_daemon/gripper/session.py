@@ -36,6 +36,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from .. import obs
 from ..errors import (
     GripperBusyError,
     GripperCalibrationError,
@@ -503,7 +504,14 @@ class GripperSession:
                 self._last_error = None
             if state == CONN_DISCONNECTED:
                 self._release_at = None
+            channel = self._config.channel if self._config is not None else ""
         self._broadcast({"t": "gripper_conn", **self.conn_info()})
+        # 夹爪的连接态是操作员要回答的问题之一（"它到底连上没有"），与臂的
+        # `session.connect.*` 对称。
+        event = _CONN_EVENTS.get(state)
+        if event is not None:
+            obs.emit(event, body=f"夹爪 {state}: {detail}" if detail else f"夹爪 {state}",
+                     fields={"channel": channel, "detail": detail or ""})
 
     def _on_gate_state(self, state: str, reason: str) -> None:
         with self._lock:
@@ -550,11 +558,23 @@ class GripperSession:
             # 故障帧的 kind 只有一个：它就是「驱动报故障」这件事。
             "kind": None if healthy else "GripperFaultActiveError",
         })
+        obs.emit(obs.GRIPPER_FAULT, body=text, level="INFO" if healthy else "ERROR",
+                 fields={"code": int(code), "healthy": bool(healthy),
+                         "hint": hint or "",
+                         "kind": None if healthy else "GripperFaultActiveError"})
 
     def _on_log(self, level: str, text: str) -> None:
-        log.log({"debug": logging.DEBUG, "info": logging.INFO, "warn": logging.WARNING,
-                 "error": logging.ERROR, "fatal": logging.CRITICAL}.get(level, logging.INFO),
-                "%s", text)
+        """夹爪控制环的运行日志 —— 同时进 stderr 与结构化日志文件。
+
+        ⚠ 两条通道的**级别口径不同是刻意的**（见 `worker._log`）：`info` 那一档在控制环里
+        是逐拍的解说，属于 DEBUG；写进文件时若按 INFO 落盘，一次标定就能把 5MB 的文件
+        写满。所以这里用 DEBUG，并把「文件里看不到」这件事交给 `--log-level debug`。
+        """
+        stdlib_level = {"debug": logging.DEBUG, "info": logging.INFO,
+                        "warn": logging.WARNING, "error": logging.ERROR,
+                        "fatal": logging.CRITICAL}.get(level, logging.INFO)
+        log.log(stdlib_level, "%s", text)
+        obs.debug(obs.GRIPPER_LOG, body=text, fields={"gripper_level": level})
 
     def _on_alert(self, level: str, text: str, kind: str | None = None) -> None:
         """一个操作员必须看见的事件 —— 帧里带上线上错误类名。
@@ -564,9 +584,15 @@ class GripperSession:
         """
         self._broadcast({"t": "gripper_alert", "level": level, "text": text,
                          "kind": kind})
+        # 与 `_on_log` 相反，alert 是**操作员看见过的东西**，按它被显示的级别落盘：
+        # 一句提示不该在事后读日志时消失。
+        obs.emit(obs.GRIPPER_ALERT, body=text, level=_alert_level(level),
+                 fields={"gripper_level": level, "kind": kind})
 
     def _on_busy(self, busy: bool, what: str) -> None:
         self._broadcast({"t": "gripper_busy", "busy": bool(busy), "what": what})
+        obs.debug(obs.GRIPPER_BUSY, body=f"夹爪{'忙碌' if busy else '空闲'}: {what}",
+                  fields={"busy": bool(busy), "what": what})
 
     def _on_motion_state(self, state: str) -> None:
         self._emit_state()
@@ -1122,6 +1148,25 @@ class GripperSession:
 
 
 # ---------------------------------------------------------------------- 参数
+#: The worker's alert levels are `info`/`warn`/`error`/`fatal`; the schema's are the
+#: six OTLP buckets. Mapped explicitly so a new level fails to `INFO` rather than
+#: silently becoming the wrong severity.
+_ALERT_LEVELS = {"info": "INFO", "warn": "WARNING", "warning": "WARN",
+                 "error": "ERROR", "fatal": "FATAL"}
+
+#: Worker connection states → the daemon's gripper lifecycle events.
+_CONN_EVENTS = {
+    CONN_CONNECTING: obs.GRIPPER_CONNECTING,
+    CONN_CONNECTED: obs.GRIPPER_CONNECTED,
+    CONN_DISCONNECTED: obs.GRIPPER_DISCONNECTED,
+    CONN_ERROR: obs.GRIPPER_CONNECT_FAILED,
+}
+
+
+def _alert_level(level: str) -> str:
+    return _ALERT_LEVELS.get(str(level).strip().lower(), "INFO")
+
+
 def _required_float(p: dict, key: str) -> float:
     if key not in p or p[key] is None:
         raise ValueError(f"{key} 是必需的")

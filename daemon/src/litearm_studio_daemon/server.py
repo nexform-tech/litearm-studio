@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import logging
 import os
@@ -29,7 +30,7 @@ import socket
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, List, Optional
+from typing import Any, Callable, Iterable, List, Optional
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -39,7 +40,7 @@ from starlette.exceptions import HTTPException
 from starlette.responses import Response
 from starlette.types import Scope
 
-from . import __version__
+from . import __version__, obs
 from .errors import error_to_dict
 from .statemap import jsonable
 from .session import ENERGY_DOWN_COMMANDS, Session
@@ -75,6 +76,8 @@ class _Client:
     """
     q: asyncio.Queue
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    #: 因队列满而被丢掉的 log 帧数。页面据此知道"这段空白是丢帧, 不是没发生"。
+    dropped_logs: int = 0
 
 
 def _is_loopback(host: str) -> bool:
@@ -271,6 +274,11 @@ class Daemon:
                         c.q.put_nowait(message)
                     except Exception:  # noqa: BLE001
                         pass
+                elif message.get("t") == "log":
+                    # ⚠ 日志帧丢了**要留下痕迹**: 文件里那条记录仍然在, 但页面上会
+                    # 出现一段空白, 而"空白"与"什么都没发生"长得一模一样。计数放在
+                    # `_Client` 上, 由服务端在下一个机会补一条 `daemon.log.dropped`。
+                    c.dropped_logs += 1
 
     # ------------------------------------------------------------ WS 单客户端
     async def handle_ws(self, ws: WebSocket) -> None:
@@ -281,9 +289,26 @@ class Daemon:
                 origin, ws.headers.get("host", ""), self.allow_origins):
             log.warning("拒绝跨源 WebSocket: origin=%r host=%r",
                         origin, ws.headers.get("host"))
+            obs.warning(obs.WS_REJECTED, body=f"拒绝跨源 WebSocket: {origin}",
+                        fields={"origin": origin, "host": ws.headers.get("host", "")})
             await ws.close(code=1008)          # 1008 = policy violation
             return
         await ws.accept()
+        #: 一条 WS 连接 = 一条 trace (见 `obs.trace`), 于是"点连接 → 握手 → 命令 →
+        #: 断链"在日志里能按同一次操作串起来。⚠ 它必须是**这个连接自己的局部量** ——
+        #: 存到 `self` 上会被第二个客户端覆盖, 于是两条连接的记录互相串线。
+        trace_id = obs.new_trace_id()
+        #: 会话命令的入口, 已带上这条连接的 trace。
+        #:
+        #: ⚠ 刻意**不**给 `Session.execute` 加一个 `trace=` 参数: `execute` 是命令的
+        #: 唯一漏斗, 而测试会给它塞一个签名固定的假件 (见
+        #: `test_ws_estop_does_not_wait_for_a_command_in_flight`) —— 多一个调用参数
+        #: 会让那种注入静默失效, 变成一条看不到的回归。包一层的效果一样, 且只影响
+        #: "从浏览器来的命令", 正是 trace 想描述的那批。
+        execute = self._traced_execute(trace_id)
+        obs.debug(obs.WS_CONNECTED, body="浏览器客户端已接入",
+                  fields={"origin": origin or "", "clients": len(self.clients) + 1},
+                  trace_id=trace_id)
         client = _Client(q=asyncio.Queue(maxsize=256))
         #: 普通上行帧的**有序**队列 —— 单条 worker 顺序消费, 保证「先发的先执行」
         #: (前端有依赖顺序的连招: set_speed 之后再 movej)。
@@ -336,13 +361,15 @@ class Daemon:
             self.clients.append(client)
             registered = True
             pump = asyncio.create_task(self._pump(ws, client))
-            worker = asyncio.create_task(self._drain(ws, client, queue))
+            worker = asyncio.create_task(
+                self._drain(ws, client, queue, trace_id, execute))
             while True:
                 raw = await ws.receive_text()
                 # 上行帧是最强的"操作员还在"证据, 连上之后立刻补一次 (连接本身也算)。
                 self.stamp_gripper_heartbeat()
                 if _is_energy_down_frame(raw):
-                    task = asyncio.create_task(self._on_upstream(ws, client, raw))
+                    task = asyncio.create_task(
+                        self._on_upstream(ws, client, raw, trace_id, execute))
                     bypass.add(task)
                     task.add_done_callback(_bypass_done)
                 else:
@@ -358,6 +385,17 @@ class Daemon:
                     self.clients.remove(client)
                 except ValueError:
                     pass
+                obs.debug(obs.WS_DISCONNECTED, body="浏览器客户端已离开",
+                          fields={"clients": len(self.clients),
+                                  "dropped_logs": client.dropped_logs},
+                          trace_id=trace_id)
+                if client.dropped_logs:
+                    # 队列满时丢掉的 log 帧在这里结账: 页面会看到一条明确的
+                    # "丢了 N 条", 而不是一段无法解释的空白。
+                    obs.warning(obs.LOG_DROPPED,
+                                body=f"慢客户端导致 {client.dropped_logs} 条日志帧被丢弃",
+                                fields={"dropped": client.dropped_logs},
+                                trace_id=trace_id)
             for task in bypass:
                 task.cancel()
             if worker is not None:
@@ -365,12 +403,37 @@ class Daemon:
             if pump is not None:
                 pump.cancel()
 
+    def _traced_execute(self, trace_id: Optional[str]) -> Callable[..., Any]:
+        """`session.execute`, with this connection's trace bound around the call.
+
+        A context var rather than a parameter: `execute` is injected by tests with a
+        fixed signature, and threading a new argument through it would turn a
+        legitimate injection into a TypeError that only shows up as "the command
+        failed". See the note at the call site.
+
+        ⚠ 快照必须在**这里**取, 不能指望 `asyncio.to_thread` 帮忙: `to_thread`
+        复制的是 `to_thread` 被调用的那一刻的上下文, 而那时我们还没进这段包装
+        (包装是在工作线程里才被调用的) ⇒ 复制到的是"没有 trace"的那一份。这里显式
+        `copy_context()` 再在包装内 `run`, trace 才真的跟着命令走到执行器线程上。
+        """
+        snapshot = contextvars.copy_context()
+
+        def run(method: str, params: Optional[dict] = None, *,
+                on_event: Optional[Callable[[dict], Any]] = None) -> Any:
+            def call() -> Any:
+                return self.session.execute(method, params, on_event=on_event,
+                                            trace=trace_id)
+            return snapshot.copy().run(call)
+        return run
+
     async def _drain(self, ws: WebSocket, client: _Client,
-                     queue: "asyncio.Queue[str]") -> None:
+                     queue: "asyncio.Queue[str]",
+                     trace_id: Optional[str] = None,
+                     execute: Optional[Callable[..., Any]] = None) -> None:
         """顺序消费普通上行帧 (单条 worker ⇒ 保序)。"""
         while True:
             raw = await queue.get()
-            await self._on_upstream(ws, client, raw)
+            await self._on_upstream(ws, client, raw, trace_id, execute)
 
     async def _send_direct(self, ws: WebSocket, client: _Client, message: dict) -> None:
         async with client.lock:
@@ -384,17 +447,26 @@ class Daemon:
                 await ws.send_text(json.dumps(message, ensure_ascii=False,
                                               allow_nan=False, default=str))
 
-    async def _on_upstream(self, ws: WebSocket, client: _Client, raw: str) -> None:
+    async def _on_upstream(self, ws: WebSocket, client: _Client, raw: str,
+                           trace_id: Optional[str] = None,
+                           execute: Optional[Callable[..., Any]] = None) -> None:
         """上行帧分发 —— 格式不对就回一条 `res` 错误, 不静默吞。"""
         try:
             msg = json.loads(raw)
         except (ValueError, TypeError):
+            obs.warning(obs.UPSTREAM_INVALID, body="上行帧不是合法 JSON",
+                        fields={"reason": "invalid_json", "bytes": len(raw)},
+                        trace_id=trace_id)
             await self._send_direct(ws, client, {
                 "t": "res", "id": None, "ok": False,
                 "err": {"kind": "BadMessage", "msg": "不是合法 JSON"},
             })
             return
         if not isinstance(msg, dict):
+            obs.warning(obs.UPSTREAM_INVALID, body="上行帧顶层不是 JSON 对象",
+                        fields={"reason": "not_an_object",
+                                "type": type(msg).__name__},
+                        trace_id=trace_id)
             await self._send_direct(ws, client, {
                 "t": "res", "id": None, "ok": False,
                 "err": {"kind": "BadMessage", "msg": "顶层需是 JSON 对象"},
@@ -418,8 +490,14 @@ class Daemon:
             #   否则帧发出去就没人接 (静默丢弃正是这个功能要修的缺陷)。用与
             #   `_run_command` 同一条 `error_to_dict` 通道, 不另造错误形状。
             try:
-                started = self.session.connect(raw_port)
+                started = self.session.connect(raw_port, trace=trace_id)
             except Exception as e:  # noqa: BLE001 - 任何失败都回一条结构化 err
+                obs.warning(obs.UPSTREAM_INVALID,
+                            body=f"connect 被拒: {type(e).__name__}: {e}",
+                            fields={"reason": "connect_refused",
+                                    "port": raw_port or "",
+                                    "error_kind": type(e).__name__},
+                            trace_id=trace_id)
                 await self._send_direct(ws, client, {
                     "t": "res", "id": msg.get("id"), "ok": False,
                     "err": error_to_dict(e),
@@ -436,14 +514,19 @@ class Daemon:
             })
             return
         if kind != "cmd":
+            obs.warning(obs.UPSTREAM_INVALID, body=f"未知上行消息类型 {kind!r}",
+                        fields={"reason": "unknown_type", "t": str(kind)},
+                        trace_id=trace_id)
             await self._send_direct(ws, client, {
                 "t": "res", "id": msg.get("id"), "ok": False,
                 "err": {"kind": "BadMessage", "msg": f"未知消息类型 {kind!r}"},
             })
             return
-        await self._run_command(ws, client, msg)
+        await self._run_command(ws, client, msg, trace_id, execute)
 
-    async def _run_command(self, ws: WebSocket, client: _Client, msg: dict) -> None:
+    async def _run_command(self, ws: WebSocket, client: _Client, msg: dict,
+                           trace_id: Optional[str] = None,
+                           execute: Optional[Callable[..., Any]] = None) -> None:
         """`{"t":"cmd","id":1,"m":"enable","p":{}}` → `res` 帧 (计划 3.1)。"""
         mid = msg.get("id")
         method = msg.get("m")
@@ -464,19 +547,25 @@ class Daemon:
         # 夹爪与臂共用同一个命令 id 空间, 但**不共用**命令表 (§4.2): `gripper.`
         # 前缀是唯一的分流判据, 于是臂的白名单一个字节没变。
         if method.startswith("gripper."):
-            await self._run_gripper_command(ws, client, mid, method, params)
+            await self._run_gripper_command(ws, client, mid, method, params, trace_id)
             return
 
         # `Session.execute` 是**阻塞**的 (它在单线程执行器上等 SDK 调用), 所以这里
         # 必须丢到线程里, 否则整个事件循环 (含状态推送/急停) 会被一条 movej 憋住。
         # `Session.execute` 内部先做准入判定 (白名单/运动互斥/连接态), 那几步在提交
         # 之前完成 —— 于是"在途时第二条运动命令"是**立刻**被拒, 不是排队后被拒。
+        run = execute if execute is not None else self.session.execute
         try:
             value = await asyncio.wait_for(
-                asyncio.to_thread(self.session.execute, method, params,
+                asyncio.to_thread(run, method, params,
                                   on_event=self.broadcast_threadsafe),
                 timeout=COMMAND_TIMEOUT_S)
         except asyncio.TimeoutError:
+            obs.error(obs.COMMAND_TIMEOUT,
+                      body=f"{method} 超过 {COMMAND_TIMEOUT_S:.0f}s 未返回",
+                      fields={"method": method, "timeout_s": COMMAND_TIMEOUT_S,
+                              "scope": "arm"},
+                      trace_id=trace_id)
             await self._send_direct(ws, client, {
                 "t": "res", "id": mid, "ok": False,
                 "err": {"kind": "CommandTimeoutError",
@@ -495,7 +584,8 @@ class Daemon:
         })
 
     async def _run_gripper_command(self, ws: WebSocket, client: _Client, mid: Any,
-                                   method: str, params: dict) -> None:
+                                   method: str, params: dict,
+                                   trace_id: Optional[str] = None) -> None:
         """`gripper.*` → `GripperSession.execute` → `res` 帧。
 
         ⚠ 与臂那条路的区别是**超时**: 夹爪命令不阻塞 (它们入队就返回), 唯一例外的
@@ -517,6 +607,11 @@ class Daemon:
                 asyncio.to_thread(self.gripper.execute, method, params),
                 timeout=timeout)
         except asyncio.TimeoutError:
+            obs.error(obs.COMMAND_TIMEOUT,
+                      body=f"{method} 超过 {timeout:.0f}s 未返回",
+                      fields={"method": method, "timeout_s": timeout,
+                              "scope": "gripper"},
+                      trace_id=trace_id)
             await self._send_direct(ws, client, {
                 "t": "res", "id": mid, "ok": False,
                 "err": {"kind": "CommandTimeoutError",
@@ -688,9 +783,23 @@ async def serve(session: Session, *, gripper: Optional[Any] = None,
         raise ValueError(
             f"拒绝监听 {host!r}: 本程序只允许绑定本机 (127.0.0.1) —— "
             f"它能把机械臂的使能/运动接口暴露给整个网络。")
+    if int(http_port) == 0:
+        # ⚠ 端口 0 会让 `pick_free_http_port` 返回 0, 而 uvicorn 把 0 解释成
+        # "内核挑一个" —— 于是我们打印的 URL 是 `:0`, 窗口打不开。测试用 0 是为了
+        # 拿一个真端口; 这种请求必须由内核来满足, 所以这里不代它挑。
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.bind((host, 0))
+            http_port = int(probe.getsockname()[1])
+        log.info("端口 0: 内核挑定 %d", http_port)
     port = pick_free_http_port(host, http_port)
     if port != http_port:
         print(f"[litearm-studio-daemon] 端口 {http_port} 被占用, 改用 {port}")
+        # ⚠ 端口漂移是 issue #80 的**触发条件**: 它换掉页面 origin, 于是换掉 IndexedDB
+        # 库。记录里留下这一条, 事后才解释得清"历史为什么看起来没了"。
+        obs.warning(obs.DAEMON_STARTED,
+                    body=f"端口 {http_port} 被占用, 改用 {port} (页面 origin 因此改变)",
+                    fields={"requested_port": int(http_port), "port": int(port),
+                            "origin_changed": True})
     app = create_app(session, gripper=gripper, version=version, ui_dir=ui_dir,
                      allow_origins=allow_origins)
     config = uvicorn.Config(app, host=host, port=port, log_level="info",
@@ -698,6 +807,13 @@ async def serve(session: Session, *, gripper: Optional[Any] = None,
     server = uvicorn.Server(config)
     url = f"http://{host}:{port}/"
     print(f"[litearm-studio-daemon] 监听 {url}  (WebSocket: ws://{host}:{port}/ws)")
+    # `resolve_ui_dir` 是纯函数 (只看磁盘), 所以再算一次比把路径从 `create_app`
+    # 里传出来更省事, 也不会与它给出的答案不一致。
+    ui_path = resolve_ui_dir(ui_dir)
+    obs.info(obs.DAEMON_STARTED, body=f"守护进程开始监听 {url}",
+             fields={"host": host, "port": int(port), "version": version,
+                     "ui_dir": str(ui_path) if ui_path is not None else "",
+                     "gripper": gripper is not None})
     if open_browser:
         # 等 uvicorn 真起来再开窗口; 用一个后台任务, 免得阻塞服务本身。
         async def _later() -> None:

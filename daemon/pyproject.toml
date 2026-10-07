@@ -30,6 +30,12 @@ license = { text = "Apache-2.0" }
 dependencies = [
     "fastapi",
     "uvicorn[standard]",
+    # ⚠ 结构化日志 (issue #79) **刻意不引三方库**: 记录 schema 是自己的
+    # (`obs/schema.py`, 字段名照 OpenTelemetry 的日志数据模型), 写入是标准库的
+    # `logging.handlers.RotatingFileHandler` + 一个自定义 Formatter, trace/span 上下文
+    # 用标准库的 `contextvars`。评估过 structlog: 它的两个卖点 (处理器链、上下文绑定)
+    # 在这里分别由"一条 Formatter"与"两个 ContextVar"承担, 而它并不解决真正难的那一步
+    # ——在轮转下保证整行原子写入。见 `obs/__init__.py` 的模块说明。
     # 固件升级（USB DFU）的烧录引擎。**在 PyPI 上**，所以可以正常声明 —— 与
     # `litearm` / `litegrip` 那两个必须从 checkout 装的 SDK 不同。
     #
