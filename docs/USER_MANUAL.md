@@ -144,10 +144,11 @@ The Solo Control page provides real-time 3D pose monitoring, state readouts, joi
 
 ### 3.2 Pose Monitor
 
-Displays real-time joint and end-effector pose readings:
+Joint and Cartesian readings share one "Current Pose" card, with both columns visible at once:
 
-- Joint Space: Real-time angles for all seven axes J1–J7 (rad);
-- Cartesian Space: Tool Center Point (TCP) spatial coordinates (`X, Y, Z` in meters) and Euler angles (`Roll, Pitch, Yaw` in radians) relative to the base coordinate frame.
+- Joint Space (left column): Real-time angles for all seven axes J1–J7 (rad);
+- Cartesian Space (right column): Tool Center Point (TCP) spatial coordinates (`X, Y, Z` in meters) and Euler angles (`Roll, Pitch, Yaw` in radians) relative to the base coordinate frame;
+- When the firmware has no Cartesian planner the right column says so instead of showing an invented pose.
 
 ### 3.3 Live Telemetry Curve
 
@@ -155,10 +156,11 @@ Shows one real-time waveform at a time; you pick which metric it plots:
 
 ![Telemetry Curve](images/en/06_solo_telemetry.png)
 
-- Metric Tabs: Switch between Temperature (°C), Velocity (rad/s), Torque (Nm), and Tracking Error (rad). The panel draws only the selected metric, at full height — the right column is not tall enough for four readable charts.
+- Placement: the panel sits under "Current Pose" in the left column, squashed to a single strip tall enough for one readable chart;
+- Metric Tabs: Switch between Temperature (°C), Velocity (rad/s), Torque (Nm), and Tracking Error (rad). The panel draws only the selected metric; the tabs are how you look at the others, instead of squeezing four charts together.
 - Remembered Choice: The selected metric is restored the next time you open the control page; temperature is the default.
 - Channel Filters: Select or deselect J1–J7 curves individually, with "Select All", "Clear", and "Pause/Resume" controls.
-- Current Readings: The J1–J7 numbers next to the metric name are the latest sample for the selected metric. Tracking error reads "no real-time data" because the controller broadcast does not carry it.
+- Current Readings: The J1–J7 numbers above the chart are the latest sample for the selected metric. Tracking error reads "no real-time data" because the controller broadcast does not carry it.
 
 ---
 
@@ -220,7 +222,7 @@ Supports spatial pose adjustments referenced to the end-effector tool:
 
 ### 3.7 LiteGrip Gripper
 
-The LiteGrip two-finger parallel gripper shares the arm's CAN bus and lives in a panel at the bottom of the control page's right column. It has its own connection, enable and stop controls; the CAN channel, mounting, calibration and travel are configured in **Settings → Gripper & bus** (§5.4).
+The LiteGrip two-finger parallel gripper shares the arm's CAN bus and fills the control page's right column below the E-stop. It has its own connection, enable and stop controls; the CAN channel, mounting, calibration and travel are configured in **Settings → Gripper & bus** (§5.4), and the panel repeats the channel and CAN ID as one line of monospace text at the bottom.
 
 - Connect / Disconnect: open or close the gripper session. **Connect** is available only when the program reports a gripper session — the Linux daemon has one, the Windows build does not;
 - Enable / Disable: energise or release the gripper drive. Opening, closing and calibration need the drive enabled;

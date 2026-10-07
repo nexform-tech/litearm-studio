@@ -36,6 +36,11 @@ export type MetricsPanelProps = {
   chips: MetricChip[]
   selectAll: () => void
   selectNone: () => void
+  /**
+   * 压扁形态：卡片不再抢高度、图表固定 6rem，并省掉与指标页签重复的
+   * 「指标名 / 单位 / 轴」那一行。控制页把曲线垫在「当前位姿」底下时用它。
+   */
+  compact?: boolean
 }
 
 export function MetricsPanel({
@@ -51,6 +56,7 @@ export function MetricsPanel({
   chips,
   selectAll,
   selectNone,
+  compact = false,
 }: MetricsPanelProps) {
   const { t, i18n } = useTranslation(['common'])
 
@@ -121,7 +127,13 @@ export function MetricsPanel({
   })
 
   return (
-    <Card className="min-h-[15rem] flex-1 gap-2 rounded-[0.875rem] px-3.5 py-3">
+    <Card
+      className={
+        compact
+          ? 'flex-none gap-2 rounded-[0.875rem] px-3.5 py-3'
+          : 'min-h-[15rem] flex-1 gap-2 rounded-[0.875rem] px-3.5 py-3'
+      }
+    >
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 border-b pb-1.5">
         <div className="text-[0.90625rem] font-semibold text-foreground">
           {t('common:metrics.title')}
@@ -199,16 +211,22 @@ export function MetricsPanel({
       {active ? (
         <div
           data-testid="metric-chart"
-          className="flex min-h-0 flex-1 flex-col rounded-[0.625rem] border bg-muted/30 px-2 py-1.5"
+          className={
+            compact
+              ? 'flex h-[6rem] flex-none flex-col rounded-[0.625rem] border bg-muted/30 px-2 py-1.5'
+              : 'flex min-h-0 flex-1 flex-col rounded-[0.625rem] border bg-muted/30 px-2 py-1.5'
+          }
         >
           <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
-            <div className="flex items-baseline gap-1.5">
-              <span className="text-[0.78125rem] font-semibold text-foreground">{active.name}</span>
-              <span className="font-mono text-[0.625rem] text-muted-foreground">{active.unit}</span>
-              <span className="font-mono text-[0.5625rem] text-muted-foreground/70">
-                {active.axis}
-              </span>
-            </div>
+            {compact ? null : (
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-[0.78125rem] font-semibold text-foreground">{active.name}</span>
+                <span className="font-mono text-[0.625rem] text-muted-foreground">{active.unit}</span>
+                <span className="font-mono text-[0.5625rem] text-muted-foreground/70">
+                  {active.axis}
+                </span>
+              </div>
+            )}
             {/* 每个关节在当前指标下的读数；被关掉的曲线压暗但仍然显示数值。 */}
             <div className="flex flex-wrap items-baseline gap-x-2">
               {chips.map((c, i) => (

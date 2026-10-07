@@ -93,7 +93,7 @@ export function PreviewPanel(vm: { viewTabs: SegItem[]; viewBadge: string; previ
   }
 
   return (
-    <Card className="flex-none gap-2.5 rounded-[0.875rem] p-3">
+    <Card className="flex-1 gap-2.5 rounded-[0.875rem] p-3">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 text-[0.90625rem] font-semibold text-foreground">
           <Box size="0.9375rem" /> {t('solo:preview.title')}
@@ -183,12 +183,10 @@ const PreviewViewport = forwardRef<
         overflow: 'hidden',
       }
     : {
-        // aspect-ratio (not a fixed px height) lets the box scale with the
-        // fluid column width instead of overflowing on narrow columns or
-        // looking tiny on a 4K one.
-        aspectRatio: '5 / 3',
-        minHeight: '11.25rem',
-        maxHeight: '21.25rem',
+        // 视口吃掉左列剩余高度：位姿与曲线都是固定高度，窗口越高 3D 越大，
+        // 而不是在底部留一条空白。minHeight 保住窄/矮窗口下的可用性。
+        flex: '1 1 auto',
+        minHeight: '15rem',
         borderRadius: '0.625rem',
         position: 'relative',
         overflow: 'hidden',

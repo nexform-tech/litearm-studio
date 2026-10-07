@@ -76,7 +76,13 @@ function sample(axisCount: number) {
 
 function renderPanel(
   axisCount: number,
-  { activeMetric = 'temp' as MetricType, shown = [0], liveData = true, simMode = false } = {},
+  {
+    activeMetric = 'temp' as MetricType,
+    shown = [0],
+    liveData = true,
+    simMode = false,
+    compact = false,
+  } = {},
 ) {
   const chips = Array.from({ length: axisCount }, (_, i) => chip(i, shown.includes(i)))
   const selectMetric = vi.fn()
@@ -94,6 +100,7 @@ function renderPanel(
       chips={chips}
       selectAll={vi.fn()}
       selectNone={vi.fn()}
+      compact={compact}
     />,
   )
   return { chips, selectMetric }
@@ -189,5 +196,19 @@ describe('MetricsPanel metric switcher', () => {
 
     expect(screen.getByText(i18n.t('common:metrics.noLiveData'))).toBeTruthy()
     expect(screen.getAllByTestId('metric-chart')).toHaveLength(1)
+  })
+})
+
+describe('MetricsPanel compact layout', () => {
+  it('drops the duplicated metric name while keeping every reading', () => {
+    renderPanel(3, { compact: true })
+
+    // 压扁形态仍然只有一张图，每个关节的当前读数也还在。
+    expect(screen.getAllByTestId('metric-chart')).toHaveLength(1)
+    expect(screen.getByText('J1 1')).toBeTruthy()
+    expect(screen.getByText('J3 1')).toBeTruthy()
+    // 指标名与单位已经写在页签上，不再在图里重复一遍。
+    expect(screen.queryByText('T (°C)')).toBeNull()
+    expect(screen.queryByText('°C')).toBeNull()
   })
 })

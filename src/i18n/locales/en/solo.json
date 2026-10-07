@@ -7,10 +7,6 @@
     "joint": "Joint",
     "cartesian": "Cartesian"
   },
-  "pose": {
-    "jointTitle": "Joint Pose",
-    "cartTitle": "Cartesian Pose"
-  },
   "controlBar": {
     "clearFault": "Clear Error",
     "readyPose": "Ready Pose",
