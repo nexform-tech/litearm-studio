@@ -70,7 +70,9 @@ def build_parser() -> argparse.ArgumentParser:
 #: 进程握着的 ACM0 上, 正是最坏的失败形状。
 #:
 #: ⚠ 桌面条目 (`packaging/deb.py`) 不带任何参数, 走的就是复用那条路; 这些开关是给命令行
-#: 与台架用的。
+#: 与台架用的。`fake` 也在里面, 所以 `_reuse_the_running_instance` 只可能以 `fake=False`
+#: 去探测: 开发构建的版本号彼此相同 (见 `instance` 模块文档末段), 让 `--fake` 复用等于把
+#: 上一个 checkout 的旧代码端给正在改代码的人。
 _SESSION_SHAPING = (
     "fake", "fake_activated", "port", "ui_dir", "keep_enabled", "no_reconnect",
     "no_gripper", "can_channel", "no_can_setup", "activation_url", "allow_origin",
