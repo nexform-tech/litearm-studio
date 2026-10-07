@@ -572,7 +572,10 @@ class Session:
             return False
         # 记住这个口 —— 下次启动/不带口的连接先试它 (只是提示, 见 `_connect_candidates`)。
         # ⚠ 只在**连上之后**记: 记一个连不通的口, 会让下一次的默认选择和"上次能用"无关。
-        # ⚠ 放在锁外: 这是文件 I/O, 不该占着会话锁。
+        # ⚠ 放在锁外: 这是文件 I/O, 不该占着会话锁。代价是 `connected` 比这一笔**先**
+        #   被看见 (状态在上面那个锁块里就发布了)。这是可接受的: 唯一读这条记录的是
+        #   `_connect_candidates`, 而它只在 `connect()` 里被调用, `connect()` 又跑在同一
+        #   条单线程执行器上 —— 下一次连接必然排在这次 `_open` 之后, 那时这一笔已经落地。
         self._port_store.remember(target)
         try:
             log.info("已连接: port=%s firmware=%s n=%d cart=%s",

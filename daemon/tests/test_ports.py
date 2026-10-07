@@ -222,9 +222,12 @@ def test_a_successful_connect_remembers_the_port(tmp_path: Path) -> None:
     s = Session(fake=True, port_store=LastPortStore(path))
     try:
         assert s.connect("/dev/ttyACM7") is True
-        assert _wait(lambda: s.connected), s.arm_info()
+        # ⚠ 等的是**记录本身**, 不是 `connected`: 会话先把状态推成 connected 才写这一笔
+        # (写盘不占会话锁), 所以 `s.connected` 为真时文件可能还没落地。产品侧无所谓 ——
+        # `connect()` 在单线程 executor 上串行, 下一次连接必然排在这次 `_open` 之后; 但
+        # 从这里观察就必须等它。CI 上比本机慢, 早了就会读到 `None`。
+        assert _wait(lambda: LastPortStore(path).last_port() == "/dev/ttyACM7"), s.arm_info()
         assert s.arm_info()["port"] == "/dev/ttyACM7"
-        assert LastPortStore(path).last_port() == "/dev/ttyACM7"
     finally:
         s.close()
 
