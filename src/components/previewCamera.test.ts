@@ -10,13 +10,19 @@
 import { describe, expect, it } from 'vitest'
 import * as THREE from 'three'
 import {
-  FRAME_DISTANCE_FACTOR,
-  MIN_FRAME_DISTANCE,
+  PREVIEW_FOV_DEG,
   defaultPreviewView,
+  fitFrameDistance,
+  type Envelope,
 } from './previewCamera'
 
-const distance = Math.max(1.37 * FRAME_DISTANCE_FACTOR, MIN_FRAME_DISTANCE)
-const targetY = 0.685
+/** 真机的包络量级（约 0.2 m 宽、1.37 m 高），`frameRobot` 居中后 min.y = 0。 */
+const ENVELOPE: Envelope = { x: 0.2, y: 1.37, z: 0.2 }
+/** 默认取景用的视口形状（左列 3D 卡片在 1600×900 下的实际比例）。 */
+const ASPECT = 425 / 300
+
+const distance = fitFrameDistance(ENVELOPE, ASPECT)
+const targetY = ENVELOPE.y / 2
 
 /**
  * `RobotViewport` rotates the Z-up model's root by `-PI/2` about X, which maps a
@@ -110,5 +116,71 @@ describe('defaultPreviewView', () => {
   it('refuses a degenerate distance instead of aiming at its own target', () => {
     expect(defaultPreviewView(0, targetY)).toBeNull()
     expect(defaultPreviewView(-1, targetY)).toBeNull()
+  })
+})
+
+describe('fitFrameDistance', () => {
+  /** 包络的 8 个角：`frameRobot` 居中后 y ∈ [0, size.y]，x/z 对称。 */
+  const corners = (size: Envelope) =>
+    [-size.x / 2, size.x / 2].flatMap((x) =>
+      [0, size.y].flatMap((y) => [-size.z / 2, size.z / 2].map((z) => new THREE.Vector3(x, y, z))),
+    )
+
+  /** 按该视口形状取景后，把 8 个角投到 NDC —— 全部落在 ±1 内才算"看得全"。 */
+  function ndcOfCorners(size: Envelope, aspect: number) {
+    const d = fitFrameDistance(size, aspect)
+    const view = defaultPreviewView(d, size.y / 2)
+    if (!view) throw new Error('expected a view')
+    const camera = new THREE.PerspectiveCamera(PREVIEW_FOV_DEG, aspect, 0.1, 100)
+    camera.position.set(...view.position)
+    camera.up.set(0, 1, 0)
+    camera.lookAt(...view.target)
+    camera.updateMatrixWorld(true)
+    camera.updateProjectionMatrix()
+    return corners(size).map((c) => c.clone().project(camera))
+  }
+
+  it('keeps the whole envelope inside the frame on the default viewport', () => {
+    for (const p of ndcOfCorners(ENVELOPE, ASPECT)) {
+      expect(Math.abs(p.x)).toBeLessThanOrEqual(1)
+      expect(Math.abs(p.y)).toBeLessThanOrEqual(1)
+    }
+  })
+
+  it('keeps it inside on wide, square and narrow viewports alike', () => {
+    for (const aspect of [0.6, 1, 1.42, 2, 3.2]) {
+      for (const p of ndcOfCorners(ENVELOPE, aspect)) {
+        expect(Math.abs(p.x)).toBeLessThanOrEqual(1)
+        expect(Math.abs(p.y)).toBeLessThanOrEqual(1)
+      }
+    }
+  })
+
+  it('moves the eye back past the fixed factor that clipped the top', () => {
+    // 回归点：旧的「最长边 × 1.72」在俯视机位下把顶端投到了画面上缘之外。
+    const legacy = Math.max(ENVELOPE.y * 1.72, 1)
+    const view = defaultPreviewView(legacy, targetY)!
+    const camera = new THREE.PerspectiveCamera(PREVIEW_FOV_DEG, ASPECT, 0.1, 100)
+    camera.position.set(...view.position)
+    camera.up.set(0, 1, 0)
+    camera.lookAt(...view.target)
+    camera.updateMatrixWorld(true)
+    camera.updateProjectionMatrix()
+    const top = new THREE.Vector3(0, ENVELOPE.y, 0).project(camera)
+    expect(Math.abs(top.y)).toBeGreaterThan(1)
+    expect(distance).toBeGreaterThan(legacy)
+  })
+
+  it('leaves breathing room instead of grazing the frame edge', () => {
+    const worst = Math.max(...ndcOfCorners(ENVELOPE, ASPECT).map((p) => Math.abs(p.y)))
+    // FRAME_MARGIN = 1.25 ⇒ 最紧的那个角停在离边缘 20% 的位置，既不贴边也不显小。
+    expect(worst).toBeLessThan(0.85)
+    expect(worst).toBeGreaterThan(0.6)
+  })
+
+  it('floors the distance for a tiny envelope and survives a degenerate aspect', () => {
+    expect(fitFrameDistance({ x: 0.01, y: 0.01, z: 0.01 }, ASPECT)).toBe(1)
+    expect(Number.isFinite(fitFrameDistance(ENVELOPE, 0))).toBe(true)
+    expect(Number.isFinite(fitFrameDistance(ENVELOPE, Number.NaN))).toBe(true)
   })
 })

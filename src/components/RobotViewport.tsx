@@ -3,7 +3,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import URDFLoader from 'urdf-loader'
 import type { URDFRobot } from 'urdf-loader'
-import { FRAME_DISTANCE_FACTOR, MIN_FRAME_DISTANCE, defaultPreviewView } from './previewCamera'
+import { defaultPreviewView, fitFrameDistance } from './previewCamera'
 
 const URDF_URL = `${import.meta.env.BASE_URL}description/litearm.urdf`
 const WORKING_PATH = `${import.meta.env.BASE_URL}description/`
@@ -159,10 +159,11 @@ const frameRobot = (
   object.position.z -= center.z
   object.position.y -= box.min.y
 
-  const maxDim = Math.max(size.x, size.y, size.z)
-  // 近距取景：约 1.7 倍包络尺寸（真机约 1.37m），下限 1m。
-  const distance = Math.max(maxDim * FRAME_DISTANCE_FACTOR, MIN_FRAME_DISTANCE)
+  // 取景距离按**视锥**解出来（见 previewCamera 的 fitFrameDistance）：固定的
+  // 「包络最大边 × 1.72」在俯视 16° 的机位下会把机械臂顶端切掉，而且窄视口还
+  // 会再收窄水平视野。这里量的是当前相机的视锥，窗口形状变化都被算进去。
   const targetY = size.y * 0.5
+  const distance = fitFrameDistance(size, camera.aspect)
   const view = defaultPreviewView(distance, targetY)
   // 退化包络（没有网格）：保持当前视角，不要把自己贴到目标点上。
   if (!view) return
