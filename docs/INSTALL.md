@@ -262,5 +262,5 @@ rm -rf ~/.config/litearm-studio
 | The UI loads but the badge stays "Connect failed" | The serial device is missing or not readable. Check § 5, then pass `--port` explicitly |
 | The UI loads but never shows state | The WebSocket is blocked. Same-origin handshakes are required; a proxy or a browser extension that rewrites origins breaks it |
 | Nothing opens, only "无法自动打开浏览器" in the terminal | No browser was found. Open the printed address by hand |
-| `Enable` does nothing and the arm answers `ERR{0x10,0x08}` | The arm is not activated. See § 7 |
-| The activation panel reads "Unsupported" | The firmware predates 1.8.0 and must be upgraded |
+| **Enable** does nothing | The arm is not activated. See § 7 |
+| The activation panel reads **Not supported** | The firmware predates 1.8.0. Update the firmware first (see [user manual](USER_MANUAL.md) §5.7) |
