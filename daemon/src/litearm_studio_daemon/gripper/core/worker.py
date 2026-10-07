@@ -80,6 +80,7 @@ from ..calibration import (
 )
 from ..telemetry import Telemetry, TelemetryFrame
 from ..units import frame_mismatch, rad_per_s_to_mm
+from ..backend import MoveAborted
 from . import commands as cmd
 from .calibration_fsm import GuidedCalibFSM, TwoPointCalibFSM
 from .commands import AnyCommand
@@ -559,7 +560,12 @@ class WorkerLoop:
             # name a millimetre") is asked where a command enters, in
             # ``_require_motion``, because the FSM cannot tell an in-flight 闭合
             # from an in-flight 移动.
-            refusal, _kind = self._refusal(geometry=False)
+            #
+            # ``link=False``: a silent link does not stop the frames.  They are
+            # the only thing that ends the silence, and withholding them here is
+            # a latch — one tick's worth of lost frames would freeze the console
+            # until the daemon restarted (see ``_refusal``).
+            refusal, _kind = self._refusal(geometry=False, link=False)
             out = self._motion.tick(
                 self.backend,
                 tele,
@@ -758,7 +764,7 @@ class WorkerLoop:
             f"标定不可用：已在 {measured_rad:.6f} rad 驻留（按实测角度，不经过毫米换算）",
         )
 
-    def _refusal(self, geometry: bool = True) -> tuple[str, str | None]:
+    def _refusal(self, geometry: bool = True, *, link: bool = True) -> tuple[str, str | None]:
         """Why motion is refused right now, and which wire error kind it is.
 
         Returns ``("", None)`` when motion is allowed.  ``geometry`` says whether
@@ -768,6 +774,14 @@ class WorkerLoop:
         to the ends of the travel and are meaningful whatever the span is, while
         a millimetre target computed from nominal geometry is wrong by the ratio
         between this unit and a 120 mm one.
+
+        ``link=False`` drops the dead-link check, for the one caller that must
+        not be gated by it: the frame the FSM is about to send.  A silent link
+        is not a reason to stop talking — the frames are how the motor is heard
+        from at all, so withholding them is what makes the silence permanent —
+        and the pose a hold commands is the one the last frame measured, which
+        is what a hold always commands.  It still refuses a *new* move and still
+        drives the link-health display.
 
         The kind travels with the reason because a refusal raised on the tick
         thread has no ``res`` frame to answer: it reaches the operator as a
@@ -785,7 +799,7 @@ class WorkerLoop:
                 pass
             else:
                 return self._gate_reason or "标定未就绪", KIND_CALIBRATION
-        if self._link_dead():
+        if link and self._link_dead():
             return f"链路已断：{self._stale_ms():.0f} ms 未收到状态帧", KIND_FAULT
         # Last, and deliberately: no measurement is *why* nothing can be
         # commanded, but a dead link or a shut gate is *why* there is no
@@ -991,9 +1005,9 @@ class WorkerLoop:
             if isinstance(command, cmd.MoveToMm):
                 self._motion.move_to_mm(command.target_mm, command.source)
             elif isinstance(command, cmd.Open):
-                self._motion.open(command.source)
+                self._open(command)
             elif isinstance(command, cmd.Close):
-                self._motion.close(command.source, force_n=command.force_n)
+                self._close(command)
             else:
                 self._motion.grasp(command.force_n, command.source)
         elif isinstance(command, cmd.BackOff):
@@ -1280,6 +1294,132 @@ class WorkerLoop:
         self._log("warn", "急停已复位；电机仍处于失能状态")
 
     # ── motion ──────────────────────────────────────────────────────────────
+    def _open(self, command: cmd.Open) -> None:
+        """张开 — the SDK's own ``open()`` when the backend has one, else the FSM law.
+
+        Symmetric with :meth:`_close`: the opening side has a dead-band of its
+        own, and the SDK's wall-clock ramp — not the daemon's anchored reference
+        — is what breaks it.  See
+        :meth:`~litearm_studio_daemon.gripper.backend.real.RealBackend.open_plain`.
+        """
+        self._plain_move(
+            command.describe(),
+            delegate=lambda: self.backend.open_plain(
+                speed_mm_s=self._motion.params.speed_mm_s,
+                should_abort=self._motion_aborted,
+            ),
+            fallback=lambda: self._motion.open(command.source),
+            interrupted="张开被中断（急停或退出）",
+            settled="张开完成，已在当前位置驻留",
+        )
+
+    def _close(self, command: cmd.Close) -> None:
+        """闭合 — the SDK's own ``close()`` when the backend has one, else the FSM law.
+
+        The good reason to drive the SDK's ``close()`` here rather than the
+        daemon's own law is issue #72: this unit has a ~0.010 rad closing-side
+        dead-band, the SDK's schedule commands a wall-clock ramp that pushes
+        through it, and the daemon's anchored reference — which can lead the
+        measurement by only a bounded cap — could not.  See
+        :meth:`~litearm_studio_daemon.gripper.backend.real.RealBackend.close_plain`.
+
+        The good reason *not* to is that it blocks the tick thread for the whole
+        move.  So it stays a plain close only — a force-carrying close keeps the
+        FSM law, where the position gain is the approach gain and the SDK's
+        schedule would read as the contact it is trying to detect — the
+        simulator and any backend without an SDK close fall through to the FSM,
+        and the E-stop is threaded in as the abort hook so 急停 can still
+        interrupt it.
+        """
+        if command.force_n is not None:
+            self._motion.close(command.source, force_n=command.force_n)
+            return
+        self._plain_move(
+            command.describe(),
+            delegate=lambda: self.backend.close_plain(
+                speed_mm_s=self._motion.params.speed_mm_s,
+                should_abort=self._motion_aborted,
+            ),
+            fallback=lambda: self._motion.close(command.source, force_n=None),
+            interrupted="闭合被中断（急停或退出）",
+            settled="闭合完成，已在当前位置驻留",
+        )
+
+    def _plain_move(
+        self,
+        what: str,
+        *,
+        delegate: Callable[[], bool],
+        fallback: Callable[[], None],
+        interrupted: str,
+        settled: str,
+    ) -> None:
+        """Run a plain open/close the backend may drive itself.
+
+        ``delegate`` asks the backend for its SDK ramp and returns ``True`` when
+        it took the move.  ``False`` — the simulator, or any backend without an
+        SDK ramp — hands the move to ``fallback``, the FSM law, exactly as it
+        ran before the delegation existed.  An abort that reached the blocking
+        call leaves the axis idle and lets this tick's own E-stop handling
+        abandon the gripper; any other failure is reported and the jaws are
+        re-anchored where the move left them.
+        """
+        try:
+            handled = delegate()
+        except MoveAborted:
+            # An E-stop or a shutdown reached the move.  Leave nothing of ours
+            # driving the axis and let this tick's own E-stop handling below
+            # abandon the gripper.
+            self._motion.idle()
+            self._log("warn", interrupted)
+            return
+        except Exception as exc:  # noqa: BLE001 - reported, never fatal
+            self._alert("error", f"「{what}」失败: {exc}",
+                        kind=exception_kind(exc))
+            self._reanchor_after_blocking_move(settled)
+            return
+        if not handled:
+            fallback()
+            return
+        self._reanchor_after_blocking_move(settled)
+
+    def _motion_aborted(self) -> bool:
+        """The abort hook a blocking SDK move polls once per sample."""
+        return self._estop.is_set() or self._stop.is_set()
+
+    def _reanchor_after_blocking_move(self, settled: str) -> None:
+        """Hold where the jaws are, after a move this loop did not tick through.
+
+        The cached reading predates the move — the SDK drove the jaws and
+        updated its own state while the tick sat inside a ``*_plain`` call — so
+        it is re-read first.  Without that the hold would command the pose from
+        *before* the move, which is the same mistake :meth:`_measured_mm`
+        exists to prevent, one layer up: a hold is only ever as good as the
+        measurement behind it.
+        """
+        self._resync_link_after_blocking_call()
+        self._tele = self.backend.read()
+        self._hold_measured(settled)
+
+    def _resync_link_after_blocking_call(self) -> None:
+        """Re-stamp the link clock after a call that blocked the tick thread.
+
+        The clock :meth:`_link_dead` reads is only ever advanced by this loop's
+        own ``poll``, so a call that blocks for longer than
+        :data:`~litearm_studio_daemon.gripper.constants.LINK_STALE_MS` — which
+        every ``*_plain`` move is, and by seconds — leaves it reading a link
+        that has been silent since the move *began*.  It was not: the backend's
+        ramp polls status frames itself for the whole move, so the link was
+        demonstrably talking throughout.  The frames simply went to the backend
+        instead of to this loop, and the loop cannot tell that from silence.
+
+        Left un-stamped, the first tick after the move reads the link dead and
+        refuses the very hold frame that would restart the conversation — the
+        motor speaks only when spoken to — so the console stays wedged, every
+        subsequent command refused with 「链路已断」, until the daemon restarts.
+        """
+        self._last_rx_t = self._clock()
+
     def _require_motion(self, what: str, *, geometry: bool = True) -> bool:
         refusal, kind = self._refusal(geometry=geometry)
         if refusal:

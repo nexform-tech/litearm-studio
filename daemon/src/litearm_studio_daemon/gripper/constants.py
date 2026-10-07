@@ -223,6 +223,40 @@ KP_GRASP_APPROACH = 25.0
 # rebound, which spiked a 40 N grip to 56 N.
 FORCE_RAMP_S = 0.05
 
+#: How far short of the commanded end a stalled plain 张开/闭合 may stop and still
+#: count as having arrived.
+#:
+#: Such a move is a *press*: it drives past the calibrated limit toward the
+#: mechanical stop, so its stall is the arrival, and the only way a stall can be
+#: an obstruction instead is to happen on the inner side of that end.  A
+#: millimetre is the scale of both errors in play — the SDK's own ``stop_tol``
+#: (0.02 rad) is about that on this linkage, and so is the gap between a probed
+#: limit and the stop the jaws actually press to.  That second gap is why the
+#: SDK's own ``MoveResult.ok`` is not the test here: it asks the stop to sit
+#: within ``stop_tol`` of the *calibrated* limit, so a stop that overshot a
+#: slightly shallow probe reads as a failure, and 张开 would report 「行程中被挡住」
+#: on a gripper whose jaws had simply opened all the way.
+PRESS_REACH_TOL_MM = 1.0
+
+#: The SDK ``MotionConfig.stop_lead_mm`` this console runs its plain 张开/闭合 with.
+#:
+#: ``open()``/``close()`` hardcode ``press=True`` (litegrip actions.py:335,349),
+#: so every plain move presses *past* the calibrated limit onto the mechanical
+#: stop.  That press is the law that breaks the closing-side dead-band (issue
+#: #72) and it is kept; what is not kept is how hard it seats.  Within
+#: ``press_zone_mm`` of the limit the command may sit ``stop_lead_mm`` ahead of
+#: the measured position, so the press torque is ``kp × stop_lead_mm /
+#: rad_to_mm`` — at the SDK's own 0.7 mm that is 100 × 0.7 / 53.3 ≈ 1.3 N·m on
+#: this unit, and with the ramp's velocity feed-forward on top a full 张开 read
+#: as ±2.2–2.4 N·m, felt as 「一直出力」 and warming the coil every cycle.
+#:
+#: Lowering the lead lowers that torque and nothing else: the ``press_overshoot``
+#: target still lands ~4.4 mm past the limit against a ~2.8 mm gap to the stop,
+#: so the move still stalls *on* the stop and still counts as an arrival.  Too
+#: low and the lead can no longer break static friction there, so the move stalls
+#: short and 张开/闭合 reports 「未顶到限位」.
+PRESS_STOP_LEAD_MM = 0.4
+
 # ── Stroke ──────────────────────────────────────────────────────────────────
 #: The travel of the gripper this console drives, in millimetres.
 #:

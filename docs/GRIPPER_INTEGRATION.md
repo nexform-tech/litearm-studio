@@ -35,7 +35,7 @@ These are settled; the rest of the document assumes them.
 | D3 | The daemon never calls `load_calibration()` with no argument. It always passes an explicit `path=` or `template=`. | The SDK's no-argument chain falls back to its bundled factory file and reports success either way, so the caller cannot tell which file moved the jaws. |
 | D4 | The factory default is the SDK's `normal` / `reverse` template, loaded **by name**. Nothing is copied into the user calibration directory. | The templates are nominal (120 mm geometry) and exist to declare direction. Copying one into `~/.litegrip/<channel>_calibration.json` would make nominal data pass for a measurement and defeat every provenance check. |
 | D5 | The travel (`max_stroke_mm`) is owned by the host, stored per channel. It starts at `85.0` (the reference unit's measured travel) and the operator confirms it during first-time setup. | The SDK's calibration schema has no field for it, but `zero()` uses it as the numerator of `rad_to_mm`. Left at the SDK default of `120.0` it scales every millimetre reading by about 1.4. |
-| D6 | The daemon drives the gripper with its **own 200 Hz MIT tick** and does not call the SDK's `open` / `close` / `grasp` / `move_at_speed` / `goto`. | They block for the whole move and have no abort hook, so an E-stop cannot interrupt them; `move_at_speed` also ends with a fixed ~100 ms hold that stutters a live control loop. |
+| D6 | The daemon drives the gripper with its **own 200 Hz MIT tick**. It does not call the SDK's `grasp` / `move_at_speed` / `goto`, and calls `open()` / `close()` only in their plain forms, through the backend's `open_plain` / `close_plain`. | `grasp` / `move_at_speed` / `goto` block for the whole move and have no abort hook, so an E-stop cannot interrupt them, and `move_at_speed` also ends with a fixed ~100 ms hold that stutters a live control loop. `open()` and `close()` are the one exception: this unit has a mechanical dead-band at *each* end that the daemon's anchored reference cannot break (issue #72) and the SDK's wall-clock ramp can, and both take a `progress` callback that the console wires to the E-stop — so each keeps an abort path. A force-carrying close is *not* delegated; it stays on the FSM, where the position gain is the approach gain. |
 | D7 | Every SDK call happens on the tick thread. No other thread touches the gripper object. | The SDK is not thread-safe: one socket, one cached motor state, no locks. |
 | D8 | The E-stop is a `threading.Event` checked at the top of every tick. It is not a queued command. | A stop that can queue behind other work is not an emergency stop. |
 | D9 | The tick is also the keepalive. | The drive leaves the enabled state after 0.4 s without a frame from the host. |
@@ -511,9 +511,14 @@ Three items, each with the check that closes it. None of them blocks P1 or P2.
 
 ## 11. Do not
 
-- Do not call the SDK's `open`, `close`, `grasp`, `move_at_speed`, `goto` or
-  `home`. They block, cannot be interrupted, and `home` uses a constant rather
-  than the calibrated closed end.
+- Do not call the SDK's `grasp`, `move_at_speed`, `goto` or `home`. They block,
+  cannot be interrupted, and `home` uses a constant rather than the calibrated
+  closed end. `open()` / `close()` are the one exception, and only in their plain
+  forms: each is driven through `open_plain` / `close_plain` with the E-stop
+  threaded into its `progress` callback, because their wall-clock ramp is what
+  breaks this unit's dead-band at each end (issue #72). A force-carrying close
+  does not go through them — the FSM's approach gain is the contact detector
+  there.
 - Do not call `load_calibration()` with no argument. It falls back to the bundled
   factory file silently and returns success.
 - Do not copy `calibration_normal.json` or `calibration_reverse.json` into
