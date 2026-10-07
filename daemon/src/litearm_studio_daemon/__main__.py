@@ -12,8 +12,9 @@ import os
 import sys
 from typing import List, Optional
 
-from . import activation
-from .server import _is_loopback, serve
+from . import __version__, activation
+from .instance import find_running
+from .server import HTTP_PORT_TRIES, _is_loopback, _open_browser, serve
 from .session import Session
 
 
@@ -63,6 +64,42 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+#: 这些选项一旦被显式改过, 本次启动就**不复用**在跑的实例 —— 它们描述的是"这次要一个
+#: 什么样的会话/界面", 而复用一个已经存在的实例等于把它们静默丢掉。这条纪律与 #74 定下
+#: 的"显式指定的选择不做退让"是同一条: 操作员指了 `--port /dev/ttyACM1`, 界面却停在上一个
+#: 进程握着的 ACM0 上, 正是最坏的失败形状。
+#:
+#: ⚠ 桌面条目 (`packaging/deb.py`) 不带任何参数, 走的就是复用那条路; 这些开关是给命令行
+#: 与台架用的。`fake` 也在里面, 所以 `_reuse_the_running_instance` 只可能以 `fake=False`
+#: 去探测: 开发构建的版本号彼此相同 (见 `instance` 模块文档末段), 让 `--fake` 复用等于把
+#: 上一个 checkout 的旧代码端给正在改代码的人。
+_SESSION_SHAPING = (
+    "fake", "fake_activated", "port", "ui_dir", "keep_enabled", "no_reconnect",
+    "no_gripper", "can_channel", "no_can_setup", "activation_url", "allow_origin",
+)
+
+
+def _reuse_the_running_instance(args: argparse.Namespace,
+                                defaults: argparse.Namespace) -> Optional[int]:
+    """已经有同一个构建在跑就复用它 (返回 0); 否则返回 `None`, 由调用者照常启动。
+
+    见 `instance` 模块文档: 关掉窗口不停止守护进程, 而第二次启动原本会另起一个连不上
+    机械臂的会话 (串口被上一个进程独占)。
+
+    ⚠ **必须在任何有副作用的构造之前调用** —— `build_gripper_session` 会真的去连 CAN。
+    """
+    if any(getattr(args, name) != getattr(defaults, name) for name in _SESSION_SHAPING):
+        return None
+    url = find_running(args.host, args.http_port, HTTP_PORT_TRIES,
+                       version=__version__, fake=False)
+    if url is None:
+        return None
+    print(f"[litearm-studio-daemon] 已有实例在运行, 复用它: {url}")
+    if not args.no_open:
+        _open_browser(url)
+    return 0
+
+
 def build_gripper_session(args: argparse.Namespace):
     """Build the gripper session, or ``None`` when this build has none.
 
@@ -105,7 +142,10 @@ def build_gripper_session(args: argparse.Namespace):
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    #: 一份"什么都没指定"的对照 —— 复用判据要拿它逐项比较 (见 `_SESSION_SHAPING`)。
+    defaults = parser.parse_args([])
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
@@ -119,6 +159,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("--fake-unactivated 只在 --fake 下有意义 (它说的是**假设备**的状态)",
               file=sys.stderr)
         return 2
+    # 已经在跑同一个构建 ⇒ 把窗口指向它, 本进程不起 (issue #75)。这一步排在 Session /
+    # 夹爪的构造**之前**: 夹爪的构造会连 CAN, 一旦连上就已经是"第二个会话"了。
+    reused = _reuse_the_running_instance(args, defaults)
+    if reused is not None:
+        return reused
     session = Session(port=args.port, fake=args.fake,
                       fake_activated=args.fake_activated,
                       reconnect=not args.no_reconnect,

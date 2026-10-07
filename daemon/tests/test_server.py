@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from litearm_studio_daemon.__main__ import build_parser, main
 from litearm_studio_daemon.server import (
+    HTTP_PORT_TRIES,
     _is_energy_down_frame,
     _is_loopback,
     create_app,
@@ -313,6 +314,23 @@ def test_health_counts_connected_clients() -> None:
         session.close()
 
 
+@pytest.mark.parametrize("fake", [True, False])
+def test_health_reports_whether_the_session_is_fake(fake: bool) -> None:
+    """`fake` 是复用判据的一半 (`instance.is_same_instance`)。
+
+    ⚠ 缺了它, 真机版的启动会复用一个 `--fake` 的调试进程 —— 操作员对着假设备操作, 而那
+    比多起一个进程更难发现。
+    """
+    session = Session(fake=fake, reconnect=False,
+                      poll_period=0.05, state_push_interval=0.05)
+    app = create_app(session, version=VERSION, repo_dist=Path("/nonexistent-ui"))
+    try:
+        with TestClient(app) as client:
+            assert client.get("/api/health").json()["fake"] is fake
+    finally:
+        session.close()
+
+
 # ------------------------------------------------------------------ WS 契约
 
 def test_ws_handshake_sends_hello_then_conn() -> None:
@@ -601,6 +619,99 @@ def test_cli_fake_unactivated_parses_with_fake() -> None:
     assert args.fake is True and args.fake_activated is False
     # 默认仍是"已激活的假设备" —— 不给开关就不改变老行为。
     assert build_parser().parse_args(["--fake"]).fake_activated is True
+
+
+# ------------------------------------------------- 复用已经在跑的实例 (issue #75)
+
+def _serve_must_not_run(monkeypatch, cli):
+    """把 `serve` 换成哨兵: 走到它就说明**又起了一个守护进程**, 正是 #75 的缺陷。"""
+    class _Started(Exception):
+        pass
+
+    async def _serve(*args, **kwargs):
+        raise _Started()
+
+    monkeypatch.setattr(cli, "serve", _serve)
+    return _Started
+
+
+def test_main_reuses_the_running_instance_instead_of_starting_a_second(
+        monkeypatch, capsys) -> None:
+    """关掉窗口再启动一次, 不该另起一个连不上机械臂的会话 (串口被上一个进程独占)。
+
+    ⚠ 探测本身由 `test_instance.py` 钉住; 这里替换掉它, 断言的是**启动路径的走向**:
+    没走到 `serve`, 就没有第二个守护进程。
+    """
+    from litearm_studio_daemon import __main__ as cli
+
+    _serve_must_not_run(monkeypatch, cli)
+    monkeypatch.setattr(cli, "find_running", lambda *a, **k: "http://127.0.0.1:8765/")
+    monkeypatch.setattr(cli, "_open_browser", lambda url: None)
+
+    assert cli.main(["--no-open"]) == 0
+    assert "复用它" in capsys.readouterr().out
+
+
+def test_main_opens_a_window_onto_the_running_instance(monkeypatch) -> None:
+    """复用时必须**把窗口指向它** —— 否则进程退得干干净净, 操作员什么都没看到。"""
+    from litearm_studio_daemon import __main__ as cli
+
+    _serve_must_not_run(monkeypatch, cli)
+    monkeypatch.setattr(cli, "find_running", lambda *a, **k: "http://127.0.0.1:8765/")
+    opened: list[str] = []
+    monkeypatch.setattr(cli, "_open_browser", opened.append)
+
+    assert cli.main([]) == 0
+    assert opened == ["http://127.0.0.1:8765/"]
+
+
+@pytest.mark.parametrize("argv", [
+    ["--port", "/dev/ttyACM9"],
+    ["--fake"],
+    ["--can-channel", "can1"],
+    ["--ui-dir", "/tmp/other-ui"],
+    ["--no-gripper"],
+])
+def test_main_does_not_reuse_when_this_launch_names_a_specific_session(
+        monkeypatch, argv) -> None:
+    """显式指定了会话形状 ⇒ 连探测都不做, 照常启动。
+
+    ⚠ 复用等于把这些选择**静默丢掉** —— 与 #74 定下的"显式指定的选择不做退让"是同一条
+    纪律 (见 `__main__._SESSION_SHAPING`)。
+    """
+    from litearm_studio_daemon import __main__ as cli
+
+    _Started = _serve_must_not_run(monkeypatch, cli)
+    probed: list[dict] = []
+    monkeypatch.setattr(cli, "find_running",
+                        lambda *a, **k: probed.append(k) or "http://127.0.0.1:8765/")
+    monkeypatch.setattr(cli, "build_gripper_session", lambda args: None)
+
+    with pytest.raises(_Started):
+        cli.main([*argv, "--no-open"])
+    assert probed == [], "显式指定会话形状时不该去探测"
+
+
+def test_main_probes_for_this_build_on_the_ports_the_picker_would_use(monkeypatch) -> None:
+    """探测的入参也要对: 本构建的版本号, 以及与 `pick_free_http_port` 同一个范围。"""
+    from litearm_studio_daemon import __main__ as cli, __version__
+
+    seen: dict = {}
+
+    def _find(host, start, tries, *, version, fake=False):
+        seen.update(host=host, start=start, tries=tries, version=version, fake=fake)
+        return None
+
+    async def _serve(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(cli, "find_running", _find)
+    monkeypatch.setattr(cli, "serve", _serve)
+    monkeypatch.setattr(cli, "build_gripper_session", lambda args: None)
+
+    assert cli.main(["--no-open"]) == 0
+    assert seen == {"host": "127.0.0.1", "start": 8765, "tries": HTTP_PORT_TRIES,
+                    "version": __version__, "fake": False}
 
 
 # ------------------------------------------------------------ 固件升级的帧
