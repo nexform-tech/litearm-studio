@@ -50,6 +50,9 @@ from .errors import (FirmwareUpgradeError, MotionBusyError,
 
 log = logging.getLogger("litearm_studio_daemon.session")
 
+#: `_note_command(trace=...)` 的哨兵 —— 见那里的说明。
+_TRACE_UNSET: Any = object()
+
 #: 状态轮询周期 (秒) —— 20ms = 50Hz。**必须自己节流**: SDK 那条路径读的是缓存帧,
 #: 不节流的话轮询线程会以 GIL 允许的最高速率空转 (实测能把整套用例拖慢一个量级)。
 #: ⚠ 循环体里的 sleep 只保证"周期**不小于**本值" (工作耗时叠加在上面), 这与
@@ -1160,7 +1163,7 @@ class Session:
 
     def _note_command(self, m: str, params: dict, value: Any,
                       exc: Optional[BaseException], *, duration_ms: float,
-                      span: str, trace: Optional[str] = None) -> None:
+                      span: str, trace: Any = _TRACE_UNSET) -> None:
         """一条命令的台账 —— 成功与失败都走这里。
 
         ⚠ 参数**必须**经 `obs.redact.command_arguments`: 激活请求带着操作员的注册信息
@@ -1183,10 +1186,13 @@ class Session:
         notable = (m in obs.NOTABLE_COMMANDS) or exc is not None
         body = (f"命令 {m} 完成 ({fields['duration_ms']:.0f}ms)" if exc is None
                 else f"命令 {m} 失败: {type(exc).__name__}: {exc}")
+        # ⚠ `trace` 的默认值是哨兵而不是 `None`: "调用方明确给了没有 trace" 与
+        # "调用方没表态" 是两件事 —— 后者要回落到**当前上下文**里的 trace (浏览器
+        # 那条连接绑定的), 否则从 WS 来的命令会丢掉自己的 trace_id。
         obs.emit(event, body=body, fields=fields, exception=exc,
                  severity=None if notable else "DEBUG",
                  level=None if notable else "DEBUG", span_id=span,
-                 trace_id=trace if trace is not None else obs.current_trace())
+                 trace_id=obs.current_trace() if trace is _TRACE_UNSET else trace)
 
     def _run_command(self, arm: Arm, m: str, p: dict,
                      on_event: Optional[Callable[[dict], None]]) -> Any:

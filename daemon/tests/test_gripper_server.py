@@ -14,6 +14,7 @@ from litearm_studio_daemon.gripper.session import GripperSession
 from litearm_studio_daemon.server import _is_energy_down_frame, create_app
 from litearm_studio_daemon.session import Session
 
+
 VERSION = "9.9.9-test"
 
 
@@ -94,8 +95,9 @@ def test_handshake_carries_the_gripper_connection_frame(tmp_path: Path) -> None:
             with client.websocket_connect("/ws") as ws:
                 assert ws.receive_json()["t"] == "hello"
                 assert ws.receive_json()["t"] == "conn"
-                frame = ws.receive_json()
-                assert frame["t"] == "gripper_conn"
+                # `log_meta` (接入时宣告日志流位置) 排在 `conn` 之后、`gripper_conn` 之前;
+                # 这里等的是后者, 用 `_recv_until` 跳过中间那条。
+                frame = _recv_until(ws, "gripper_conn")
                 assert frame["status"] == "disconnected"
                 assert frame["channel"] == "can0"
                 assert frame["canId"] == 8
@@ -130,9 +132,10 @@ def test_health_says_so_when_there_is_no_gripper(tmp_path: Path) -> None:
                 hello = ws.receive_json()
                 assert hello["t"] == "hello"
                 assert ws.receive_json()["t"] == "conn"
+                assert ws.receive_json()["t"] == "log_meta"
                 # ⚠ 没有夹爪时**不发** `gripper_conn`: 缺席不是一个连接态。
                 ws.send_json({"t": "cmd", "id": 2, "m": "gripper.enable", "p": {}})
-                res = ws.receive_json()
+                res = _recv_until(ws, "res")
                 assert res["t"] == "res" and res["ok"] is False
                 assert res["err"]["kind"] == "GripperNotConnectedError"
     finally:
@@ -146,8 +149,9 @@ def test_gripper_commands_round_trip_over_the_socket(tmp_path: Path) -> None:
     try:
         with TestClient(app) as client:
             with client.websocket_connect("/ws") as ws:
-                ws.receive_json()
-                ws.receive_json()
+                ws.receive_json()   # hello
+                ws.receive_json()   # conn
+                assert ws.receive_json()["t"] == "log_meta"
                 assert ws.receive_json()["t"] == "gripper_conn"
 
                 res = _connect_gripper(ws)

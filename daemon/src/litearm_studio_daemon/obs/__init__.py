@@ -42,7 +42,7 @@ import threading
 from contextlib import contextmanager
 from pathlib import Path
 from time import time_ns
-from typing import Any, Dict, Iterator, List, Mapping, Optional
+from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional
 
 from . import redact, schema
 from .handlers import (
@@ -120,6 +120,17 @@ _trace_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
     "litearm_trace_id", default=None)
 _span_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
     "litearm_span_id", default=None)
+
+#: Where every emitted record is also offered, besides the file. The transport
+#: layer (`server.Daemon`) registers a sink that turns records into `log` frames.
+#:
+#: ⚠ A **sink**, not a `logging.Handler`, on purpose: the websocket fan-out must
+#: not be able to make the file write fail, and a sink that raises is contained
+#: in one place (`_notify_sink`). There is at most one.
+_sink: Optional["Sink"] = None
+
+#: A sink is a plain callable; `server.Daemon` passes a bound method.
+Sink = Callable[[Dict[str, Any]], None]
 
 #: Process-wide constants, resolved once.
 _service: str = SERVICE_NAME
@@ -379,6 +390,7 @@ def emit(event: str, *, body: str = "", fields: Optional[Mapping[str, Any]] = No
             exc_info = (type(exception), exception, exception.__traceback__)
         _logger.log(schema.SEVERITY_TO_LOGGING_LEVEL.get(wanted, logging.INFO),
                     record["body"], extra={"obs_record": record}, exc_info=exc_info)
+        _notify_sink(record)
         return record
     except Exception:  # noqa: BLE001 - see docstring
         return None
@@ -448,6 +460,32 @@ def describe_value(value: Any) -> Any:
             summary["values"] = redact.sanitize(list(value))
         return summary
     return {"kind": type(value).__name__}
+
+
+def set_sink(sink: Optional[Sink]) -> None:
+    """Register (or clear) the one extra destination for emitted records.
+
+    `create_app` calls this once; tests call it with `None`. A sink must be fast
+    and must not raise — `_notify_sink` swallows anything it throws, because a
+    dead websocket fan-out must never fail the operation being logged.
+    """
+    global _sink
+    _sink = sink
+
+
+def sink() -> Optional[Sink]:
+    """The registered sink, if any. For tests and for the transport layer."""
+    return _sink
+
+
+def _notify_sink(record: Dict[str, Any]) -> None:
+    sink_fn = _sink
+    if sink_fn is None:
+        return
+    try:
+        sink_fn(record)
+    except Exception:  # noqa: BLE001 - a broken sink is not the caller's problem
+        pass
 
 
 def flush() -> None:

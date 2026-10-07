@@ -65,6 +65,11 @@ COMMAND_TIMEOUT_S = 60.0
 #: 所以不能套用 60s 那条兜底。客户端同样不能给它设 60s 超时 (§4.2)。
 GRIPPER_ZERO_TIMEOUT_S = 300.0
 
+#: 多久广播一次日志流的位置 (`log_meta`: 序号 + 丢帧数)。取 2s 的理由: 丢帧与断流都是
+#: 页面**自己发现不了**的事, 而 2s 短到"操作员还没开始困惑", 又长到不占可观的带宽
+#: (一条几十字节)。它只在有客户端时发。
+LOG_META_INTERVAL_S = 2.0
+
 
 @dataclass
 class _Client:
@@ -78,6 +83,9 @@ class _Client:
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     #: 因队列满而被丢掉的 log 帧数。页面据此知道"这段空白是丢帧, 不是没发生"。
     dropped_logs: int = 0
+    #: 这个客户端已经收到的最后一条 log 帧序号 (由 `_pump` 更新)。序号是页面判断
+    #: "我漏了东西没有"的唯一证据 —— 空白与"什么都没发生"长得一模一样。
+    last_log_seq: int = 0
 
 
 def _is_loopback(host: str) -> bool:
@@ -215,12 +223,21 @@ class Daemon:
         self.allow_origins = frozenset(allow_origins)
         self.clients: List[_Client] = []
         self.loop: Optional[asyncio.AbstractEventLoop] = None
+        #: 已广播的结构化记录条数 (单调递增, 也是 `log` 帧的 `seq`)。
+        self._log_seq = 0
+        #: 因某个客户端队列满而丢掉的 log 帧数 (全局累计)。
+        self._log_dropped = 0
         #: 夹爪看门狗的心跳任务 (见 `_gripper_heartbeat_loop`)。
         self.heartbeat_task: Optional[asyncio.Task] = None
+        #: 日志流位置的播报任务 (见 `_log_meta_loop`) —— 与夹爪无关, 总是起。
+        self.log_meta_task: Optional[asyncio.Task] = None
         # 会话事件 (可能来自轮询线程/执行器线程) → 事件循环的桥
         session.add_listener(self._on_session_event)
         if gripper is not None:
             gripper.add_listener(self._on_gripper_event)
+        # 结构化记录 → `log` 帧 (issue #79 第 2 点)。文件仍是权威历史, 这一路只让页面
+        # 实时跟上; 没有客户端时 `_on_log_record` 立刻返回, 不排任何东西。
+        obs.set_sink(self._on_log_record)
 
     # ------------------------------------------------------------ 会话事件 → WS
     def _on_session_event(self, event: dict) -> None:
@@ -251,6 +268,44 @@ class Daemon:
             if self.clients:
                 self.stamp_gripper_heartbeat()
 
+    async def _log_meta_loop(self,
+                             interval: float = LOG_META_INTERVAL_S) -> None:  # pragma: no cover
+        """定期播报日志流的位置 (序号与丢帧数)。
+
+        ⚠ 与夹爪的心跳**分开**: 那段心跳只在有夹爪会话时才起, 而日志流在**每个**
+        平台上都有 (非 Linux、`--no-gripper` 都没有夹爪)。把播报挂在它身上, 等于在
+        一半的部署里根本不报 —— 页面于是永远分不清"断了一段"与"什么都没发生"。
+
+        ⚠ 也**不能只在接入时报一条**: 队列满导致的丢帧发生在连接**之后**。
+        """
+        while True:
+            await asyncio.sleep(interval)
+            if self.clients:
+                self.broadcast({"t": "log_meta", **self._log_meta()})
+
+    # ------------------------------------------------------------ 结构化记录 → WS
+    def _on_log_record(self, record: dict) -> None:
+        """一条结构化记录 → 每个客户端的 `log` 帧。
+
+        ⚠ **可能在任何线程上被调用** (状态轮询 / 命令执行器 / DFU 线程), 所以这里只做
+        线程安全的投递, 与 `_on_session_event` 同形。没有客户端时立刻返回: 记录已经进
+        文件了, 没人看的时候不必为它排队。
+        """
+        if not self.clients:
+            return
+        self._log_seq += 1
+        self.broadcast_threadsafe({"t": "log", "seq": self._log_seq, "record": record})
+
+    def _log_meta(self) -> dict:
+        """流的位置 —— 页面据此知道"我漏了没有、漏了多少"。
+
+        `seq` 是**最后一条已广播**的序号; `dropped` 是全局累计的丢帧数; `clients` 是
+        "这条元信息会送到几个客户端" —— 握手时它还没有把自己算进去 (注册在后), 于是
+        那一条如实报 0。页面重新连上时拿 `seq` 比对本地最大值, 就能发现自己缺了一段。
+        """
+        return {"t": "log_meta", "seq": self._log_seq,
+                "dropped": self._log_dropped, "clients": len(self.clients)}
+
     def broadcast_threadsafe(self, message: dict) -> None:
         loop = self.loop
         if loop is None or loop.is_closed():
@@ -276,9 +331,13 @@ class Daemon:
                         pass
                 elif message.get("t") == "log":
                     # ⚠ 日志帧丢了**要留下痕迹**: 文件里那条记录仍然在, 但页面上会
-                    # 出现一段空白, 而"空白"与"什么都没发生"长得一模一样。计数放在
-                    # `_Client` 上, 由服务端在下一个机会补一条 `daemon.log.dropped`。
+                    # 出现一段空白, 而"空白"与"什么都没发生"长得一模一样。计数同时落在
+                    # 客户端与全局上, 由 `log_meta` 如实上报。
+                    #
+                    # ⚠ **不许在这里 emit 一条记录**: 队列满时再发一条会走同一条路,
+                    # 于是自己把自己再丢一次, 变成死循环。
                     c.dropped_logs += 1
+                    self._log_dropped += 1
 
     # ------------------------------------------------------------ WS 单客户端
     async def handle_ws(self, ws: WebSocket) -> None:
@@ -337,6 +396,11 @@ class Daemon:
                 "t": "hello", "daemon": self.version, "sdk": self.session.sdk_version,
             })
             await self._send_direct(ws, client, {"t": "conn", **self.session.arm_info()})
+            # ⚠ 流的元信息必须**在握手这一段**发出去 (客户端注册与 `_pump` 启动之前):
+            # 一旦注册, 50Hz 状态与日志就会插进来, 于是"一接入就知道流走到哪儿"这件事
+            # 变成"可能先收到一条日志、再收到 meta"。页面记下 `seq` 之后才能判断
+            # "中间丢过帧没有" —— 所以它必须是最早的信息之一。
+            await self._send_direct(ws, client, {"t": "log_meta", **self._log_meta()})
             if self.gripper is not None:
                 # 夹爪的握手帧与臂同构: `gripper_conn` 是它连接态的唯一真相 (§4.1)。
                 await self._send_direct(ws, client, {
@@ -443,6 +507,10 @@ class Daemon:
     async def _pump(self, ws: WebSocket, client: _Client) -> None:
         while True:
             message = await client.q.get()
+            if message.get("t") == "log":
+                seq = message.get("seq")
+                if isinstance(seq, int):
+                    client.last_log_seq = seq
             async with client.lock:
                 await ws.send_text(json.dumps(message, ensure_ascii=False,
                                               allow_nan=False, default=str))
@@ -693,15 +761,17 @@ def create_app(session: Session, *, gripper: Optional[Any] = None,
     @app.on_event("startup")
     async def _remember_loop() -> None:        # pragma: no cover - 生命周期钩子
         daemon.loop = asyncio.get_running_loop()
+        daemon.log_meta_task = asyncio.create_task(daemon._log_meta_loop())
         if daemon.gripper is not None:
             daemon.heartbeat_task = asyncio.create_task(daemon._gripper_heartbeat_loop())
 
     @app.on_event("shutdown")
     async def _stop_heartbeat() -> None:       # pragma: no cover - 生命周期钩子
-        task = daemon.heartbeat_task
-        if task is not None:
-            task.cancel()
-            daemon.heartbeat_task = None
+        for name in ("heartbeat_task", "log_meta_task"):
+            task = getattr(daemon, name)
+            if task is not None:
+                task.cancel()
+                setattr(daemon, name, None)
 
     if resolved is not None:
         # ⚠ 挂在**最后**: 路由 (含 `/ws`) 优先于静态目录的兜底匹配。
