@@ -136,6 +136,11 @@ litearm-studio-daemon --allow-origin http://localhost:8000
 到的另一个设备。界面上「我以为连的是这台、其实连的是那台」是这里最坏的失败形状，所以
 宁可连不上。不带 `port` 时按 上次连上的口 → 自动发现 依次试（与自愈同一条软路径）。
 
+会话**已经在另一个口上**时，`connect` 指一个不同的口会被拒，`res` 是
+`{"ok":false,"err":{"kind":"PortChangeWhileConnectedError",…}}`：换口是操作员的决定，
+先按「断开」，守护进程不会把活着的链路挪走。不指口、或指的就是当前口，仍是幂等的 no-op
+（页面每次加载自动发的那条无参 `connect` 走这里）。
+
 上次连上的口记在 `$XDG_CONFIG_HOME/litearm-studio/arm.json`（默认
 `~/.config/litearm-studio/arm.json`，可用 `LITEARM_STUDIO_ARM_CONFIG` 覆盖），**只在连上
 之后**才写：记一个连不通的口，会让下次的默认选择和「上次能用」无关。它只是**提示**，不是

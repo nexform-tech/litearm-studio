@@ -16,6 +16,7 @@ from litearm_studio_daemon import activation
 from litearm_studio_daemon.errors import (
     MotionBusyError,
     NotConnectedCommandError,
+    PortChangeWhileConnectedError,
     UnknownCommandError,
 )
 from litearm_studio_daemon.session import (
@@ -63,6 +64,31 @@ def test_fake_connect_reports_firmware_and_joint_count(fake_session: Session) ->
 
 def test_connect_is_idempotent(fake_session: Session) -> None:
     assert fake_session.connect() is True       # 已连接 ⇒ no-op
+    assert fake_session.connected is True
+
+
+def test_connect_with_a_different_port_while_connected_is_refused(
+        fake_session: Session) -> None:
+    """已连着时指了另一个口 ⇒ **响亮拒绝**, 链路留在原口。
+
+    ⚠ 上一版 `connect(port)` 在这里返回 `True` 并把 `port` 丢掉: 前端/文档都以为
+    "显式指定的口不做退让", 实际是"我选了 ACM0"与"链路还在 ACM1"同时成立 —— 这正是
+    这个功能要消灭的失败形状 (issue #70 review 的 blocker 1)。
+    """
+    assert fake_session.arm_info()["port"] == "fake"
+    with pytest.raises(PortChangeWhileConnectedError) as exc:
+        fake_session.connect("/dev/ttyACM0")
+    assert exc.value.connected == "fake"
+    assert exc.value.requested == "/dev/ttyACM0"
+    assert "换口请先断开" in str(exc.value)
+
+    # 链路没被挪走, 也还连着。
+    assert fake_session.connected is True
+    assert fake_session.arm_info()["port"] == "fake"
+
+    # 不带口 / 指的就是当前口 ⇒ 仍是幂等 no-op (页面每次加载自动发的那条走这里)。
+    assert fake_session.connect() is True
+    assert fake_session.connect("fake") is True
     assert fake_session.connected is True
 
 

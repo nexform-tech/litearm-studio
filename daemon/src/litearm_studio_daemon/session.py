@@ -44,8 +44,8 @@ from . import activation
 from . import dfu
 from . import ports
 from .errors import (FirmwareUpgradeError, MotionBusyError,
-                     NotConnectedCommandError, UpgradeBusyError,
-                     UnknownCommandError)
+                     NotConnectedCommandError, PortChangeWhileConnectedError,
+                     UpgradeBusyError, UnknownCommandError)
 
 log = logging.getLogger("litearm_studio_daemon.session")
 
@@ -453,13 +453,20 @@ class Session:
         ⚠ 握手期间收到 `disconnect()`/`close()` 时, 这次连接由 `_connect_gen` 作废:
         收尾的 `_open` 会把已建好的 arm 关掉并静默退出, **不会**把状态改回 `connected`。
 
-        ⚠ 已经连着时给的 `port` **不会**生效 (换口要先 `disconnect()`): 这条路径返回
-        `True` 但不做任何事 —— 前端在连着的时候也握着那个下拉, 静默改口会让"当前连的是
-        哪个设备"说不清。
+        ⚠ 已经连着时再指一个**不同**的口会被拒 (`PortChangeWhileConnectedError`), 而不是
+        静默忽略: 上一版返回 `True` 却把 `port` 丢掉, 于是"我选了 ACM0"与"链路还在 ACM1"
+        同时成立。换口是操作员的决定 —— 先 `disconnect()`, 会话不自己挪链路。
+        `port` 为空或正是当前口时仍是幂等 no-op (`main.tsx` 每次页面加载自动发的那条无参
+        `connect` 走的就是这条)。
         """
         requested = (port or "").strip() or None
         with self._lock:
             if self._arm is not None and self._status == "connected":
+                # 已经连着: 只有"没指口"或"指的就是当前口"是 no-op。指了别的口必须响亮
+                # 失败 —— 见 `PortChangeWhileConnectedError` 的类文档。
+                if requested is not None and requested != self._resolved_port:
+                    raise PortChangeWhileConnectedError(
+                        self._resolved_port or "", requested)
                 return True
             if self._status == "connecting":
                 return False

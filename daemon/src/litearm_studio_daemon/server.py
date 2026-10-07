@@ -407,7 +407,18 @@ class Daemon:
                 })
                 return
             # 幂等, 且**立刻**回: 握手在命令执行器上跑, 进度由 `conn` 帧报。
-            started = self.session.connect(raw_port)
+            # ⚠ 已连着时指一个**不同**的口 ⇒ `Session.connect` 抛
+            #   `PortChangeWhileConnectedError`; 这里必须把它变成 `ok:false` 的应答,
+            #   否则帧发出去就没人接 (静默丢弃正是这个功能要修的缺陷)。用与
+            #   `_run_command` 同一条 `error_to_dict` 通道, 不另造错误形状。
+            try:
+                started = self.session.connect(raw_port)
+            except Exception as e:  # noqa: BLE001 - 任何失败都回一条结构化 err
+                await self._send_direct(ws, client, {
+                    "t": "res", "id": msg.get("id"), "ok": False,
+                    "err": error_to_dict(e),
+                })
+                return
             await self._send_direct(ws, client, {
                 "t": "res", "id": msg.get("id"), "ok": True, "v": {"started": started},
             })

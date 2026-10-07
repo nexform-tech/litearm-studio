@@ -163,3 +163,23 @@ class NotConnectedCommandError(DaemonError):
     本类表达"守护进程这一侧没有可用的会话对象"。前端只看 `kind`, 两者都是
     `NotConnectedError` / `NotConnectedCommandError`, 可分辨。
     """
+
+
+class PortChangeWhileConnectedError(DaemonError):
+    """已经连着时 `connect` 指了**另一个**串口 (`kind` = `PortChangeWhileConnectedError`)。
+
+    ⚠ 这条是"响亮拒绝", 不是"静默忽略": 上一版 `Session.connect(port)` 在已连接时
+    直接返回 `True` 并把 `port` 丢掉, 而文档与 PR 都承诺"显式指定的口不做退让" ——
+    于是操作员指了 `/dev/ttyACM0`, 界面回"已连接", 链路却仍在 `/dev/ttyACM1` 上。
+    那是这个功能最坏的失败形状, 所以契约改成: 换口先 `disconnect()`, 会话**不会**
+    自己把活着的链路挪到另一个口上 (挪链路会静默切换正在被驱动的设备)。
+
+    `port` 为空或正是当前链路所在的口 ⇒ 仍是幂等 no-op (`connect` 每次页面加载都会
+    自动发一条无参帧, 那条必须保持无声)。
+    """
+
+    def __init__(self, connected: str, requested: str):
+        super().__init__(
+            f"已连接 {connected}；换口请先断开 (本次请求的 {requested} 未生效)")
+        self.connected = connected
+        self.requested = requested
