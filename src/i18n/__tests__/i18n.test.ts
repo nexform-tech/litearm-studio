@@ -20,6 +20,9 @@ describe('i18n Internationalization', () => {
     expect(i18n.t('common:enable')).toBe('使能')
     expect(i18n.t('solo:controlBar.reset')).toBe('复位')
     expect(i18n.t('solo:controlBar.clearFault')).toBe('清除故障')
+    // 夹爪与机械臂的清障按钮说同一个词：各写一套的话，现场会看到两个名字指同一条
+    // `clear_faults` 命令 —— 夹具面板还多一句「正在清除故障…」，更不该对不上。
+    expect(i18n.t('gripper:actions.clearFault')).toBe(i18n.t('solo:controlBar.clearFault'))
     expect(i18n.t('solo:controlBar.home')).toBe('回零点')
     expect(i18n.t('solo:controlBar.disable')).toBe('下使能')
     expect(i18n.t('solo:modes.drag')).toBe('零重力')
@@ -63,6 +66,7 @@ describe('i18n Internationalization', () => {
     expect(i18n.t('common:enable')).toBe('Enable')
     expect(i18n.t('solo:controlBar.reset')).toBe('Reset')
     expect(i18n.t('solo:controlBar.clearFault')).toBe('Clear Fault')
+    expect(i18n.t('gripper:actions.clearFault')).toBe(i18n.t('solo:controlBar.clearFault'))
     expect(i18n.t('solo:controlBar.home')).toBe('Go Home')
     expect(i18n.t('solo:controlBar.disable')).toBe('Disable')
     expect(i18n.t('solo:modes.drag')).toBe('Zero Gravity')

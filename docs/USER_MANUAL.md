@@ -240,7 +240,7 @@ The LiteGrip two-finger parallel gripper shares the arm's CAN bus and fills the 
 - Open / Close: drive to the open or closed mechanical stop;
 - Grasp: close with the **target force** limit, so a fragile part is not crushed;
 - Zero gravity: release the drive so the jaws can be moved by hand;
-- Stop / Reset stop / Clear fault: stop immediately, release a latched stop, and clear a drive fault;
+- Stop / Reset stop / Clear Fault: stop immediately, release a latched stop, and clear a drive fault;
 - Gripper parameters (collapsed by default): **target force** (0–40 N) and **move speed** (5–150 mm/s);
 - Calibration: the panel names the calibration in effect (measured, nominal template, or factory fallback). With the nominal template it refuses millimetre targets until you run the zero calibration.
 
@@ -386,5 +386,5 @@ The page then reports that the update finished and shows the device's current ve
 | "Arm is moving, please wait" | In-flight motion in progress; mutex guard active | Normal safety behavior; wait for move completion or click STOP |
 | Red fault indicator: "Joint N Fault" | Collision obstruction, overcurrent, or driver overtemperature (>80°C) | 1. Clear physical obstructions and allow cooling<br>2. Click **Clear Fault** on the control bar<br>3. If it does not clear, click **Reset**<br>4. Still faulted: support the arm, disable, and re-enable |
 | "Controller in fault state" | Safety protection triggered (overspeed, boundary limit, communication timeout) | Clear Fault only clears latched drive alarms and Reset only resets the controller; neither guarantees a release. Support the arm, disable and re-enable. If it does not recover, restart the local program |
-| Gripper shows "Disconnected" | Cable loose, device offline, or power drop | 1. Check the end-effector connector<br>2. Click **Connect** in the gripper panel<br>3. Click **Clear fault** once the cause is gone |
+| Gripper shows "Disconnected" | Cable loose, device offline, or power drop | 1. Check the end-effector connector<br>2. Click **Connect** in the gripper panel<br>3. Click **Clear Fault** once the cause is gone |
 | No telemetry recorded | Arm is not in "Connected" status | Telemetry starts automatically upon live connection |
