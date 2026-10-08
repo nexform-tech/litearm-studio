@@ -508,11 +508,22 @@ export function useSoloState() {
           .filter(Boolean)
           .join('；') || null
       : null,
+    /** 清除故障：只清驱动器 RAM 里的锁存故障位（`clear_faults` 0x13）。
+     *  过流、过温这类轴级报警恢复后用它点亮不起来的报警灯；它**不保证**放行系统级
+     *  的 fault 状态机（见 `FAULT_STATE_HINT`）。 */
     clearFault: () => {
       update({ fault: false })
       if (!connected || !s.real) return
       setLastError(null)
       armClient.clearFaults().catch((err) => reportError('清除故障', err))
+    },
+    /** 复位：复位控制器（`reset` 0x14）。SDK 的措辞是 "clear faults + re-anchor"
+     *  ——比 `clear_faults` 多一步把规划器重新锚定到当前位姿，且**不是**整机重启。 */
+    resetArm: () => {
+      update({ fault: false })
+      if (!connected || !s.real) return
+      setLastError(null)
+      armClient.reset().catch((err) => reportError('复位', err))
     },
     homeJoints: () => {
       // 就绪姿态 Home [0, 0.5, 0, -1, 0, 0.6, 0]（按当前轴数裁剪/补齐）
