@@ -13,17 +13,16 @@ import { Slider } from '@/components/ui/slider'
  *  皮肤全部交给现有 Button / Toggle 变体：扁平纯色、无渐变、无投影，尺寸与排版只在这里加。
  *  ⚠ 宽度是这一行最容易翻车的地方，加了图标之后更紧：中间列最窄只有 23rem（368px），
  *  扣掉卡片内边距后每颗只剩 52px，而「清除故障」这四个汉字在 13px 字号下就要 52px。
- *  所以窄卡片走 3 列两行，够宽（`@[38rem]`）才摊平成一整行。判据挂在**卡片自己的宽度**上
+ *  所以窄卡片走 3 列两行，够宽（`@[44rem]`）才摊平成一整行。判据挂在**卡片自己的宽度**上
  *  （容器查询 `@container`，见下面 Card），不是视口断点：中间列宽随左右两列的 clamp 变，
  *  视口宽推不出这一行到底有多少地方。
- *  ⚠ 图标必须**竖着放**（图标在上、文字在下，见 BIG_BUTTON 的 `flex-col`）：横排时每颗的
- *  内容宽度是「内边距 + 图标 + 间距 + 文字」，英文的 "Zero Gravity" 一项就要 7rem，六颗
- *  合计 44rem —— 1440 窗口里这一行只有约 39–40rem（还要给左侧导航让出 5rem），横排会把
- *  文字顶出按钮边框。竖排只花最宽那行文字，0.75rem 字号下英文约 5.4rem、六颗合计 37.2rem，
- *  一行放得下且中英文都不溢出；标签因此从 0.8125rem 降一档到 0.75rem，这是换图标的代价。
- *  改横排、动字号或改按钮文案之前，先把两种语言都在中间列最窄的窗口下量一遍。 */
+ *  ⚠ 图标横排是要花宽度的：每颗的内容宽度是「内边距 + 图标 + 间距 + 文字」，英文的
+ *  "Zero Gravity" 一项就要 5.8rem，六颗合计 44rem。1440 窗口里这一行只有约 39–40rem
+ *  （左侧导航先拿走 5rem），所以这个宽度上它会折成 3 列两行 —— 这是有意的取舍：宁可多一行，
+ *  也不让文字顶出按钮边框。1920 窗口（约 53rem）才是一行六颗。改字号、改横排为竖排或改
+ *  按钮文案之前，先把两种语言都在中间列最窄的窗口下量一遍。 */
 const BIG_BUTTON =
-  'h-11! w-full min-w-0 cursor-pointer flex-col gap-0.5! rounded-[0.6875rem]! px-1! text-[0.75rem]! font-semibold!'
+  'h-11! w-full min-w-0 cursor-pointer gap-1.5! rounded-[0.6875rem]! px-1! text-[0.8125rem]! font-semibold!'
 
 /** 按钮图标统一尺寸：base 的 `[&_svg:not([class*='size-'])]:size-4`（1rem）对这颗 11px 的
  *  标签偏大，带上 `size-3.5` 这个类正好让那条规则让位（选择器靠 `class*=size-` 判断）。 */
@@ -90,7 +89,7 @@ export function ControlBar({
           零重力不再和「位置」配对成预览卡片下方的模式页签：它是一颗可以反复开关的按钮，
           再按一下就是退出，页签里的「位置」项因此没有存在的必要。
           列数只分两档（见 BIG_BUTTON 上的宽度账）：卡片窄时 3 列两行，够宽起 6 列一行。 */}
-      <div data-testid="control-bar-actions" className="grid grid-cols-3 gap-1.5 @[38rem]:grid-cols-6">
+      <div data-testid="control-bar-actions" className="grid grid-cols-3 gap-1.5 @[44rem]:grid-cols-6">
         <Toggle
           variant="outline"
           pressed={enabled}
