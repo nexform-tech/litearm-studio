@@ -171,7 +171,7 @@ Consolidates global robot controls and operating mode selection:
 
 #### Primary Controls
 
-The first row of the control bar holds six buttons ordered by kind: the two state switches first (Enable / Zero Gravity), then the two fault-recovery commands (Reset / Clear Fault), then the two motion commands (Go Home / Ready Pose):
+The first row of the control bar holds six buttons ordered by kind: the two state switches first (Enable / Zero Gravity), then the two fault-recovery commands (Reset / Clear Fault), then the two motion commands (Go Home / Ready Pose). Each button stacks its icon above its label, drawn from the gripper panel's icon set — power, feather, rotate, warning triangle, house, target. When the window is too narrow the row folds into two rows of three; the buttons themselves do not change:
 
 - Enable / Disable: Controls motor power and holding state.
   - Click Enable: Energizes motors and locks current pose into ready state;

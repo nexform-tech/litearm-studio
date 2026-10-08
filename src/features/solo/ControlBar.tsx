@@ -1,4 +1,4 @@
-import { TriangleAlert } from 'lucide-react'
+import { Feather, House, Power, RotateCcw, Target, TriangleAlert } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import { Card } from '@/components/ui/card'
@@ -8,22 +8,34 @@ import { Slider } from '@/components/ui/slider'
 
 /** 一行六颗等宽大按钮（使能 / 零重力 / 复位 / 清除故障 / 回零点 / 就绪姿态），撑满卡片宽度
  *  —— 就是速度滑条上方那一行。顺序按操作性质分组：两颗开关在前、两颗故障恢复居中、
- *  两颗运动指令在后，不加分隔线。
+ *  两颗运动指令在后，不加分隔线。图标取自夹爪面板已经用熟的那一套（电源／羽毛／回转／
+ *  警告三角／房子），同一个动作用同一个字形。
  *  皮肤全部交给现有 Button / Toggle 变体：扁平纯色、无渐变、无投影，尺寸与排版只在这里加。
- *  ⚠ 宽度是这一行最容易翻车的地方：中间列最窄只有 23rem（368px），扣掉卡片内边距后每颗
- *  只剩 52px，而「清除故障」这四个汉字在 13px 字号下就要 52px —— 六颗平分**盛不下**。
- *  所以窄卡片走 3 列两行，够宽（`@[34rem]`：六颗各得 5.35rem，四字标签连内边距只要 3.75rem）
- *  才摊平成一整行。判据挂在**卡片自己的宽度**上（容器查询 `@container`，见下面 Card），不是
- *  视口断点：中间列宽随左右两列的 clamp 变，视口宽推不出这一行到底有多少地方。动字号、动
- *  列数或改按钮文案之前，先在中间列最窄的窗口下量一遍。 */
-const BIG_BUTTON = 'h-11! w-full min-w-0 cursor-pointer gap-1.5! rounded-[0.6875rem]! px-1! text-[0.8125rem]! font-semibold!'
+ *  ⚠ 宽度是这一行最容易翻车的地方，加了图标之后更紧：中间列最窄只有 23rem（368px），
+ *  扣掉卡片内边距后每颗只剩 52px，而「清除故障」这四个汉字在 13px 字号下就要 52px。
+ *  所以窄卡片走 3 列两行，够宽（`@[38rem]`）才摊平成一整行。判据挂在**卡片自己的宽度**上
+ *  （容器查询 `@container`，见下面 Card），不是视口断点：中间列宽随左右两列的 clamp 变，
+ *  视口宽推不出这一行到底有多少地方。
+ *  ⚠ 图标必须**竖着放**（图标在上、文字在下，见 BIG_BUTTON 的 `flex-col`）：横排时每颗的
+ *  内容宽度是「内边距 + 图标 + 间距 + 文字」，英文的 "Zero Gravity" 一项就要 7rem，六颗
+ *  合计 44rem —— 1440 窗口里这一行只有约 39–40rem（还要给左侧导航让出 5rem），横排会把
+ *  文字顶出按钮边框。竖排只花最宽那行文字，0.75rem 字号下英文约 5.4rem、六颗合计 37.2rem，
+ *  一行放得下且中英文都不溢出；标签因此从 0.8125rem 降一档到 0.75rem，这是换图标的代价。
+ *  改横排、动字号或改按钮文案之前，先把两种语言都在中间列最窄的窗口下量一遍。 */
+const BIG_BUTTON =
+  'h-11! w-full min-w-0 cursor-pointer flex-col gap-0.5! rounded-[0.6875rem]! px-1! text-[0.75rem]! font-semibold!'
+
+/** 按钮图标统一尺寸：base 的 `[&_svg:not([class*='size-'])]:size-4`（1rem）对这颗 11px 的
+ *  标签偏大，带上 `size-3.5` 这个类正好让那条规则让位（选择器靠 `class*=size-` 判断）。 */
+const ICON = 'size-3.5 flex-none'
 
 /** 「复位」是这一行唯一的主操作：`--ok-solid` 实心绿，其余五颗走 outline 变体，
  *  一行里只留一颗实心，层次才不会糊。 */
 const RESET_BUTTON = cn(BIG_BUTTON, 'border-transparent! bg-ok-solid! text-ok-solid-fg! hover:bg-ok-solid/85!')
 
-/** 使能开关按下 = 机械臂已使能，用 `--ok-soft` 压一层扁平的绿底，配合左侧圆点说明
- *  "现在带电" —— 这颗按钮一点就会失力下坠，状态不能只靠文字。 */
+/** 使能开关按下 = 机械臂已使能，用 `--ok-soft` 压一层扁平的绿底；「现在带电」这个状态由
+ *  电源图标的**颜色**说明（`enableColor`：带电绿、未带电琥珀）—— 这颗按钮一点就会失力下坠，
+ *  状态不能只靠文字。绿底 + 绿图标是双保险，比原来那颗纯色圆点还多一层形状。 */
 const ENABLE_BUTTON = cn(BIG_BUTTON, 'aria-pressed:bg-ok-soft! data-[state=on]:bg-ok-soft!')
 
 /** 零重力按一下进入、再按一下退出，所以是开关而不是一次性动作。按下时压一层蓝底：
@@ -36,7 +48,7 @@ const ZERO_G_BUTTON = cn(
 
 export function ControlBar({
   enabled,
-  enableDot,
+  enableColor,
   toggleEnable,
   speed,
   setSpeed,
@@ -49,7 +61,8 @@ export function ControlBar({
   readyPose,
 }: {
   enabled: boolean
-  enableDot: string
+  /** 使能状态色：电源图标染成它（带电绿 / 未带电琥珀）。 */
+  enableColor: string
   toggleEnable: () => void
   speed: number
   setSpeed: (v: number) => void
@@ -77,7 +90,7 @@ export function ControlBar({
           零重力不再和「位置」配对成预览卡片下方的模式页签：它是一颗可以反复开关的按钮，
           再按一下就是退出，页签里的「位置」项因此没有存在的必要。
           列数只分两档（见 BIG_BUTTON 上的宽度账）：卡片窄时 3 列两行，够宽起 6 列一行。 */}
-      <div data-testid="control-bar-actions" className="grid grid-cols-3 gap-1.5 @[34rem]:grid-cols-6">
+      <div data-testid="control-bar-actions" className="grid grid-cols-3 gap-1.5 @[38rem]:grid-cols-6">
         <Toggle
           variant="outline"
           pressed={enabled}
@@ -85,7 +98,7 @@ export function ControlBar({
           title={enabled ? t('controlBar.disableTitle') : t('controlBar.enableTitle')}
           className={ENABLE_BUTTON}
         >
-          <div className="size-[0.5625rem] flex-none rounded-full" style={{ background: enableDot }} />
+          <Power className={ICON} style={{ color: enableColor }} />
           {enabled ? t('controlBar.disable') : t('controlBar.enable')}
         </Toggle>
 
@@ -96,6 +109,7 @@ export function ControlBar({
           title={zeroGravity ? t('controlBar.zeroGravityOnTitle') : t('controlBar.zeroGravityOffTitle')}
           className={ZERO_G_BUTTON}
         >
+          <Feather className={ICON} />
           {t('modes.drag')}
         </Toggle>
 
@@ -107,6 +121,7 @@ export function ControlBar({
           title={t('controlBar.resetTitle')}
           className={RESET_BUTTON}
         >
+          <RotateCcw className={ICON} />
           {t('controlBar.reset')}
         </Button>
 
@@ -118,6 +133,7 @@ export function ControlBar({
           title={t('controlBar.clearFaultTitle')}
           className={BIG_BUTTON}
         >
+          <TriangleAlert className={ICON} />
           {t('controlBar.clearFault')}
         </Button>
 
@@ -128,6 +144,7 @@ export function ControlBar({
           title={t('controlBar.homeTitle')}
           className={BIG_BUTTON}
         >
+          <House className={ICON} />
           {t('controlBar.home')}
         </Button>
 
@@ -138,6 +155,7 @@ export function ControlBar({
           title={t('controlBar.readyPoseTitle')}
           className={BIG_BUTTON}
         >
+          <Target className={ICON} />
           {t('controlBar.readyPose')}
         </Button>
       </div>

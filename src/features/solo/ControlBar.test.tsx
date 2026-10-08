@@ -25,7 +25,7 @@ beforeEach(async () => {
 function renderBar(overrides: Partial<Parameters<typeof ControlBar>[0]> = {}) {
   const props: Parameters<typeof ControlBar>[0] = {
     enabled: false,
-    enableDot: '#f5a524',
+    enableColor: '#f5a524',
     toggleEnable: vi.fn(),
     speed: 50,
     setSpeed: vi.fn(),
@@ -60,6 +60,26 @@ describe('ControlBar action row', () => {
       i18n.t('solo:controlBar.readyPose'),
     ])
     expect(row.children).toHaveLength(6)
+  })
+
+  it('gives every button exactly one icon', () => {
+    const { props, rerender } = renderBar()
+    const row = screen.getByTestId('control-bar-actions')
+
+    for (const button of within(row).getAllByRole('button')) {
+      expect(button.querySelectorAll('svg')).toHaveLength(1)
+    }
+
+    // 使能那颗的图标颜色就是「现在带电」这个状态（圆点换成电源图标后，颜色仍是状态灯）：
+    // 两态必须给出不同的颜色，否则这颗一点就失力下坠的按钮又只剩文字可看了。
+    const iconColor = (name: string) =>
+      (screen.getByRole('button', { name }).querySelector('svg') as SVGElement).style.color
+    const off = iconColor(i18n.t('solo:controlBar.enable'))
+    rerender(<ControlBar {...props} enabled enableColor="#4ade80" />)
+    const on = iconColor(i18n.t('solo:controlBar.disable'))
+    expect(off).toBeTruthy()
+    expect(on).toBeTruthy()
+    expect(on).not.toBe(off)
   })
 
   it('turns zero gravity on with the first press and off with the second', () => {
