@@ -109,12 +109,13 @@ When the page says **Activated**, you can enable the arm.
 
 #### Real-time Health Metrics
 
-The right side of the top bar continuously displays core operational metrics:
+The right side of the top bar continuously displays three live values, all read from the controller's state broadcast:
 
-- Control Frequency: Underlying real-time loop frequency (nominal ~250 Hz);
-- Payload: Currently configured and active end-effector tool/workpiece mass (kg);
-- Max Joint Temp: Highest recorded temperature across joint drivers (°C);
-- Fault Status: System health indicator (Green "Normal" / Red "Fault").
+- Enable: Whether the joint drives are enabled (green "Enabled" / "Disabled");
+- Run State: The controller's current state — "Ready", "Moving", "Zero Gravity", "Stopped", "Fault". A state string the firmware reports but the UI does not know is shown verbatim;
+- Fault: System health indicator (green "None" / red "Yes").
+
+Payload is not here: configure it under **Settings → Payload**. It is not part of the state broadcast.
 
 ---
 
@@ -265,7 +266,7 @@ Click "Export CSV" to download the full time-series telemetry data as a `.csv` f
 
 ### 4.3 Link Diagnostics
 
-The current version has no separate "Controller Logs" page. For link health, use **Settings → Diagnostics → Firmware self-test**: it runs a kinematics self-test and reports the link diagnostic counters (CRC errors, dropped FIFO frames) — those are the first numbers to move when the USB link misbehaves. Overall runtime metrics live in the top bar (control frequency, maximum joint temperature, fault state).
+The current version has no separate "Controller Logs" page. For link health, use **Settings → Diagnostics → Firmware self-test**: it runs a kinematics self-test and reports the link diagnostic counters (CRC errors, dropped FIFO frames) — those are the first numbers to move when the USB link misbehaves. Overall runtime metrics live in the top bar (enable, run state, fault state).
 
 ---
 
@@ -313,7 +314,7 @@ Configure the LiteGrip gripper on this CAN channel: **channel, CAN ID, mounting 
 ### 5.5 Diagnostics
 
 - **Firmware self-test**: runs a kinematics self-test and reports the **link diagnostic counters** (CRC errors, dropped FIFO frames) — the first numbers to move when the USB link misbehaves;
-- Overall runtime metrics live in the **top bar**: control frequency, maximum joint temperature and fault state.
+- Overall runtime metrics live in the **top bar**: enable, run state and fault state.
 
 ---
 

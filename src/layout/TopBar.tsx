@@ -7,9 +7,23 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { cn } from '@/lib/utils'
 import { useArmConnection, useArmPorts, useArmState } from '@/lib/arm'
 
-// 控制频率来自实机 pylitearm 默认配置（litearm.yaml transport.control_loop_hz），
-// daemon 目前没有查询接口，作为常量展示。
-const CONTROL_LOOP_HZ = 250
+/**
+ * daemon `state` 帧里的状态串 → 词条键。
+ *
+ * ⚠ 表里没有的码**原样显示**，不要加 fallback 去猜：固件加了新状态时，让操作员看到
+ * 固件真正说的那个词，比看到一句我们编的翻译有用（夹爪面板同一套做法）。
+ */
+const ARM_STATE_I18N: Record<
+  string,
+  'common:disabled' | 'common:ready' | 'common:moving' | 'common:zeroGravity' | 'common:stopped' | 'common:fault'
+> = {
+  disabled: 'common:disabled',
+  ready: 'common:ready',
+  moving: 'common:moving',
+  zero_gravity: 'common:zeroGravity',
+  stopped: 'common:stopped',
+  fault: 'common:fault',
+}
 
 /**
  * 「自动发现」这一项的值。
@@ -56,19 +70,31 @@ export function TopBar() {
     ),
   ).sort()
 
-  const temps = (armState?.temps ?? []).map((x) => (typeof x?.mosTemp === 'number' && !isNaN(x.mosTemp) ? x.mosTemp : 0))
-  const maxTemp = temps.length ? Math.max(...temps) : null
+  // 顶栏右侧三项全部取自 daemon 的实时 `state` 帧。
+  // ⚠ 这里曾经放着写死的「控制频率 250 Hz」和「最高关节温度」：前者 daemon 没有查询
+  //   接口，是一个**永不变化**的常数（顶栏里唯一不反映设备状态的数字，等于假读数）；
+  //   后者温度曲线面板已经画了同一份数据。换成使能与运行状态：这两项才是操作员扫一眼
+  //   顶栏要确认的事（现在能不能动、现在在干什么），且都来自广播帧、无一处是常数。
+  const armEnabled = armState ? armState.enabled : null
+  const runState = armState?.state.trim() || null
+  const runStateKey = runState ? ARM_STATE_I18N[runState] : undefined
   const hasFault = armState ? (armState.errs ?? []).some((e) => e >= 8) || armState.state === 'fault' : null
 
   const stats = [
-    { k: t('common:controlFrequency'), v: String(CONTROL_LOOP_HZ), u: 'Hz', fixed: true },
-    { k: t('common:maxJointTemp'), v: maxTemp != null ? String(Math.round(maxTemp)) : '—', u: '°C', fixed: false },
+    {
+      k: t('common:armEnable'),
+      v: armEnabled == null ? '—' : armEnabled ? t('common:enabled') : t('common:disabled'),
+      tone: armEnabled === true ? 'success' : 'none',
+    },
+    {
+      k: t('common:runState'),
+      v: runState == null ? '—' : runStateKey ? t(runStateKey) : runState,
+      tone: runState === 'fault' ? 'danger' : 'none',
+    },
     {
       k: t('common:faultStatus'),
       v: hasFault == null ? '—' : hasFault ? t('common:hasFault') : t('common:noFault'),
-      u: '',
       tone: hasFault == null ? 'none' : hasFault ? 'danger' : 'success',
-      fixed: false,
     },
   ]
   const badgeVariant = connected ? 'success' : status === 'error' ? 'destructive' : 'outline'
@@ -181,7 +207,7 @@ export function TopBar() {
         {/* Stats scroll horizontally within the fixed-height header */}
         <div className="ml-auto flex min-w-0 items-center gap-4 overflow-x-auto">
           {stats.map((h) => (
-            <div key={h.k} className="flex flex-none items-baseline gap-[0.3125rem]" title={h.fixed ? t('common:controlFrequencyFixedHint') : undefined}>
+            <div key={h.k} className="flex flex-none items-baseline gap-[0.3125rem]">
               <div className="text-xs font-medium whitespace-nowrap text-muted-foreground">{h.k}</div>
               <div
                 className={cn(
@@ -191,7 +217,6 @@ export function TopBar() {
               >
                 {h.v}
               </div>
-              <div className="font-mono text-[0.6875rem] text-muted-foreground">{h.u}</div>
             </div>
           ))}
         </div>
