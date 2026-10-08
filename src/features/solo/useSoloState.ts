@@ -328,8 +328,11 @@ export function useSoloState() {
 
   // 仿真模式始终展示虚拟姿态；实机模式已连接时展示同步的实际关节角；
   // 未连接时也展示滑条对应的角度，避免读数与滑条不一致。
-  // 位姿卡给到 6 位小数：关节角差 0.001 rad、TCP 差 0.0001 m 在示教时都看得见。
-  const jointVals = jointPct.map((pct, i) => toRad(pct, i).toFixed(6))
+  // 位姿卡给到 4 位小数：关节角 0.0001 rad ≈ 0.006°、TCP 0.1 mm，比伺服分辨率细一档，
+  // 示教时该看出的差都看得出，又不会让末位一直在抖。
+  // ⚠ daemon 的广播收到 6 位（`statemap._r6`），但那是为了 50Hz 帧的可读性与体积，
+  // 不是测量精度；照着 6 位显示只会把噪声当成读数。
+  const jointVals = jointPct.map((pct, i) => toRad(pct, i).toFixed(4))
   const poseJoint = jointVals.map((v, i) => ({ k: 'J' + (i + 1), v, u: 'rad' }))
 
   // 关节与笛卡尔同时展示（不再用页签二选一）。顺序取 daemon `get_tcp` 的原生顺序：
@@ -340,20 +343,20 @@ export function useSoloState() {
     ? null
     : cartPose
       ? [
-          { k: 'X', v: cartPose[0].toFixed(6), u: 'm' },
-          { k: 'Y', v: cartPose[1].toFixed(6), u: 'm' },
-          { k: 'Z', v: cartPose[2].toFixed(6), u: 'm' },
-          { k: 'RX', v: cartPose[3].toFixed(6), u: 'rad' },
-          { k: 'RY', v: cartPose[4].toFixed(6), u: 'rad' },
-          { k: 'RZ', v: cartPose[5].toFixed(6), u: 'rad' },
+          { k: 'X', v: cartPose[0].toFixed(4), u: 'm' },
+          { k: 'Y', v: cartPose[1].toFixed(4), u: 'm' },
+          { k: 'Z', v: cartPose[2].toFixed(4), u: 'm' },
+          { k: 'RX', v: cartPose[3].toFixed(4), u: 'rad' },
+          { k: 'RY', v: cartPose[4].toFixed(4), u: 'rad' },
+          { k: 'RZ', v: cartPose[5].toFixed(4), u: 'rad' },
         ]
       : [
-          { k: 'X', v: s.cart.X.toFixed(6), u: 'm' },
-          { k: 'Y', v: s.cart.Y.toFixed(6), u: 'm' },
-          { k: 'Z', v: s.cart.Z.toFixed(6), u: 'm' },
-          { k: 'RX', v: s.cart.RX.toFixed(6), u: 'rad' },
-          { k: 'RY', v: s.cart.RY.toFixed(6), u: 'rad' },
-          { k: 'RZ', v: s.cart.RZ.toFixed(6), u: 'rad' },
+          { k: 'X', v: s.cart.X.toFixed(4), u: 'm' },
+          { k: 'Y', v: s.cart.Y.toFixed(4), u: 'm' },
+          { k: 'Z', v: s.cart.Z.toFixed(4), u: 'm' },
+          { k: 'RX', v: s.cart.RX.toFixed(4), u: 'rad' },
+          { k: 'RY', v: s.cart.RY.toFixed(4), u: 'rad' },
+          { k: 'RZ', v: s.cart.RZ.toFixed(4), u: 'rad' },
         ]
 
   const joints = jointPct.map((pct, i) => {

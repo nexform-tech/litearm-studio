@@ -136,7 +136,10 @@ describe('useSoloState cartesian capability gating', () => {
     expect(result.current.cartUnsupported).toBe(false)
     // 关节与笛卡尔同时可见 ⇒ 只要连着就轮询 TCP 位姿，不再等某个页签被点开。
     expect(mocks.getTcpPose).toHaveBeenCalled()
-    expect(result.current.poseCart?.[0]).toEqual({ k: 'X', v: '0.320000', u: 'm' })
+    expect(result.current.poseCart?.[0]).toEqual({ k: 'X', v: '0.3200', u: 'm' })
+    // 读数固定 4 位小数：daemon 发的是 6 位，但那是帧格式不是测量精度，末两位跟着噪声跳。
+    for (const p of result.current.poseCart ?? []) expect(p.v).toMatch(/^-?\d+\.\d{4}$/)
+    expect(result.current.poseJoint[0].v).toMatch(/^-?\d+\.\d{4}$/)
 
     await act(async () => {
       await result.current.movelTarget([0.3, 0, 0.4], [0, 1.57, 0])

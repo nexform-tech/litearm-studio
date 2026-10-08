@@ -144,7 +144,7 @@ The Solo Control page provides real-time 3D pose monitoring, state readouts, joi
 
 ### 3.2 Pose Monitor
 
-Joint and Cartesian readings share one "Status" card, with both columns visible at once and six decimals each:
+Joint and Cartesian readings share one "Status" card, with both columns visible at once and four decimals each (0.0001 rad on the joints, 0.1 mm on the TCP):
 
 - Joint Space (left column): Real-time angles for joints 1–7 (rad);
 - Cartesian Space (right column): Tool Center Point (TCP) spatial coordinates (`X:`, `Y:`, `Z:` in meters) and Euler angles (`RX:`, `RY:`, `RZ:` in radians) relative to the base coordinate frame;
