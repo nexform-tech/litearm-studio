@@ -36,16 +36,13 @@ const ICON = 'size-3.5 flex-none'
  *  一行里只留一颗实心，层次才不会糊。 */
 const RESET_BUTTON = cn(BIG_BUTTON, 'border-transparent! bg-ok-solid! text-ok-solid-fg! hover:bg-ok-solid/85!')
 
-/** 使能开关：按下 = 机械臂已使能。「现在带电」这个状态由电源图标的**颜色**说明
- *  （`enableColor`：带电绿、未带电琥珀），再配一条常驻的失能警告（见下面 disableWarning）。
- *  ⚠ 这里**不给按下态上绿底**（改前是 `--ok-soft`）：那颗按钮按下去是切断力矩、让臂掉下来，
- *  而绿底在界面里一直被用来表示"安全/正常"。同一个绿色既当状态灯又出现在最危险的一按上，
- *  操作员只能靠读标签分辨 —— 现在按下态走中性的灰底 + 加重的描边，绿色只留给图标，
- *  绿色在这个应用里就只剩一种意思。 */
-const ENABLE_BUTTON = cn(
-  BIG_BUTTON,
-  'aria-pressed:border-line-strong! data-[state=on]:border-line-strong!',
-)
+/** 使能开关：按下 = 机械臂已使能。已使能时压一层 `--ok-soft` 绿底 —— 与「复位」同一族的绿色
+ *  表示"这台臂现在带电、在持位"，一眼可辨；实心只留给「复位」那一颗，一行里仍然只有一颗
+ *  实心按钮。
+ *  ⚠ 绿底在这里只表示**状态**，不表示"按了安全"：这一按是切断力矩、让臂掉下来。所以它必须
+ *  配那条常驻的失能警告（见下面 disableWarning）和按钮自己的文字（已使能时写「失能」= 下一按
+ *  会做什么）。状态靠底色 + 电源图标颜色，动作靠文字，三者不能互相顶替。 */
+const ENABLE_BUTTON = cn(BIG_BUTTON, 'aria-pressed:bg-ok-soft! data-[state=on]:bg-ok-soft!')
 
 /** 零重力按一下进入、再按一下退出，所以是开关而不是一次性动作。按下时压一层蓝底：
  *  它和使能的绿底必须一眼分得开 —— 绿色是"带电锁位"，蓝色是"零力矩、可以用手拖"。 */
