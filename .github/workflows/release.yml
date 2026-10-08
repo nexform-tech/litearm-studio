@@ -104,7 +104,10 @@ jobs:
           if [ "${{ runner.os }}" = "Linux" ]; then
             pip install ../litegrip-python
           fi
-          pip install -e "daemon[test]" pyinstaller
+          # ⚠ `ui` 是**打包必需**的, 不是可选的: `packaging/build.py` 的
+          # `window_build_args()` 在缺 pywebview 时直接判失败 —— 一个开不了窗口的产物
+          # 里"关掉窗口就是退出"根本无从谈起。顺带把 Qt 后端一起装进来。
+          pip install -e "daemon[test,ui]" pyinstaller
 
       - name: Package (one-file executable)
         working-directory: litearm-studio

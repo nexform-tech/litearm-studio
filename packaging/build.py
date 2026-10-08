@@ -162,6 +162,51 @@ def dfu_build_args() -> list[str]:
     return args
 
 
+def window_build_args() -> list[str]:
+    """应用窗口（`daemon/.../window.py`）的 PyInstaller 参数。
+
+    `pywebview` 是**软依赖**（`daemon[ui]` extra）：无界面运行、CI 与测试都不装它。所以
+    这里分两种情况，判据与夹爪 / pyusb 那两条同源：
+
+    * 装了就收进来 —— 冻结产物必须能开窗，否则"关掉窗口就是退出"这条行为在发布版上
+      根本不成立；
+    * 没装就**判失败**，而不是打出一个没窗口的产物。一个能启动、能连臂、一开窗就退出码 3
+      的 `.deb` 比一次构建失败难查得多。
+
+    ⚠ **为什么显式列 QtWebEngine**：pywebview 经 `qtpy` 选绑定（运行时的动态选择），
+    PyInstaller 的静态分析跟不到那条路；`qtpy` 自己也是运行时挑 PyQt/PySide 的。少收了
+    的表现是"源码里好好的，冻结后一开窗就报后端起不来"。
+
+    ⚠ **为什么是 Qt 而不是 GTK**：GTK 后端要 PyGObject，而它不能跟着 PyInstaller 走 ——
+    typelib 来自系统，装出来的包就得声明 `Depends: gir1.2-webkit2-4.1`。Qt 全部打进产物，
+    `.deb` 的依赖面保持 `libc6` 一条（见 `deb.control_text`）。
+    """
+    if not sdk_available("webview"):
+        raise SystemExit(
+            "找不到应用窗口的依赖 `pywebview`，发布出来的产物**打不开窗口** —— "
+            "\"关掉窗口就是退出\"这条行为也就无从谈起。请装界面依赖：\n"
+            '    pip install -e "daemon[ui]"')
+    print("[package] 收集应用窗口 pywebview（含 Qt 后端）")
+    args = [
+        "--collect-all", "webview",
+        # qtpy 是运行时选绑定的，静态分析看不见它到底会用哪一个。
+        "--collect-all", "qtpy",
+    ]
+    for binding in ("PyQt6", "PySide6"):
+        if sdk_available(binding):
+            print(f"[package] 窗口后端 = {binding}")
+            hidden = ["QtWebEngineWidgets", "QtWebEngineCore", "QtWebChannel",
+                      "QtNetwork", "QtCore", "QtGui", "QtWidgets"]
+            for name in hidden:
+                args += ["--hidden-import", f"{binding}.{name}"]
+            break
+    else:
+        raise SystemExit(
+            "装了 `pywebview` 但没有任何 Qt 绑定，冻结出来的窗口会在选后端时失败。\n"
+            '    pip install -e "daemon[ui]"   # 它会拉 PyQt6')
+    return args
+
+
 def main() -> int:
     if not (UI_DIST / "index.html").is_file():
         raise SystemExit(
@@ -217,6 +262,7 @@ def main() -> int:
             "--collect-all", "serial",
             *gripper_build_args(),
             *dfu_build_args(),
+            *window_build_args(),
             *activation_build_args(activation_url),
             # uvicorn 的 loop/protocol 实现是动态导入的, PyInstaller 静态分析看不见
             "--collect-submodules", "uvicorn",

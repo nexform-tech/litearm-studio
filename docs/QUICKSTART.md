@@ -45,8 +45,12 @@ git clone https://github.com/nexform-tech/litearm-studio.git
 cd litearm-studio
 
 pip install -e ../litearm-python
-pip install -e "daemon[test]"
+pip install -e "daemon[test,ui]"
 ```
+
+The `ui` extra is the application window (`pywebview`). Leave it out only if you always
+run headless with `--no-open`: without it the program exits with an error instead of
+opening a window.
 
 Build the UI that the daemon will serve (skip only if `dist/` already exists):
 

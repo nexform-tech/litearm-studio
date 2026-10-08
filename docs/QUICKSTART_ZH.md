@@ -44,8 +44,10 @@ git clone https://github.com/nexform-tech/litearm-studio.git
 cd litearm-studio
 
 pip install -e ../litearm-python
-pip install -e "daemon[test]"
+pip install -e "daemon[test,ui]"
 ```
+
+`ui` 这个 extra 就是应用窗口（`pywebview`）。只有当你永远用 `--no-open` 无界面运行时才可以不装：少了它程序会直接报错退出，而不是开一个窗口。
 
 构建本地程序要托管的界面（`dist/` 已存在可跳过）：
 
