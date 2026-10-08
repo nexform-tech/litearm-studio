@@ -1,7 +1,7 @@
 import type { MetricType } from './useArmMetrics'
 
 /**
- * 实时曲线当前展示的指标（温度/速度/力矩/跟踪误差）。
+ * 实时曲线当前展示的指标（温度/速度/力矩）。
  *
  * 右列高度只够一张可读的图，所以指标改成**用户切换**而不是按高度堆叠：面板一次只画
  * 选中的那一个，选择本身记住上次的。这里只负责"记住"，与 React 无关，单独成文件是
@@ -13,7 +13,7 @@ export const METRIC_STORAGE_KEY = 'litearm-studio:live-curve-metric'
 export const DEFAULT_METRIC: MetricType = 'temp'
 
 /** 面板能展示的全部指标；也用来判断存下来的字符串是不是一个真指标。 */
-export const METRIC_IDS: readonly MetricType[] = ['temp', 'dq', 'tau', 'err']
+export const METRIC_IDS: readonly MetricType[] = ['temp', 'dq', 'tau']
 
 export function isMetricType(value: unknown): value is MetricType {
   return typeof value === 'string' && (METRIC_IDS as readonly string[]).includes(value)

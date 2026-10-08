@@ -2,7 +2,7 @@ import type { ChartDataset } from 'chart.js'
 import type { MetricChip, MetricType, SeriesSample } from '@/lib/arm'
 
 function pick(s: SeriesSample, metric: MetricType | undefined): number[] {
-  return metric === 'temp' ? s.temp : metric === 'dq' ? s.dq : metric === 'tau' ? s.tau : s.err
+  return metric === 'dq' ? s.dq : metric === 'tau' ? s.tau : s.temp
 }
 
 /**

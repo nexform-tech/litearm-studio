@@ -11,9 +11,6 @@ function chip(i: number): MetricChip {
     k: `J${i + 1}`,
     color: `#00000${i}`,
     on: true,
-    bg: 'transparent',
-    box: 'var(--line-strong)',
-    text: 'var(--ink)',
     toggle: () => {},
   }
 }
@@ -21,7 +18,7 @@ function chip(i: number): MetricChip {
 const chips = (n: number) => Array.from({ length: n }, (_, i) => chip(i))
 
 function sample(t: number, temp: number[]): SeriesSample {
-  return { t, temp, dq: temp.map((v) => v / 10), tau: temp.map((v) => v / 100), err: [] }
+  return { t, temp, dq: temp.map((v) => v / 10), tau: temp.map((v) => v / 100) }
 }
 
 const series = [sample(1, [10, 20, 30]), sample(2, [11, 21, 31])]

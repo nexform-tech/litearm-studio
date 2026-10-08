@@ -157,10 +157,10 @@ Shows one real-time waveform at a time; you pick which metric it plots:
 ![Telemetry Curve](images/en/06_solo_telemetry.png)
 
 - Placement: the panel sits under "Current Pose" in the left column, squashed to a single strip tall enough for one readable chart;
-- Metric Tabs: Switch between Temperature (°C), Velocity (rad/s), Torque (Nm), and Tracking Error (rad). The panel draws only the selected metric; the tabs are how you look at the others, instead of squeezing four charts together.
+- Metric Tabs: Switch between Temperature (°C), Velocity (rad/s), and Torque (Nm). The panel draws only the selected metric; the tabs are how you look at the others, instead of squeezing three charts together. The three tabs share the title row with "Select All", "Clear", and "Pause/Resume".
 - Remembered Choice: The selected metric is restored the next time you open the control page; temperature is the default.
-- Channel Filters: Select or deselect J1–J7 curves individually, with "Select All", "Clear", and "Pause/Resume" controls.
-- Current Readings: The J1–J7 numbers above the chart are the latest sample for the selected metric. Tracking error reads "no real-time data" because the controller broadcast does not carry it.
+- Channel Filters: The joint list has its own row under the title row, one checkbox per joint. Tick a box to plot that joint, clear it to hide the curve; the checkbox accent matches the curve colour.
+- Current Readings: The J1–J7 numbers above the chart are the latest sample for the selected metric.
 
 ---
 

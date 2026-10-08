@@ -134,25 +134,12 @@ export function MetricsPanel({
           : 'min-h-[15rem] flex-1 gap-2 rounded-[0.875rem] px-3.5 py-3'
       }
     >
+      {/* 第一行：标题、全选/清空、指标页签与暂停，全部挤在一行里 —— 关节列表从这里搬走，
+          腾出的正是这一行需要的宽度：一台七轴臂的七个关节曾把标题和按钮顶到下一行。 */}
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 border-b pb-1.5">
         <div className="text-[0.90625rem] font-semibold text-foreground">
           {t('common:metrics.title')}
         </div>
-        {chips.map((c) => (
-          <button
-            key={c.key}
-            type="button"
-            onClick={c.toggle}
-            title={c.k}
-            className="flex items-center gap-1 rounded-md px-1.5 py-0.5 transition-colors hover:bg-[var(--hover)]"
-            style={{ background: c.bg }}
-          >
-            <div className="h-[0.15625rem] w-3 rounded-sm" style={{ background: c.box }} />
-            <div className="font-mono text-[0.6875rem] font-semibold" style={{ color: c.text }}>
-              {c.k}
-            </div>
-          </button>
-        ))}
         <Button
           type="button"
           variant="outline"
@@ -169,6 +156,34 @@ export function MetricsPanel({
         >
           {t('common:metrics.clearAll')}
         </Button>
+        {/* 指标切换：高度不足时不再从后往前丢图，而是让用户自己选看哪一个。
+            页签和全选/清空同在标题行，图表那一片就只剩图本身。 */}
+        <SegmentedControl
+          items={tabs}
+          ariaLabel={t('common:metrics.selectMetric')}
+          containerStyle={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: '0.1875rem',
+            background: 'var(--line-soft)',
+            borderRadius: '0.5625rem',
+            padding: '0.1875rem',
+          }}
+          itemStyle={{
+            padding: '0.3125rem 0.5rem',
+            borderRadius: '0.4375rem',
+            fontSize: '0.71875rem',
+            color: 'var(--ink-subtle)',
+            fontWeight: 500,
+            whiteSpace: 'nowrap',
+          }}
+          activeItemStyle={{
+            background: 'var(--seg-active)',
+            color: 'var(--ink)',
+            fontWeight: 650,
+            boxShadow: '0 0.0625rem 0.125rem rgba(16,24,40,.1)',
+          }}
+        />
         <Button
           type="button"
           variant="ghost"
@@ -180,33 +195,35 @@ export function MetricsPanel({
         </Button>
       </div>
 
-      {/* 指标切换：高度不足时不再从后往前丢图，而是让用户自己选看哪一个。 */}
-      <SegmentedControl
-        items={tabs}
-        ariaLabel={t('common:metrics.selectMetric')}
-        containerStyle={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          gap: '0.1875rem',
-          background: 'var(--line-soft)',
-          borderRadius: '0.5625rem',
-          padding: '0.1875rem',
-        }}
-        itemStyle={{
-          padding: '0.3125rem 0.5rem',
-          borderRadius: '0.4375rem',
-          fontSize: '0.71875rem',
-          color: 'var(--ink-subtle)',
-          fontWeight: 500,
-          whiteSpace: 'nowrap',
-        }}
-        activeItemStyle={{
-          background: 'var(--seg-active)',
-          color: 'var(--ink)',
-          fontWeight: 650,
-          boxShadow: '0 0.0625rem 0.125rem rgba(16,24,40,.1)',
-        }}
-      />
+      {/* 第二行：关节列表独占一行，一颗关节一个复选框 —— 原来的颜色线段只是图例，
+          勾选才是"这条曲线画不画"这个动作本身，复选框把它变成可点的控件。
+          复选框的强调色仍取该关节的曲线色，勾上时颜色与图上的曲线一一对应。
+          紧跟在「全选 / 清空」下面：那两颗按钮管的就是这一行。 */}
+      <div
+        data-testid="metric-joint-list"
+        className="flex flex-wrap items-center gap-x-1 gap-y-1 rounded-[0.5625rem] bg-muted/30 px-1 py-1"
+      >
+        {chips.map((c) => (
+          <label
+            key={c.key}
+            className="flex cursor-pointer items-center gap-1 rounded-md px-1.5 py-0.5 transition-colors hover:bg-[var(--hover)]"
+          >
+            <input
+              type="checkbox"
+              checked={c.on}
+              onChange={c.toggle}
+              className="size-3 flex-none cursor-pointer"
+              style={{ accentColor: c.color }}
+            />
+            <span
+              className="font-mono text-[0.6875rem] font-semibold"
+              style={{ color: c.on ? 'var(--ink)' : 'var(--ink-ghost)' }}
+            >
+              {c.k}
+            </span>
+          </label>
+        ))}
+      </div>
 
       {active ? (
         <div
@@ -241,13 +258,9 @@ export function MetricsPanel({
             </div>
           </div>
           <div className="relative min-h-0 flex-1">
-            {(!liveData || active.noData) && (
+            {!liveData && (
               <div className="absolute inset-0 z-10 flex items-center justify-center px-2 text-center font-mono text-[0.6875rem] text-muted-foreground/80">
-                {active.noData
-                  ? t('common:metrics.errUnavailable')
-                  : simMode
-                    ? t('common:metrics.simData')
-                    : t('common:metrics.noLiveData')}
+                {simMode ? t('common:metrics.simData') : t('common:metrics.noLiveData')}
               </div>
             )}
             <div className="absolute inset-0 px-1 pt-1 pb-0.5">

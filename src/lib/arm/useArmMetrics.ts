@@ -11,10 +11,9 @@ export type SeriesSample = {
   temp: number[]
   dq: number[]
   tau: number[]
-  err: number[]
 }
 
-export type MetricType = 'temp' | 'dq' | 'tau' | 'err'
+export type MetricType = 'temp' | 'dq' | 'tau'
 
 /**
  * 一张图对应一个指标：名称/单位/轴标签，外加**该指标下逐关节的当前读数**。
@@ -28,20 +27,16 @@ export type MetricSeries = {
   axis: string
   /** 逐关节当前读数（已格式化）；该指标在实机广播中不存在时为 null。 */
   live: string[] | null
-  /** 实机广播里根本没有这个量 → 图内显示"暂无数据"，而不是画一条零线。 */
-  noData: boolean
 }
 
-/** 关节开关。数值不在这里——它跟着各自的指标走（见 `MetricSeries.live`）。 */
+/** 关节开关。数值不在这里——它跟着各自的指标走（见 `MetricSeries.live`）。
+ *  皮肤也不在这里：面板把它画成复选框，颜色直接取自 `color`。 */
 export type MetricChip = {
   key: string
   k: string
-  /** 该关节在图表曲线上的颜色（与色块同源）。 */
+  /** 该关节在图表曲线上的颜色（复选框的强调色同源）。 */
   color: string
   on: boolean
-  bg: string
-  box: string
-  text: string
   toggle: () => void
 }
 
@@ -50,7 +45,6 @@ export const METRIC_DEFS = [
   { id: 'temp', name: '温度', unit: '°C', axis: 'T (°C)', amp: 0.35 },
   { id: 'dq', name: '速度', unit: 'rad/s', axis: 'dq (rad/s)', amp: 1.0 },
   { id: 'tau', name: '力矩', unit: 'Nm', axis: 'tau (Nm)', amp: 0.78 },
-  { id: 'err', name: '跟踪误差', unit: 'rad', axis: 'e (rad)', amp: 0.52 },
 ] as const
 
 const SERIES_INTERVAL_MS = 100
@@ -58,7 +52,6 @@ const SERIES_MAX_LEN = 100
 
 // 仿真波形每条通道的基准值；通道数由 jointCount 决定，基准值不够长时按 0 起算。
 const SIM_TEMP_SEED = [40, 41, 39, 42, 38, 37, 39]
-const SIM_ERR_SEED = [0.002, 0.004, 0.001, 0.006, 0.002, 0.003, 0.001]
 
 function generateSimSample(t: number, jointCount: number): SeriesSample {
   const phase = t / 1000
@@ -67,14 +60,13 @@ function generateSimSample(t: number, jointCount: number): SeriesSample {
     temp: jointIndexes(jointCount).map((i) => (SIM_TEMP_SEED[i] ?? 40) + Math.sin(phase + i) * 1.5),
     dq: jointIndexes(jointCount).map((i) => Math.sin(phase * 1.5 + i) * 0.8),
     tau: jointIndexes(jointCount).map((i) => Math.cos(phase * 1.2 + i) * 1.2),
-    err: jointIndexes(jointCount).map((i) => (SIM_ERR_SEED[i] ?? 0.002) + Math.sin(phase * 2 + i) * 0.0005),
   }
 }
 
 const num = (v: unknown): number => (typeof v === 'number' && !isNaN(v) ? v : 0)
 
-/** 逐指标的小数位：温度是整数、速度两位、力矩一位、跟踪误差三位。 */
-const DECIMALS: Record<MetricType, number> = { temp: 0, dq: 2, tau: 1, err: 3 }
+/** 逐指标的小数位：温度是整数、速度两位、力矩一位。 */
+const DECIMALS: Record<MetricType, number> = { temp: 0, dq: 2, tau: 1 }
 
 export type UseArmMetricsOptions = {
   /** 仿真模式传 false，实机模式传 true（默认 true） */
@@ -133,8 +125,6 @@ export function useArmMetrics(options: UseArmMetricsOptions = {}) {
           temp: (arm.temps ?? []).slice(0, jointCount).map((x) => num(x?.mosTemp)),
           dq: (arm.dq ?? []).slice(0, jointCount).map(num),
           tau: (arm.tau ?? []).slice(0, jointCount).map(num),
-          // 广播里没有跟踪误差字段：实机不伪造数据，图表留空并提示"暂无数据"。
-          err: [],
         }
       } else {
         next = generateSimSample(Date.now(), jointCount)
@@ -150,7 +140,7 @@ export function useArmMetrics(options: UseArmMetricsOptions = {}) {
 
   /** 逐指标的逐关节读数。实机取自当前广播帧，仿真取自最新一个采样点。 */
   const liveByMetric = useMemo((): Record<MetricType, string[] | null> => {
-    const none: Record<MetricType, string[] | null> = { temp: null, dq: null, tau: null, err: null }
+    const none: Record<MetricType, string[] | null> = { temp: null, dq: null, tau: null }
     if (real) {
       if (!connected || !armState) return none
       const fmt = (m: MetricType, values: unknown[]) =>
@@ -160,8 +150,6 @@ export function useArmMetrics(options: UseArmMetricsOptions = {}) {
         temp: (armState.temps ?? []).slice(0, jointCount).map((x) => num(x?.mosTemp).toFixed(DECIMALS.temp)),
         dq: fmt('dq', armState.dq ?? []),
         tau: fmt('tau', armState.tau ?? []),
-        // 跟踪误差在实机广播中不存在，不做展示。
-        err: null,
       }
     }
     const last = series[series.length - 1]
@@ -170,7 +158,6 @@ export function useArmMetrics(options: UseArmMetricsOptions = {}) {
       temp: (last.temp ?? []).map((v) => num(v).toFixed(DECIMALS.temp)),
       dq: (last.dq ?? []).map((v) => num(v).toFixed(DECIMALS.dq)),
       tau: (last.tau ?? []).map((v) => num(v).toFixed(DECIMALS.tau)),
-      err: (last.err ?? []).map((v) => num(v).toFixed(DECIMALS.err)),
     }
   }, [real, connected, armState, series, jointCount])
 
@@ -182,28 +169,20 @@ export function useArmMetrics(options: UseArmMetricsOptions = {}) {
         unit: m.unit,
         axis: m.axis,
         live: liveByMetric[m.id as MetricType],
-        noData: real && m.id === 'err',
       })),
-    [t, liveByMetric, real],
+    [t, liveByMetric],
   )
 
   const chips: MetricChip[] = useMemo(
     () =>
-      jointIndexes(jointCount).map((i) => {
-        const c = jointColor(i)
-        const on = shown.includes(i)
-        return {
-          key: 'J' + (i + 1),
-          k: 'J' + (i + 1),
-          color: c,
-          on,
-          bg: on ? 'var(--muted)' : 'transparent',
-          box: on ? c : 'var(--line-strong)',
-          text: on ? 'var(--ink)' : 'var(--ink-ghost)',
-          toggle: () =>
-            setShown((prev) => (prev.includes(i) ? prev.filter((x) => x !== i) : [...prev, i].sort())),
-        }
-      }),
+      jointIndexes(jointCount).map((i) => ({
+        key: 'J' + (i + 1),
+        k: 'J' + (i + 1),
+        color: jointColor(i),
+        on: shown.includes(i),
+        toggle: () =>
+          setShown((prev) => (prev.includes(i) ? prev.filter((x) => x !== i) : [...prev, i].sort())),
+      })),
     [shown, jointCount],
   )
 
