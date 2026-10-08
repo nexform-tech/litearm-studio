@@ -73,18 +73,19 @@ export function JointSpacePanel({
           <div className="text-xs text-muted-foreground">{jointRangeLabel(joints.length)}</div>
         </div>
         <div className="flex flex-wrap items-center gap-[0.5625rem]">
-          {!releaseOnly && (
-            <Button
-              type="button"
-              size="sm"
-              onClick={sendAll}
-              title={t('jointSpace.sendTitle')}
-              className="h-auto gap-1 rounded-[0.4375rem] px-2.5 py-1 text-[0.78125rem]"
-            >
-              <Send size="0.75rem" />
-              {t('jointSpace.send')}
-            </Button>
-          )}
+          {/* “松手即下发”开启时没有统一下发的意义，但按钮仍然留在原位（只置灰不隐藏）：
+              隐藏会让标题行随勾选状态抖动，操作员也会找不到刚才点过的那个按钮。 */}
+          <Button
+            type="button"
+            size="sm"
+            onClick={sendAll}
+            disabled={releaseOnly}
+            title={t('jointSpace.sendTitle')}
+            className="h-auto gap-1 rounded-[0.4375rem] px-2.5 py-1 text-[0.78125rem]"
+          >
+            <Send size="0.75rem" />
+            {t('jointSpace.send')}
+          </Button>
           <button
             type="button"
             onClick={toggleReleaseOnly}

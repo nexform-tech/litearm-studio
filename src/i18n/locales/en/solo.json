@@ -73,7 +73,7 @@
     "send": "Send",
     "sendTitle": "Send motion command",
     "releaseOnly": "Send on Release",
-    "releaseOnlyTitle": "Only send command when slider is released"
+    "releaseOnlyTitle": "Send the command immediately when the slider is released, without pressing Send"
   },
   "preview": {
     "title": "3D Live Preview",
