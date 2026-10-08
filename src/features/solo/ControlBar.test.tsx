@@ -30,7 +30,6 @@ function renderBar(overrides: Partial<Parameters<typeof ControlBar>[0]> = {}) {
     speed: 50,
     setSpeed: vi.fn(),
     faultReason: null,
-    showDisableHint: false,
     reset: vi.fn(),
     clearFault: vi.fn(),
     zeroJoints: vi.fn(),
@@ -61,15 +60,6 @@ describe('ControlBar action row', () => {
       i18n.t('solo:controlBar.readyPose'),
     ])
     expect(row.children).toHaveLength(6)
-  })
-
-  it('keeps the disable-drop warning visible while the arm is energised', () => {
-    const { rerender, props } = renderBar()
-    // 未使能时不该出现：那时下一按是"锁住姿态"，这句话只会占地方。
-    expect(screen.queryByText(i18n.t('solo:controlBar.disableWarning'))).toBeNull()
-
-    rerender(<ControlBar {...props} showDisableHint />)
-    expect(screen.getByText(i18n.t('solo:controlBar.disableWarning'))).toBeTruthy()
   })
 
   it('gives every button exactly one icon', () => {

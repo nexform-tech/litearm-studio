@@ -16,7 +16,6 @@
     "enableTitle": "Energise the drives and hold the current pose",
     "disable": "Disable",
     "disableTitle": "Cut motor torque: the arm drops under gravity, support it first",
-    "disableWarning": "Energised — Disable cuts torque and the arm drops under gravity. Support it first.",
     "reset": "Reset",
     "resetTitle": "Reset the controller: clear latched faults and re-anchor the trajectory reference to the current pose (an in-flight Cartesian plan is discarded; not a full reboot)",
     "clearFault": "Clear Fault",
