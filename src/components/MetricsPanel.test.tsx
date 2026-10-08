@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@/i18n'
 import type { MetricChip, MetricSeries, MetricType } from '@/lib/arm'
@@ -6,10 +6,12 @@ import type { MetricChip, MetricSeries, MetricType } from '@/lib/arm'
 // `MetricsPanel` 一渲染就要 canvas（chart.js），jsdom 里画不出来。这里替掉 chart.js 与
 // react-chartjs-2，只把**交给图表的 datasets** 抓出来断言：曲线条数必须等于芯片条数
 // （而芯片条数 = daemon 报告的轴数），并且必须跟着选中的指标换数据。
+// `options` 也要抓：悬停提示走的是 `plugins.tooltip.external`，用例直接把它调起来。
 const captured = vi.hoisted(() => ({
   data: null as {
     datasets: { label?: string; borderColor?: unknown; hidden?: boolean; data?: unknown[] }[]
   } | null,
+  options: null as { plugins?: { tooltip?: { external?: (ctx: unknown) => void } } } | null,
   renders: 0,
 }))
 
@@ -23,8 +25,9 @@ vi.mock('chart.js', () => ({
 }))
 
 vi.mock('react-chartjs-2', () => ({
-  Line: (props: { data: never }) => {
+  Line: (props: { data: never; options: never }) => {
     captured.data = props.data
+    captured.options = props.options
     captured.renders += 1
     return null
   },
@@ -80,6 +83,7 @@ function renderPanel(
 ) {
   const chips = Array.from({ length: axisCount }, (_, i) => chip(i, shown.includes(i)))
   const selectMetric = vi.fn()
+  const selectAll = vi.fn()
   render(
     <MetricsPanel
       metrics={allMetrics(axisCount)}
@@ -92,12 +96,11 @@ function renderPanel(
       liveData={liveData}
       simMode={simMode}
       chips={chips}
-      selectAll={vi.fn()}
-      selectNone={vi.fn()}
+      selectAll={selectAll}
       compact={compact}
     />,
   )
-  return { chips, selectMetric }
+  return { chips, selectMetric, selectAll }
 }
 
 afterEach(() => {
@@ -153,17 +156,25 @@ describe('MetricsPanel metric switcher', () => {
     expect(captured.renders).toBe(1)
   })
 
-  it('keeps the metric tabs on the title row next to select all and clear', () => {
+  it('keeps the metric tabs on the title row and select all on the joint row', () => {
     renderPanel(3)
 
     const header = screen.getByText(i18n.t('common:metrics.title')).parentElement!
+    const list = screen.getByTestId('metric-joint-list')
+    const selectAll = screen.getByRole('button', { name: i18n.t('common:metrics.selectAll') })
 
-    // 三颗按钮同一行：页签不再独占一行，标题行就是全选/清空所在的那一行。
-    expect(header.contains(screen.getByRole('button', { name: i18n.t('common:metrics.selectAll') }))).toBe(true)
-    expect(header.contains(screen.getByRole('button', { name: i18n.t('common:metrics.clearAll') }))).toBe(true)
+    // 页签不再独占一行，它和标题、暂停同在标题行。
     expect(header.contains(screen.getByRole('radio', { name: '温度' }))).toBe(true)
-    // 关节列表仍然独占一行，页签不跟着它下去。
-    expect(screen.getByTestId('metric-joint-list').contains(screen.getByRole('radio', { name: '温度' }))).toBe(false)
+    expect(header.contains(list)).toBe(false)
+    // 「全选」管的是关节，所以跟着关节那一行走，且靠右收尾，不在标题行。
+    expect(list.contains(selectAll)).toBe(true)
+    expect(header.contains(selectAll)).toBe(false)
+    expect(list.lastElementChild).toBe(selectAll)
+    // 「清空」已删除：整个面板只剩标题行的暂停和关节行的全选两颗按钮。
+    expect(within(header).getAllByRole('button').map((b) => b.textContent)).toEqual(['暂停'])
+    expect(within(list).getAllByRole('button').map((b) => b.textContent)).toEqual([
+      i18n.t('common:metrics.selectAll'),
+    ])
   })
 
   it('asks for the clicked metric instead of dropping the ones that do not fit', () => {
@@ -237,6 +248,14 @@ describe('MetricsPanel joint list', () => {
     expect(chips[1].toggle).toHaveBeenCalledTimes(1)
     expect(chips[0].toggle).not.toHaveBeenCalled()
   })
+
+  it('selects every joint from the button on the joint row', () => {
+    const { selectAll } = renderPanel(3)
+
+    fireEvent.click(screen.getByRole('button', { name: i18n.t('common:metrics.selectAll') }))
+
+    expect(selectAll).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('MetricsPanel compact layout', () => {
@@ -250,5 +269,70 @@ describe('MetricsPanel compact layout', () => {
     // 指标名与单位已经写在页签上，不再在图里重复一遍。
     expect(screen.queryByText('T (°C)')).toBeNull()
     expect(screen.queryByText('°C')).toBeNull()
+  })
+
+  it('gives the chart enough height to be readable', () => {
+    renderPanel(3, { compact: true })
+
+    // 6rem 的绘图区只剩三行文字高，曲线挤成一条直线；这里钉住放宽后的高度。
+    expect(screen.getByTestId('metric-chart').className).toContain('h-[10rem]')
+  })
+})
+
+describe('MetricsPanel hover tooltip', () => {
+  /** 光标停在图表里，chart.js 会调 `external`；用例把那个回调照原样调起来。 */
+  function hover(joints: number, { opacity = 1, caretX = 5, caretY = 6 } = {}) {
+    act(() => {
+      captured.options?.plugins?.tooltip?.external?.({
+        chart: { canvas: { getBoundingClientRect: () => ({ left: 10, top: 20 }) } },
+        tooltip: {
+          opacity,
+          caretX,
+          caretY,
+          title: ['11:45:58'],
+          dataPoints: Array.from({ length: joints }, (_, i) => ({
+            dataset: { label: `J${i + 1}`, borderColor: '#123456' },
+            parsed: { y: i + 0.5 },
+          })),
+        },
+      })
+    })
+  }
+
+  it('draws the readout in the DOM instead of the canvas so it cannot be clipped', () => {
+    renderPanel(7, { shown: [0, 1, 2, 3, 4, 5, 6] })
+
+    hover(7)
+
+    const tip = screen.getByTestId('metric-tooltip')
+    // 挂在 body 上、位置 fixed：卡片的 overflow-hidden 和左列的滚动都裁不到它。
+    expect(tip.parentElement).toBe(document.body)
+    expect(tip.closest('[data-slot="card"]')).toBeNull()
+    expect(tip.className).toContain('fixed')
+    // 七颗关节一个不少，两列排开；数值与单位都带上。
+    expect(within(tip).getByText('11:45:58')).toBeTruthy()
+    expect(within(tip).getAllByText(/^J\d$/)).toHaveLength(7)
+    expect(within(tip).getByText('6.500')).toBeTruthy()
+    expect(within(tip).getByText('°C')).toBeTruthy()
+  })
+
+  it('flips the readout to the other side of the caret near the window edge', () => {
+    renderPanel(3)
+
+    // 光标已经越过窗口中线（jsdom 视口宽 1024）：提示框向左上翻，不会顶出视口。
+    hover(3, { caretX: 900, caretY: 800 })
+
+    const transform = screen.getByTestId('metric-tooltip').style.transform
+    expect(transform.match(/calc\(-100%/g)).toHaveLength(2)
+  })
+
+  it('takes the readout away when the pointer leaves the chart', () => {
+    renderPanel(3)
+
+    hover(3)
+    expect(screen.queryByTestId('metric-tooltip')).not.toBeNull()
+
+    hover(3, { opacity: 0 })
+    expect(screen.queryByTestId('metric-tooltip')).toBeNull()
   })
 })

@@ -68,7 +68,6 @@
     "simData": "仿真模式 · 展示模拟数据",
     "noLiveData": "未连接 · 无实时数据",
     "selectAll": "全选",
-    "clearAll": "清空",
     "pause": "暂停",
     "resume": "继续"
   },

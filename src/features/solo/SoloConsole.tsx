@@ -33,7 +33,6 @@ export function SoloConsole() {
           simMode={vm.simMode}
           chips={vm.chips}
           selectAll={vm.selectAll}
-          selectNone={vm.selectNone}
         />
       </div>
 

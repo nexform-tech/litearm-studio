@@ -187,7 +187,6 @@ export function useArmMetrics(options: UseArmMetricsOptions = {}) {
   )
 
   const selectAll = useCallback(() => setShown(jointIndexes(jointCount)), [jointCount])
-  const selectNone = useCallback(() => setShown([]), [])
   const togglePause = useCallback(() => setPaused((p) => !p), [])
   const selectMetric = useCallback((id: MetricType) => {
     setActiveMetric(id)
@@ -201,7 +200,6 @@ export function useArmMetrics(options: UseArmMetricsOptions = {}) {
     pauseLabel: paused ? t('common:metrics.resume') : t('common:metrics.pause'),
     togglePause,
     selectAll,
-    selectNone,
     chips,
     series,
     shown,

@@ -156,10 +156,11 @@ Shows one real-time waveform at a time; you pick which metric it plots:
 
 ![Telemetry Curve](images/en/06_solo_telemetry.png)
 
-- Placement: the panel sits under "Current Pose" in the left column, squashed to a single strip tall enough for one readable chart;
-- Metric Tabs: Switch between Temperature (°C), Velocity (rad/s), and Torque (Nm). The panel draws only the selected metric; the tabs are how you look at the others, instead of squeezing three charts together. The three tabs share the title row with "Select All", "Clear", and "Pause/Resume".
+- Placement: the panel sits under "Current Pose" in the left column at a fixed height (about 10rem, scaling with the window's font size), enough for one readable chart;
+- Metric Tabs: Switch between Temperature (°C), Velocity (rad/s), and Torque (Nm). The panel draws only the selected metric; the tabs are how you look at the others, instead of squeezing three charts together. The three tabs share the title row with the title and "Pause/Resume".
 - Remembered Choice: The selected metric is restored the next time you open the control page; temperature is the default.
-- Channel Filters: The joint list has its own row under the title row, one checkbox per joint. Tick a box to plot that joint, clear it to hide the curve; the checkbox accent matches the curve colour.
+- Channel Filters: The joint list has its own row under the title row, one checkbox per joint. Tick a box to plot that joint, clear it to hide the curve; the checkbox accent matches the curve colour. "Select All" closes the row on the right.
+- Hover Readout: Hovering the chart floats that moment's per-joint values and unit next to the cursor, two columns wide and colour-matched to the curves; it disappears when the pointer leaves. The readout floats above the panel, so the card never clips it.
 - Current Readings: The J1–J7 numbers above the chart are the latest sample for the selected metric.
 
 ---
