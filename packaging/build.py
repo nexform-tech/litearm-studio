@@ -186,6 +186,14 @@ def window_build_args() -> list[str]:
             "找不到应用窗口的依赖 `pywebview`，发布出来的产物**打不开窗口** —— "
             "\"关掉窗口就是退出\"这条行为也就无从谈起。请装界面依赖：\n"
             '    pip install -e "daemon[ui]"')
+    if not sdk_available("qtpy"):
+        # ⚠ `qtpy` 是**独立包**，不在 pywebview 的基础依赖里（只有它的 `[qt]` extra 才带）。
+        # 所以"装了 PyQt6"并不等于 pywebview 的 Qt 后端能起来 —— 它第一行就是
+        # `from qtpy import ...`。少了它的表现是产物**构建成功**、一启动就报"没有可用的
+        # webview 后端"，正是这里要拦下来的那种失败。
+        raise SystemExit(
+            "找不到 `qtpy` —— pywebview 的 Qt 后端要靠它选绑定，没有它产物开不了窗口。\n"
+            '    pip install -e "daemon[ui]"')
     print("[package] 收集应用窗口 pywebview（含 Qt 后端）")
     args = [
         "--collect-all", "webview",

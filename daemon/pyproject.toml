@@ -67,6 +67,10 @@ test = ["pytest>=7", "httpx"]
 # gir1.2-webkit2-4.1 时它会自动被选中, 那时不需要这里的 Qt。
 ui = [
     "pywebview",
+    # ⚠ `QtPy` 必须显式写: pywebview 的 Qt 后端靠它选绑定, 而它**不在** pywebview 的基础
+    # 依赖里 (只有 `pywebview[qt]` 那个 extra 才带)。漏掉的表现是构建成功、启动即报
+    # "没有可用的 webview 后端" —— 实测踩过这一次。
+    "QtPy; sys_platform == 'linux'",
     "PyQt6; sys_platform == 'linux'",
     "PyQt6-WebEngine; sys_platform == 'linux'",
 ]

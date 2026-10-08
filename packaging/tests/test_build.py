@@ -77,3 +77,16 @@ def test_window_build_args_refuses_a_webview_without_any_binding(monkeypatch):
     with pytest.raises(SystemExit) as excinfo:
         build.window_build_args()
     assert "daemon[ui]" in str(excinfo.value)
+
+
+def test_window_build_args_refuses_a_qt_binding_without_qtpy(monkeypatch):
+    """`QtPy` 是独立包, pywebview 的基础依赖里**没有**它。
+
+    所以"装了 PyQt6"不等于 Qt 后端能起来 —— pywebview 的 `platforms/qt.py` 第一行就是
+    `from qtpy import ...`。实测踩过一次: 产物构建成功, 一启动就报"没有可用的 webview
+    后端"。这条把它钉在构建期。
+    """
+    _installed(monkeypatch, "webview", "PyQt6")
+    with pytest.raises(SystemExit) as excinfo:
+        build.window_build_args()
+    assert "qtpy" in str(excinfo.value)
