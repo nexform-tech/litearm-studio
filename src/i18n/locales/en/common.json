@@ -105,7 +105,7 @@
     "jointLimitsFallback": "Could not read the joint soft limits from the controller; the sliders fell back to built-in ranges",
     "unknownError": "Operation failed: {{message}}",
     "notActivated": "This arm is not activated, so the firmware refuses to enable it: open Settings → Activation, fill in the registration form and submit it",
-    "activationMustDisable": "The firmware only accepts the license record while the arm is disarmed: press Disarm, then submit again",
+    "activationMustDisable": "The firmware only accepts the license record while the arm is disarmed: press Disable, then submit again",
     "activationWriteRejected": "The firmware refused this write (already activated, credential mismatch and write failure share one code, so the code cannot tell them apart): press Refresh to read the state; if it is still not activated, check the device UID and request a new credential",
     "activationFailed": "Activation failed: retry later",
     "activationUnconfigured": "The local daemon has no activation service address: start it with --activation-url",

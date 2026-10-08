@@ -36,10 +36,16 @@ const ICON = 'size-3.5 flex-none'
  *  一行里只留一颗实心，层次才不会糊。 */
 const RESET_BUTTON = cn(BIG_BUTTON, 'border-transparent! bg-ok-solid! text-ok-solid-fg! hover:bg-ok-solid/85!')
 
-/** 使能开关按下 = 机械臂已使能，用 `--ok-soft` 压一层扁平的绿底；「现在带电」这个状态由
- *  电源图标的**颜色**说明（`enableColor`：带电绿、未带电琥珀）—— 这颗按钮一点就会失力下坠，
- *  状态不能只靠文字。绿底 + 绿图标是双保险，比原来那颗纯色圆点还多一层形状。 */
-const ENABLE_BUTTON = cn(BIG_BUTTON, 'aria-pressed:bg-ok-soft! data-[state=on]:bg-ok-soft!')
+/** 使能开关：按下 = 机械臂已使能。「现在带电」这个状态由电源图标的**颜色**说明
+ *  （`enableColor`：带电绿、未带电琥珀），再配一条常驻的失能警告（见下面 disableWarning）。
+ *  ⚠ 这里**不给按下态上绿底**（改前是 `--ok-soft`）：那颗按钮按下去是切断力矩、让臂掉下来，
+ *  而绿底在界面里一直被用来表示"安全/正常"。同一个绿色既当状态灯又出现在最危险的一按上，
+ *  操作员只能靠读标签分辨 —— 现在按下态走中性的灰底 + 加重的描边，绿色只留给图标，
+ *  绿色在这个应用里就只剩一种意思。 */
+const ENABLE_BUTTON = cn(
+  BIG_BUTTON,
+  'aria-pressed:border-line-strong! data-[state=on]:border-line-strong!',
+)
 
 /** 零重力按一下进入、再按一下退出，所以是开关而不是一次性动作。按下时压一层蓝底：
  *  它和使能的绿底必须一眼分得开 —— 绿色是"带电锁位"，蓝色是"零力矩、可以用手拖"。 */
@@ -56,6 +62,7 @@ export function ControlBar({
   speed,
   setSpeed,
   faultReason,
+  showDisableHint,
   reset,
   clearFault,
   zeroJoints,
@@ -70,6 +77,8 @@ export function ControlBar({
   speed: number
   setSpeed: (v: number) => void
   faultReason: string | null
+  /** 实机已使能时把「失能会掉臂」常驻在行下：这句只写在 tooltip 里等于没写 —— 不悬停看不到。 */
+  showDisableHint: boolean
   /** 复位控制器（`reset`）：清锁存故障并把轨迹参考重新锚定到当前位姿。 */
   reset: () => void
   /** 清除故障（`clear_faults`）：只清驱动器 RAM 里的锁存故障位。 */
@@ -162,6 +171,15 @@ export function ControlBar({
           {t('controlBar.readyPose')}
         </Button>
       </div>
+
+      {/* 「失能会掉臂」不能只放 tooltip。只在实机已使能时出现：那时下一按就是切断力矩，
+          其余时候这句话既没用又占地方。样式与下面的故障条同形，靠颜色区分（警示黄 vs 故障红）。 */}
+      {showDisableHint ? (
+        <div className="flex items-start gap-1.5 rounded-[0.5rem] bg-warn-soft px-2.5 py-1.5 text-[0.78125rem] leading-[1.4] text-warn">
+          <TriangleAlert size="0.875rem" className="mt-px shrink-0" />
+          <span>{t('controlBar.disableWarning')}</span>
+        </div>
+      ) : null}
 
       {/* 第二行：速度值独占一行，滑条 + 步进器 */}
       <div className="flex items-center gap-[0.5625rem]">

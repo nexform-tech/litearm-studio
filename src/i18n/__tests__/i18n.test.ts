@@ -24,7 +24,11 @@ describe('i18n Internationalization', () => {
     // `clear_faults` 命令 —— 夹具面板还多一句「正在清除故障…」，更不该对不上。
     expect(i18n.t('gripper:actions.clearFault')).toBe(i18n.t('solo:controlBar.clearFault'))
     expect(i18n.t('solo:controlBar.home')).toBe('回零点')
-    expect(i18n.t('solo:controlBar.disable')).toBe('下使能')
+    expect(i18n.t('solo:controlBar.disable')).toBe('失能')
+    // 按钮叫什么，点名它的文案就得叫什么。这句报错指的是控制栏这颗按钮（激活写入要求先失能），
+    // 而中文名曾经是「下使能」、全 app 其它地方都写「失能」—— 现场照着提示找不到那颗按钮。
+    expect(i18n.t('common:errors.activationMustDisable')).toContain(i18n.t('solo:controlBar.disable'))
+    expect(i18n.t('solo:controlBar.disableWarning')).toContain(i18n.t('solo:controlBar.disable'))
     expect(i18n.t('solo:modes.drag')).toBe('零重力')
     expect(i18n.t('nav:settings')).toBe('设置')
     expect(i18n.t('settings:payload.title')).toBe('末端负载')
@@ -72,6 +76,8 @@ describe('i18n Internationalization', () => {
     expect(i18n.t('gripper:actions.clearFault')).toBe(i18n.t('solo:controlBar.clearFault'))
     expect(i18n.t('solo:controlBar.home')).toBe('Go Home')
     expect(i18n.t('solo:controlBar.disable')).toBe('Disable')
+    expect(i18n.t('common:errors.activationMustDisable')).toContain(i18n.t('solo:controlBar.disable'))
+    expect(i18n.t('solo:controlBar.disableWarning')).toContain(i18n.t('solo:controlBar.disable'))
     expect(i18n.t('solo:modes.drag')).toBe('Zero Gravity')
     expect(i18n.t('nav:settingsTitle')).toBe('Controller Parameters')
     expect(i18n.t('settings:header.title')).toBe('Controller Parameters & Calibration')

@@ -45,6 +45,7 @@ export function SoloConsole() {
           speed={vm.speed}
           setSpeed={vm.setSpeed}
           faultReason={vm.faultReason}
+          showDisableHint={!simMode && vm.enabled}
           reset={vm.resetArm}
           clearFault={vm.clearFault}
           zeroJoints={vm.zeroJoints}
