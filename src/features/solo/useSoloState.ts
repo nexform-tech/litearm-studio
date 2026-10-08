@@ -307,26 +307,24 @@ export function useSoloState() {
   // 切换指令在途时先按意图显示（modeIntent），仿真/未连接时退回本地选择。
   const realMode: ArmMode = s.modeIntent ?? broadcastMode ?? s.mode
 
-  const modes = (['位置', '零重力'] as const).map((name) => ({
-    key: name,
-    label: name === '位置' ? t('solo:modes.position') : t('solo:modes.drag'),
-    active: realMode === name,
-    onClick: () => {
-      if (!connected || !s.real) {
-        update({ mode: name, modeIntent: null })
-        return
-      }
-      update({ mode: name, modeIntent: name })
-      // 零重力模式 = 固件的 zero_g_start；位置模式 = 退出零重力（固件没有 hold 指令）。
-      const action = name === '零重力' ? armClient.zeroGStart() : armClient.zeroGStop()
-      action
-        .then(() => setLastError(null))
-        .catch((err) => {
-          reportError(name === '零重力' ? '切换到零重力模式' : '退出零重力模式', err)
-          setS((p) => ({ ...p, modeIntent: null }))
-        })
-    },
-  }))
+  // 零重力是一颗可反复开关的按钮：按一下进入（固件 zero_g_start），再按一下退出
+  // （zero_g_stop，固件没有 hold 指令）。目标模式由**当前显示的模式**取反，
+  // 而不是由点击那一刻写死的目标决定 —— 否则连点两下会发出两条同样的命令。
+  const toggleZeroGravity = () => {
+    const target: ArmMode = realMode === '零重力' ? '位置' : '零重力'
+    if (!connected || !s.real) {
+      update({ mode: target, modeIntent: null })
+      return
+    }
+    update({ mode: target, modeIntent: target })
+    const action = target === '零重力' ? armClient.zeroGStart() : armClient.zeroGStop()
+    action
+      .then(() => setLastError(null))
+      .catch((err) => {
+        reportError(target === '零重力' ? '进入零重力模式' : '退出零重力模式', err)
+        setS((p) => ({ ...p, modeIntent: null }))
+      })
+  }
 
   // 仿真模式始终展示虚拟姿态；实机模式已连接时展示同步的实际关节角；
   // 未连接时也展示滑条对应的角度，避免读数与滑条不一致。
@@ -539,7 +537,9 @@ export function useSoloState() {
     },
     // 使能按钮只吃一颗状态点的颜色：按钮皮肤统一在 ControlBar（描边 + 圆点）。
     enableDot: enableOn ? '#4ade80' : '#f5a524',
-    modes,
+    /** 零重力开关是否处于激活：实机跟随广播，指令在途时先跟随意图。 */
+    zeroGravity: realMode === '零重力',
+    toggleZeroGravity,
 
     joints,
     releaseOnly: s.releaseOnly,

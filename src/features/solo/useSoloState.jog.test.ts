@@ -130,10 +130,6 @@ function controlMovel() {
   return calls
 }
 
-function modeOf(result: { current: ReturnType<typeof useSoloState> }, key: string) {
-  return result.current.modes.find((m) => m.key === key)!
-}
-
 function expectJointPct(result: { current: ReturnType<typeof useSoloState> }, expected: number[]) {
   const actual = result.current.joints.map((j) => j.pct)
   expect(actual).toHaveLength(expected.length)
@@ -304,12 +300,34 @@ describe('useSoloState joint dispatch', () => {
   })
 })
 
+describe('useSoloState zero-gravity toggle', () => {
+  it('enters zero gravity on the first press and leaves it on the second', async () => {
+    const { result, rerender } = await renderSolo()
+    expect(result.current.zeroGravity).toBe(false)
+
+    act(() => result.current.toggleZeroGravity())
+    expect(result.current.zeroGravity).toBe(true)
+    expect(mocks.zeroGStart).toHaveBeenCalledTimes(1)
+    expect(mocks.zeroGStop).not.toHaveBeenCalled()
+
+    // 广播追上意图（固件进入 zero_gravity）后再按第二下：同一颗按钮必须退出零重力，
+    // 而不是再发一条 zero_g_start。
+    mocks.armState = enabledArm({ state: 'zero_gravity' })
+    act(() => rerender())
+    act(() => result.current.toggleZeroGravity())
+
+    expect(result.current.zeroGravity).toBe(false)
+    expect(mocks.zeroGStart).toHaveBeenCalledTimes(1)
+    expect(mocks.zeroGStop).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe('useSoloState mode-intent reconciliation', () => {
   it('clears the optimistic intent once the broadcast confirms it', async () => {
     const { result, rerender } = await renderSolo()
     expect(result.current.viewBadge).toBe('位置 · 实机')
 
-    act(() => modeOf(result, '零重力').onClick())
+    act(() => result.current.toggleZeroGravity())
     // 指令在途时先按意图显示（广播还是"位置"）。
     expect(result.current.viewBadge).toBe('零重力 · 实机')
     expect(mocks.zeroGStart).toHaveBeenCalledTimes(1)
@@ -330,7 +348,7 @@ describe('useSoloState mode-intent reconciliation', () => {
   it('drops the optimistic intent when the broadcast never confirms it', async () => {
     const { result } = await renderSolo()
 
-    act(() => modeOf(result, '零重力').onClick())
+    act(() => result.current.toggleZeroGravity())
     expect(result.current.viewBadge).toBe('零重力 · 实机')
 
     await act(async () => {
@@ -350,11 +368,11 @@ describe('useSoloState mode-intent reconciliation', () => {
   it('keeps a mode switch local in simulation instead of sending a zero-g command', async () => {
     const { result } = await renderSolo()
 
-    // 仿真模式是纯前端 dry-run：切到"零重力"只改本地显示，不能真去动机械臂。
+    // 仿真模式是纯前端 dry-run：按零重力只改本地显示，不能真去动机械臂。
     act(() => result.current.viewTabs.find((tab) => tab.key === 'sim')!.onClick())
-    act(() => modeOf(result, '零重力').onClick())
+    act(() => result.current.toggleZeroGravity())
 
-    expect(modeOf(result, '零重力').active).toBe(true)
+    expect(result.current.zeroGravity).toBe(true)
     expect(mocks.zeroGStart).not.toHaveBeenCalled()
     expect(mocks.zeroGStop).not.toHaveBeenCalled()
   })

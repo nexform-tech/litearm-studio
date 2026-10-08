@@ -1,8 +1,7 @@
 {
   "modes": {
     "position": "Position",
-    "drag": "Zero Gravity",
-    "label": "Control Mode"
+    "drag": "Zero Gravity"
   },
   "submodes": {
     "joint": "Joint",
@@ -21,6 +20,8 @@
     "resetTitle": "Clear latched drive faults and return the arm to an operable state",
     "home": "Go Home",
     "homeTitle": "Move to the zero pose (all axes 0 rad)",
+    "zeroGravityOnTitle": "Leave zero gravity: restore position control and hold the current pose",
+    "zeroGravityOffTitle": "Enter zero gravity: zero torque while energised, drag the arm by hand to teach",
     "readyPose": "Ready Pose",
     "readyPoseTitle": "Move to recommended ready pose Home",
     "speed": "Speed",

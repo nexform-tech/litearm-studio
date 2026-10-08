@@ -1,8 +1,7 @@
 {
   "modes": {
     "position": "位置",
-    "drag": "零重力",
-    "label": "控制模式"
+    "drag": "零重力"
   },
   "submodes": {
     "joint": "关节",
@@ -21,6 +20,8 @@
     "resetTitle": "清除驱动锁存故障，让机械臂回到可操作状态",
     "home": "回零点",
     "homeTitle": "移动至零位 (各轴 0 rad)",
+    "zeroGravityOnTitle": "关闭零重力：恢复位置控制并锁住当前姿态",
+    "zeroGravityOffTitle": "开启零重力：零力矩、仍使能，可用手直接拖动示教",
     "readyPose": "就绪姿态",
     "readyPoseTitle": "移动至推荐工作就绪姿态 Home",
     "speed": "速度",

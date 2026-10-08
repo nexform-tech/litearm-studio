@@ -16,7 +16,7 @@ const HOME_Q = [0, 0, 0, 0, 0, 0, 0]
 // 只在进入机械臂控制台、真正需要渲染模型时才下载，避免拖慢首屏与其它页面。
 const RobotViewport = lazy(() => import('@/components/RobotViewport').then((m) => ({ default: m.RobotViewport })))
 
-export function PreviewPanel(vm: { viewTabs: SegItem[]; viewBadge: string; preview: PreviewFeed; modes: SegItem[] }) {
+export function PreviewPanel(vm: { viewTabs: SegItem[]; viewBadge: string; preview: PreviewFeed }) {
   const { t } = useTranslation(['common', 'solo'])
   const [showAxes, setShowAxes] = useState(true)
   const [expanded, setExpanded] = useState(false)
@@ -159,16 +159,6 @@ export function PreviewPanel(vm: { viewTabs: SegItem[]; viewBadge: string; previ
         showAxes={showAxes}
         paused={expanded}
         hidden={expanded}
-      />
-
-      {/* 控制模式（位置 / 零重力）贴着 3D 视图：切模式时视线不用离开模型，参考图里
-          这一条也在预览下方。激活项用墨色胶囊，与右上角的视图页签区分开。 */}
-      <SegmentedControl
-        items={vm.modes}
-        ariaLabel={t('solo:modes.label')}
-        containerStyle={{ display: 'flex', gap: '0.1875rem', background: 'var(--line-soft)', borderRadius: '0.5625rem', padding: '0.1875rem' }}
-        itemStyle={{ flex: '1 1 0', padding: '0.4375rem 0.75rem', borderRadius: '0.4375rem', fontSize: '0.84375rem', color: 'var(--ink-subtle)', fontWeight: 500 }}
-        activeItemStyle={{ background: 'var(--chip)', color: 'var(--chip-fg)', fontWeight: 650 }}
       />
 
       <Dialog open={expanded} onOpenChange={setExpanded}>
