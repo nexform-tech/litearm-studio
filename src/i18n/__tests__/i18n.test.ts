@@ -33,7 +33,10 @@ describe('i18n Internationalization', () => {
     expect(i18n.t('nav:gripper')).toBe('夹爪')
     expect(i18n.t('nav:gripperTitle')).toBe('LiteGrip 夹爪')
     expect(i18n.t('gripper:actions.open')).toBe('张开')
-    expect(i18n.t('gripper:actions.resetStop')).toBe('复位急停')
+    expect(i18n.t('gripper:actions.resetStop')).toBe('解除急停')
+    // 错误提示点名的那颗按钮必须真的叫这个名字：「复位急停」改名时漏掉引用，现场就会
+    // 照着提示去找一颗不存在的按钮。机械臂的「复位」是控制器复位，两者不能再撞车。
+    expect(i18n.t('common:errors.gripperEstopped')).toContain(i18n.t('gripper:actions.resetStop'))
     expect(i18n.t('gripper:source.template')).toBe('标称模板（从未实测）')
     expect(i18n.t('gripper:gate.TEMPLATE')).toBe('标称模板')
     expect(i18n.t('gripper:state.grasping')).toBe('夹持中')
@@ -77,7 +80,8 @@ describe('i18n Internationalization', () => {
     expect(i18n.t('nav:gripper')).toBe('Gripper')
     expect(i18n.t('nav:gripperTitle')).toBe('LiteGrip Gripper')
     expect(i18n.t('gripper:actions.open')).toBe('Open')
-    expect(i18n.t('gripper:actions.resetStop')).toBe('Reset stop')
+    expect(i18n.t('gripper:actions.resetStop')).toBe('Release Stop')
+    expect(i18n.t('common:errors.gripperEstopped')).toContain(i18n.t('gripper:actions.resetStop'))
     expect(i18n.t('gripper:source.template')).toBe('Nominal template (never measured)')
     expect(i18n.t('gripper:gate.BLOCKED')).toBe('Blocked')
     expect(i18n.t('gripper:state.grasping')).toBe('Grasping')

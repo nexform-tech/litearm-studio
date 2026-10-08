@@ -53,7 +53,7 @@
     "grasp": "Grasp",
     "release": "Zero gravity",
     "stop": "Stop",
-    "resetStop": "Reset stop",
+    "resetStop": "Release Stop",
     "clearFault": "Clear Fault",
     "enable": "Enable",
     "disable": "Disable"

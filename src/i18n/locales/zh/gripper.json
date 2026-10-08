@@ -53,7 +53,7 @@
     "grasp": "夹取",
     "release": "零重力",
     "stop": "急停",
-    "resetStop": "复位急停",
+    "resetStop": "解除急停",
     "clearFault": "清除故障",
     "enable": "使能",
     "disable": "失能"

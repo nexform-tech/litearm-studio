@@ -240,7 +240,7 @@ The LiteGrip two-finger parallel gripper shares the arm's CAN bus and fills the 
 - Open / Close: drive to the open or closed mechanical stop;
 - Grasp: close with the **target force** limit, so a fragile part is not crushed;
 - Zero gravity: release the drive so the jaws can be moved by hand;
-- Stop / Reset stop / Clear Fault: stop immediately, release a latched stop, and clear a drive fault;
+- Stop / Release Stop / Clear Fault: stop immediately, release a latched stop, and clear a drive fault;
 - Gripper parameters (collapsed by default): **target force** (0–40 N) and **move speed** (5–150 mm/s);
 - Calibration: the panel names the calibration in effect (measured, nominal template, or factory fallback). With the nominal template it refuses millimetre targets until you run the zero calibration.
 

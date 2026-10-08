@@ -128,7 +128,7 @@
     "gripperLinkError": "The gripper's CAN interface is unavailable: {{message}}",
     "gripperFaultActive": "The gripper drive reports a fault: {{message}} — clear it once the cause is gone",
     "gripperCalibration": "The gripper's calibration does not allow this: {{message}}",
-    "gripperEstopped": "The gripper's stop is latched: remove the cause, then reset it",
+    "gripperEstopped": "The gripper's stop is latched: remove the cause, then press Release Stop",
     "gripperBusy": "The gripper is running another long operation (calibration); wait for it",
     "gripperBrowse": "Cannot open that folder: {{message}}",
     "activationServerError": "The activation service returned an error: try again later, or contact your supplier if it keeps failing",

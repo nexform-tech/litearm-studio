@@ -154,7 +154,7 @@ const FALLBACK_ZH: Record<string, string> = {
   gripperLinkError: '夹爪的 CAN 接口不可用：{{message}}',
   gripperFaultActive: '夹爪驱动报故障：{{message}}，请排除原因后清除故障',
   gripperCalibration: '夹爪标定不允许这个动作：{{message}}',
-  gripperEstopped: '夹爪急停已锁存：请排除原因后按「复位急停」',
+  gripperEstopped: '夹爪急停已锁存：请排除原因后按「解除急停」',
   gripperBusy: '夹爪正在执行另一项长操作（标定），请等它结束',
   gripperBrowse: '打不开这个目录：{{message}}',
   notActivated:
