@@ -549,8 +549,8 @@ export function useSoloState() {
           .catch((err) => reportError('回零点', err))
       }
     },
-    // 使能按钮只吃一个状态色：按钮皮肤统一在 ControlBar（描边 + 染色的电源图标）。
-    enableColor: enableOn ? '#4ade80' : '#f5a524',
+    // 使能按钮不再单独染色：六颗按钮的图标一律继承按钮文字色，由 ControlBar 统一画。
+    // 当前状态由按钮的绿底与文字（使能/失能）表示。
     /** 零重力开关是否处于激活：实机跟随广播，指令在途时先跟随意图。 */
     zeroGravity: realMode === '零重力',
     toggleZeroGravity,

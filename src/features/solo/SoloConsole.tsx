@@ -39,7 +39,6 @@ export function SoloConsole() {
       {/* MIDDLE: 操作 */}
       <div style={{ ...SCROLL_COLUMN, flex: '1 1 26rem', minWidth: '23rem', gap: '0.75rem' }}>
         <ControlBar
-          enableColor={vm.enableColor}
           enabled={vm.enabled}
           toggleEnable={vm.toggleEnable}
           speed={vm.speed}

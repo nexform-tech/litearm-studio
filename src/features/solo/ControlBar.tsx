@@ -39,9 +39,9 @@ const RESET_BUTTON = cn(BIG_BUTTON, 'border-transparent! bg-ok-solid! text-ok-so
 /** 使能开关：按下 = 机械臂已使能。已使能时压一层 `--ok-soft` 绿底 —— 与「复位」同一族的绿色
  *  表示"这台臂现在带电、在持位"，一眼可辨；实心只留给「复位」那一颗，一行里仍然只有一颗
  *  实心按钮。
- *  ⚠ 绿底在这里只表示**状态**，不表示"按了安全"：这一按是切断力矩、让臂掉下来。掉臂的警告
- *  只写在按钮的 tooltip（`disableTitle`）里，界面上没有常驻提示 —— 按钮自己的文字（已使能时
- *  写「失能」= 下一按会做什么）是唯一随手可见的线索。 */
+ *  ⚠ 六颗按钮的图标一律继承按钮文字色（不给任何一颗单独染色）：图标是"这颗按钮管什么"的标识，
+ *  不是状态灯。这一颗的状态由绿底 + 文字表示，文字写的是**下一按会做什么**（已使能时显示
+ *  「失能」），掉臂的警告在 tooltip（`disableTitle`）里。 */
 const ENABLE_BUTTON = cn(BIG_BUTTON, 'aria-pressed:bg-ok-soft! data-[state=on]:bg-ok-soft!')
 
 /** 零重力按一下进入、再按一下退出，所以是开关而不是一次性动作。按下时压一层蓝底：
@@ -54,7 +54,6 @@ const ZERO_G_BUTTON = cn(
 
 export function ControlBar({
   enabled,
-  enableColor,
   toggleEnable,
   speed,
   setSpeed,
@@ -67,8 +66,6 @@ export function ControlBar({
   readyPose,
 }: {
   enabled: boolean
-  /** 使能状态色：电源图标染成它（带电绿 / 未带电琥珀）。 */
-  enableColor: string
   toggleEnable: () => void
   speed: number
   setSpeed: (v: number) => void
@@ -104,7 +101,7 @@ export function ControlBar({
           title={enabled ? t('controlBar.disableTitle') : t('controlBar.enableTitle')}
           className={ENABLE_BUTTON}
         >
-          <Power className={ICON} style={{ color: enableColor }} />
+          <Power className={ICON} />
           {enabled ? t('controlBar.disable') : t('controlBar.enable')}
         </Toggle>
 
