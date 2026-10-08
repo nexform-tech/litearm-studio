@@ -32,17 +32,21 @@ const BIG_BUTTON =
  *  标签偏大，带上 `size-3.5` 这个类正好让那条规则让位（选择器靠 `class*=size-` 判断）。 */
 const ICON = 'size-3.5 flex-none'
 
-/** 「复位」是这一行唯一的主操作：`--ok-solid` 实心绿，其余五颗走 outline 变体，
- *  一行里只留一颗实心，层次才不会糊。 */
-const RESET_BUTTON = cn(BIG_BUTTON, 'border-transparent! bg-ok-solid! text-ok-solid-fg! hover:bg-ok-solid/85!')
-
-/** 使能开关：按下 = 机械臂已使能。已使能时压一层 `--ok-soft` 绿底 —— 与「复位」同一族的绿色
- *  表示"这台臂现在带电、在持位"，一眼可辨；实心只留给「复位」那一颗，一行里仍然只有一颗
- *  实心按钮。
+/** 使能开关：按下 = 机械臂已使能，这时它才是这一行**唯一**的实心按钮 —— `--ok-solid` 实心绿、
+ *  文字与图标反白，一眼看出"这台臂现在带电、在持位"。其余五颗（含「复位」）都走 outline 变体，
+ *  一行里只留一颗实心，层次才不会糊；实心换了主人，是因为它标记的是**状态**，而六颗里只有这一颗
+ *  有状态可标。
  *  ⚠ 六颗按钮的图标一律继承按钮文字色（不给任何一颗单独染色）：图标是"这颗按钮管什么"的标识，
- *  不是状态灯。这一颗的状态由绿底 + 文字表示，文字写的是**下一按会做什么**（已使能时显示
- *  「失能」），掉臂的警告在 tooltip（`disableTitle`）里。 */
-const ENABLE_BUTTON = cn(BIG_BUTTON, 'aria-pressed:bg-ok-soft! data-[state=on]:bg-ok-soft!')
+ *  不是状态灯。反白是随这颗按钮的文字色走的，不是单独给图标上色。
+ *  ⚠ 这个绿底说的是状态，不是"按了安全"：按下去是切断力矩、让臂掉下来。文字写的是**下一按会
+ *  做什么**（已使能时显示「失能」），掉臂的警告在 tooltip（`disableTitle`）里。 */
+const ENABLE_BUTTON = cn(
+  BIG_BUTTON,
+  'aria-pressed:border-transparent! aria-pressed:bg-ok-solid! aria-pressed:text-ok-solid-fg!',
+  'aria-pressed:hover:bg-ok-solid/85!',
+  'data-[state=on]:border-transparent! data-[state=on]:bg-ok-solid! data-[state=on]:text-ok-solid-fg!',
+  'data-[state=on]:hover:bg-ok-solid/85!',
+)
 
 /** 零重力按一下进入、再按一下退出，所以是开关而不是一次性动作。按下时压一层蓝底：
  *  它和使能的绿底必须一眼分得开 —— 绿色是"带电锁位"，蓝色是"零力矩、可以用手拖"。 */
@@ -116,13 +120,14 @@ export function ControlBar({
           {t('modes.drag')}
         </Toggle>
 
-        {/* 复位不锁状态：故障发生时它必须一点就有，不该先去想为什么它是灰的。 */}
+        {/* 复位不锁状态：故障发生时它必须一点就有，不该先去想为什么它是灰的。
+            它不再是实心绿那一颗 —— 实心让给"已使能"这个状态（见 ENABLE_BUTTON）。 */}
         <Button
           type="button"
           variant="outline"
           onClick={reset}
           title={t('controlBar.resetTitle')}
-          className={RESET_BUTTON}
+          className={BIG_BUTTON}
         >
           <RotateCcw className={ICON} />
           {t('controlBar.reset')}
