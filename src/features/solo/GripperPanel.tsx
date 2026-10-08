@@ -1,12 +1,16 @@
 import { useTranslation } from 'react-i18next'
 import { useState } from 'react'
 import {
+  Feather,
   Gauge,
+  Grab,
   Maximize2,
   Minimize2,
   Power,
   RotateCcw,
   ShieldAlert,
+  SlidersHorizontal,
+  Thermometer,
   TriangleAlert,
   Wrench,
 } from 'lucide-react'
@@ -34,73 +38,17 @@ const WARNING_KEYS: Record<string, string> = {
   missing: 'gripper:source.missingWarning',
 }
 
-function Stat({ label, value, unit }: { label: string; value: string; unit?: string }) {
-  return (
-    <div className="flex min-w-0 flex-col gap-0.5">
-      <div className="truncate text-[0.625rem] font-medium text-muted-foreground">{label}</div>
-      <div className="truncate font-mono text-[0.8125rem] leading-none font-bold text-foreground">
-        {value}
-        {unit ? <span className="ml-0.5 text-[0.59375rem] font-medium text-muted-foreground">{unit}</span> : null}
-      </div>
-    </div>
-  )
-}
-
-function Param({
-  id, label, value, unit, min, max, step, disabled, onChange, onCommit,
-}: {
-  id: string
-  label: string
-  value: number
-  unit: string
-  min: number
-  max: number
-  step: number
-  disabled: boolean
-  /** 拖动中只改本地值：每像素一条 `set_motion` 是白流量，而且会把回读值甩回去。 */
-  onChange: (value: number) => void
-  onCommit: (value: number) => void
-}) {
-  return (
-    <div className="flex items-center gap-2">
-      <span className="w-[4.5rem] flex-none text-[0.6875rem] font-medium text-ink-strong">{label}</span>
-      <Slider
-        id={`${id}-slider`}
-        data-testid={`${id}-slider`}
-        aria-label={label}
-        className="min-w-0 flex-1"
-        value={[value]}
-        min={min}
-        max={max}
-        step={step}
-        disabled={disabled}
-        onValueChange={([v]) => onChange(v)}
-        onValueCommit={([v]) => onCommit(v)}
-      />
-      <span
-        id={id}
-        data-testid={id}
-        className="w-[4.25rem] flex-none text-right font-mono text-[0.6875rem] font-semibold text-foreground"
-      >
-        {value} {unit}
-      </span>
-    </div>
-  )
-}
-
 function sourceLabel(vm: GripperPanelVm, t: (key: string) => string): string {
   const source = vm.conn?.source
   return source ? t(SOURCE_KEYS[source]) : t('gripper:source.none')
 }
 
-/** 装配方向没有"未声明"态：daemon 永远给一个方向（默认正装）。 */
 function mountLabel(vm: GripperPanelVm, t: (key: string) => string): string {
   const mount = vm.conn?.mount
   if (!mount) return '—'
   return t(`gripper:connection.mount${mount === 'reverse' ? 'Reverse' : 'Normal'}`)
 }
 
-/** CAN 通道与 CAN ID：从面板顶部的常驻行挪进这里，设置页本来就有一份完整配置。 */
 function connectionLine(vm: GripperPanelVm, t: (key: string) => string): string {
   const channel = vm.conn?.channel || '—'
   const canId = vm.conn ? `0x${vm.conn.canId.toString(16).toUpperCase().padStart(2, '0')}` : '—'
@@ -122,7 +70,7 @@ function connectionLine(vm: GripperPanelVm, t: (key: string) => string): string 
  * 同时挂两处会让每条告警弹两次。
  */
 export function GripperPanel() {
-  const { t } = useTranslation(['common', 'gripper'])
+  const { t } = useTranslation(['common', 'gripper', 'nav'])
   const vm = useGripperPanel()
   const state = vm.state
   // ⚠ 通道选在这里, 是因为操作员在**这一页**驱动夹爪: 为了换一条 CAN 线跑回设置页,
@@ -146,49 +94,61 @@ export function GripperPanel() {
   const positionText = state?.positionMm == null ? t('gripper:aperture.unknown') : state.positionMm.toFixed(1)
 
   return (
+    /* 撑满右列剩余高度：卡片吃掉余量，多出来的空间由 `justify-between` 均分到
+       各段之间（和关节面板把余量分给各行是同一个思路）—— 摊在一处就成了空洞。
+       段内间距仍是固定值，所以窗口变高时是整块变松，而不是某一行被拉长。 */
     <Card
       id="gripper-panel"
       data-testid="gripper-panel"
-      className="flex-1 justify-between gap-3 rounded-[0.875rem] p-4"
+      className="flex flex-1 flex-col justify-between gap-3 rounded-[0.875rem] border border-line bg-card p-3.5 shadow-sm"
     >
-      {/* 标题：状态徽标 + 闸门徽标，一行说清"能不能动" */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="truncate text-[0.9375rem] leading-tight font-semibold text-foreground">
-          {t('gripper:page.title')}
+      {/* ── 顶部标题与通讯状态 ─────────────────────────────────── */}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line pb-2.5">
+        <div className="flex items-center gap-2">
+          <div className="flex size-6 items-center justify-center rounded-md bg-primary/10 text-primary">
+            <Grab size="0.875rem" />
+          </div>
+          <div className="text-[0.875rem] font-bold text-foreground">
+            {t('gripper:page.title')}
+          </div>
         </div>
-        <Badge
-          id="gripper-status"
-          data-testid="gripper-status"
-          variant={statusTone}
-          className="h-auto rounded-full px-2 py-0.5 text-[0.65625rem] font-semibold"
-        >
-          {vm.present
-            ? vm.connected
-              ? t('common:connected')
-              : vm.status === 'connecting'
-                ? t('common:connecting')
-                : vm.status === 'error'
-                  ? t('common:connectFailed')
-                  : t('common:disconnected')
-            : t('common:statusOffline')}
-        </Badge>
-        <Badge
-          id="gripper-gate"
-          data-testid="gripper-gate"
-          variant={gateKey === 'READY' ? 'success' : gateKey === 'BLOCKED' ? 'destructive' : 'outline'}
-          className={`h-auto rounded-full px-2 py-0.5 text-[0.65625rem] font-semibold ${
-            gateKey === 'READY' ? '' : 'border-warn-line bg-warn-soft text-warn'
-          }`}
-        >
-          {t(`gripper:gate.${gateKey}`)}
-        </Badge>
+        <div className="flex items-center gap-1.5">
+          <Badge
+            id="gripper-status"
+            data-testid="gripper-status"
+            variant={statusTone}
+            className="h-auto rounded-full px-2 py-0.5 text-[0.625rem] font-semibold"
+          >
+            {vm.present
+              ? vm.connected
+                ? t('common:connected')
+                : vm.status === 'connecting'
+                  ? t('common:connecting')
+                  : vm.status === 'error'
+                    ? t('common:connectFailed')
+                    : t('common:disconnected')
+              : t('common:statusOffline')}
+          </Badge>
+          <Badge
+            id="gripper-gate"
+            data-testid="gripper-gate"
+            variant={gateKey === 'READY' ? 'success' : gateKey === 'BLOCKED' ? 'destructive' : 'outline'}
+            className={`h-auto rounded-full px-2 py-0.5 text-[0.625rem] font-semibold ${
+              gateKey === 'READY' ? '' : 'border-warn-line bg-warn-soft text-warn'
+            }`}
+          >
+            {t(`gripper:gate.${gateKey}`)}
+          </Badge>
+        </div>
       </div>
 
-      {/* 连接与使能 */}
-      <div className="flex flex-wrap gap-1.5">
-        {/* CAN 通道: 就在这里换线, 不必回设置页。
-            ⚠ 连着的时候锁住 —— daemon 会拒"先断开再改通道/ID"之外的一切改法
-            (`GripperSession._cmd_connect`), 在这里放开只会让操作员撞一条拒绝。 */}
+      {/* CAN 通道: 就在这里换线, 不必回设置页。
+          ⚠ 连着的时候锁住 —— daemon 会拒"先断开再改通道/ID"之外的一切改法
+          (`GripperSession._cmd_connect`), 在这里放开只会让操作员撞一条拒绝。 */}
+      <div className="flex items-center gap-2">
+        <span className="flex-none text-[0.6875rem] font-medium text-ink-muted">
+          {t('gripper:connection.channel')}
+        </span>
         <Select
           value={channel}
           onValueChange={setPicked}
@@ -199,7 +159,7 @@ export function GripperPanel() {
             data-testid="gripper-panel-channel"
             aria-label={t('gripper:connection.channel')}
             title={vm.connected ? t('gripper:settings.needsDisconnect') : t('gripper:connection.connectHint')}
-            className="h-[1.875rem] w-[7.5rem] font-mono text-xs"
+            className="h-7.5 min-w-0 flex-1 rounded-md font-mono text-[0.71875rem]"
           >
             <SelectValue placeholder="—" />
           </SelectTrigger>
@@ -211,76 +171,94 @@ export function GripperPanel() {
             ))}
           </SelectContent>
         </Select>
-        <Button
-          id="gripper-connect"
-          data-testid="gripper-connect"
-          size="sm"
-          disabled={!vm.present || vm.connected || vm.status === 'connecting'}
-          title={t('gripper:connection.connectHint')}
-          onClick={() => vm.connect(channel ? { channel } : {})}
-        >
-          {t('nav:connect')}
-        </Button>
-        <Button
-          id="gripper-disconnect"
-          data-testid="gripper-disconnect"
-          size="sm"
-          variant="outline"
-          disabled={!vm.present || vm.status === 'disconnected'}
-          onClick={() => vm.disconnect()}
-        >
-          {t('common:disconnect')}
-        </Button>
-        <div className="flex-1" />
-        <Button
-          id="gripper-enable"
-          data-testid="gripper-enable"
-          size="sm"
-          variant="outline"
-          disabled={!vm.connected || vm.enabled || vm.estopped}
-          onClick={vm.enable}
-        >
-          <Power size="0.8125rem" /> {t('gripper:actions.enable')}
-        </Button>
-        <Button
-          id="gripper-disable"
-          data-testid="gripper-disable"
-          size="sm"
-          variant="outline"
-          disabled={!vm.connected || !vm.enabled}
-          onClick={vm.disable}
-        >
-          {t('gripper:actions.disable')}
-        </Button>
       </div>
 
-      {/* 为什么按不动：组件必须说出原因，而不是只灰掉（§6.3）。
-          没有夹爪会话时不出这一块 —— daemon 侧根本没有夹爪的构建（Windows、
-          `--no-gripper`）不需要在控制页反复解释，状态徽标已经说了"离线"。 */}
+      {/* ── 通讯与使能动作行 ─────────────────────────────────── */}
+      <div className="grid grid-cols-2 gap-2">
+        <div className="flex rounded-lg border border-line bg-background p-0.5 shadow-xs">
+          <Button
+            id="gripper-connect"
+            data-testid="gripper-connect"
+            size="sm"
+            variant={vm.connected ? 'ghost' : 'default'}
+            className="h-7.5 flex-1 rounded-md px-2 text-[0.71875rem] font-medium"
+            disabled={!vm.present || vm.connected || vm.status === 'connecting'}
+            title={t('gripper:connection.connectHint')}
+            onClick={() => vm.connect(channel ? { channel } : {})}
+          >
+            {t('nav:connect')}
+          </Button>
+          <Button
+            id="gripper-disconnect"
+            data-testid="gripper-disconnect"
+            size="sm"
+            variant="ghost"
+            className="h-7.5 flex-1 rounded-md px-2 text-[0.71875rem] font-medium text-muted-foreground hover:text-foreground"
+            disabled={!vm.present || vm.status === 'disconnected'}
+            onClick={() => vm.disconnect()}
+          >
+            {t('common:disconnect')}
+          </Button>
+        </div>
+
+        <div className="flex rounded-lg border border-line bg-background p-0.5 shadow-xs">
+          <Button
+            id="gripper-enable"
+            data-testid="gripper-enable"
+            size="sm"
+            variant={vm.enabled ? 'default' : 'ghost'}
+            className="h-7.5 flex-1 rounded-md px-2 text-[0.71875rem] font-medium"
+            disabled={!vm.connected || vm.enabled || vm.estopped}
+            onClick={vm.enable}
+          >
+            <Power size="0.6875rem" />
+            {t('gripper:actions.enable')}
+          </Button>
+          <Button
+            id="gripper-disable"
+            data-testid="gripper-disable"
+            size="sm"
+            variant="ghost"
+            className="h-7.5 flex-1 rounded-md px-2 text-[0.71875rem] font-medium text-muted-foreground hover:text-foreground"
+            disabled={!vm.connected || !vm.enabled}
+            onClick={vm.disable}
+          >
+            {t('gripper:actions.disable')}
+          </Button>
+        </div>
+      </div>
+
+      {/* 禁用原因提示 */}
       {vm.disabledReason ? (
         <div
           id="gripper-disabled-reason"
           data-testid="gripper-disabled-reason"
-          className="rounded-lg border border-warn-line bg-warn-soft px-2.5 py-1.5 text-[0.6875rem] leading-relaxed text-warn"
+          className="flex items-center gap-1.5 rounded-lg border border-warn-line bg-warn-soft px-2.5 py-1.5 text-[0.65625rem] leading-snug text-warn"
         >
-          {vm.disabledReason}
+          <TriangleAlert size="0.75rem" className="flex-none" />
+          <span className="truncate">{vm.disabledReason}</span>
         </div>
       ) : null}
 
-      {/* 开度：主控块按自身高度显示，右列多出来的高度由卡片按 between 均匀分给
-          各段（见 Card 的 justify-between），而不是把一小撮内容悬在一大块空白中间 */}
-      <div className="flex min-h-[7.5rem] flex-none flex-col justify-center gap-2 rounded-xl border bg-muted/30 px-3 py-3">
-        <div className="flex items-baseline justify-between gap-2">
-          <span className="text-[0.75rem] font-semibold text-ink">{t('gripper:aperture.title')}</span>
-          <span
-            id="gripper-position"
-            data-testid="gripper-position"
-            className="font-mono text-[1.5rem] leading-none font-bold text-foreground"
-          >
-            {positionText}
-            <span className="ml-0.5 text-[0.625rem] font-medium text-muted-foreground">mm</span>
-          </span>
+      {/* 开度位置主控区 */}
+      <div className="flex flex-col gap-2 rounded-xl border border-line/80 bg-background p-2.5 shadow-xs">
+        <div className="flex items-baseline justify-between">
+          <div className="flex items-center gap-1.5 text-[0.75rem] font-semibold text-ink-strong">
+            <SlidersHorizontal size="0.75rem" className="text-muted-foreground" />
+            <span>{t('gripper:aperture.title')}</span>
+          </div>
+          <div className="flex items-baseline">
+            <span
+              id="gripper-position"
+              data-testid="gripper-position"
+              className="font-mono text-[1.5rem] leading-none font-extrabold tracking-tight text-foreground"
+            >
+              {positionText}
+            </span>
+            <span className="ml-1 text-[0.6875rem] font-medium text-muted-foreground">mm</span>
+          </div>
         </div>
+
         <Slider
           id="gripper-aperture"
           data-testid="gripper-aperture"
@@ -288,218 +266,340 @@ export function GripperPanel() {
           value={[vm.aperture]}
           max={vm.travelMm}
           disabled={!vm.canControl}
-          onValueChange={([v]) => {
-            // 拖动中只改本地值；"正在拖动"由指针事件决定（见下），不由值变化推断。
-            // ⚠ 键盘步进时 Radix 先发 onValueCommit 再发 onValueChange（实测），
-            // 所以这里既不能 setDragging(true) 也不能靠调用顺序来判断拖动结束。
-            vm.setAperture(v)
-          }}
+          onValueChange={([v]) => vm.setAperture(v)}
           onValueCommit={([v]) => vm.commitAperture(v)}
           onPointerDown={() => vm.setDragging(true)}
           onPointerUp={() => vm.setDragging(false)}
           onPointerCancel={() => vm.setDragging(false)}
         />
-        <div className="flex justify-between font-mono text-[0.59375rem] text-muted-foreground/70">
-          <div>0</div>
-          <div>{t('gripper:aperture.open', { max: vm.travelMm.toFixed(0) })}</div>
+
+        <div className="flex items-center justify-between gap-2 text-[0.625rem]">
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              disabled={!vm.canControl}
+              onClick={() => {
+                vm.setAperture(0)
+                vm.commitAperture(0)
+              }}
+              className="cursor-pointer rounded border border-line bg-muted/40 px-2 py-0.5 font-mono text-[0.59375rem] font-medium text-ink-muted transition-colors hover:bg-muted disabled:opacity-40"
+            >
+              0%
+            </button>
+            <button
+              type="button"
+              disabled={!vm.canControl}
+              onClick={() => {
+                const half = Math.round(vm.travelMm / 2)
+                vm.setAperture(half)
+                vm.commitAperture(half)
+              }}
+              className="cursor-pointer rounded border border-line bg-muted/40 px-2 py-0.5 font-mono text-[0.59375rem] font-medium text-ink-muted transition-colors hover:bg-muted disabled:opacity-40"
+            >
+              50%
+            </button>
+            <button
+              type="button"
+              disabled={!vm.canControl}
+              onClick={() => {
+                vm.setAperture(vm.travelMm)
+                vm.commitAperture(vm.travelMm)
+              }}
+              className="cursor-pointer rounded border border-line bg-muted/40 px-2 py-0.5 font-mono text-[0.59375rem] font-medium text-ink-muted transition-colors hover:bg-muted disabled:opacity-40"
+            >
+              100%
+            </button>
+          </div>
+          <span className="font-mono text-muted-foreground">
+            {t('gripper:aperture.open', { max: vm.travelMm.toFixed(0) })}
+          </span>
         </div>
       </div>
 
-      {/* 四个动作：常驻，不折叠 */}
-      <div className="grid grid-cols-2 gap-1.5">
+      {/* 四大物理动作矩阵 */}
+      <div className="grid grid-cols-2 gap-2">
         <Button
           id="gripper-open"
           data-testid="gripper-open"
           variant="outline"
-          className="h-[2.125rem] gap-1.5 rounded-lg text-[0.78125rem] font-semibold"
+          className="h-9 gap-1.5 rounded-lg border-line bg-background text-[0.75rem] font-semibold text-ink-strong shadow-xs transition-all hover:border-line-strong hover:bg-muted/30"
           disabled={!vm.canDirection}
           onClick={vm.open}
         >
-          <Maximize2 size="0.8125rem" /> {t('gripper:actions.open')}
+          <Maximize2 size="0.75rem" />
+          {t('gripper:actions.open')}
         </Button>
         <Button
           id="gripper-close"
           data-testid="gripper-close"
-          className="h-[2.125rem] gap-1.5 rounded-lg text-[0.78125rem] font-semibold"
+          variant="outline"
+          className="h-9 gap-1.5 rounded-lg border-line bg-background text-[0.75rem] font-semibold text-ink-strong shadow-xs transition-all hover:border-line-strong hover:bg-muted/30"
           disabled={!vm.canDirection}
           onClick={vm.close}
         >
-          <Minimize2 size="0.8125rem" /> {t('gripper:actions.close')}
+          <Minimize2 size="0.75rem" />
+          {t('gripper:actions.close')}
         </Button>
         <Button
           id="gripper-grasp"
           data-testid="gripper-grasp"
           variant="outline"
-          className="h-[2.125rem] rounded-lg text-[0.78125rem] font-semibold"
+          className="h-9 gap-1.5 rounded-lg border-line bg-background text-[0.75rem] font-semibold text-ink-strong shadow-xs transition-all hover:border-line-strong hover:bg-muted/30"
           disabled={!vm.canControl}
           onClick={vm.grasp}
         >
+          <Grab size="0.75rem" />
           {t('gripper:actions.grasp')}
         </Button>
         <Button
           id="gripper-release"
           data-testid="gripper-release"
           variant="outline"
-          className="h-[2.125rem] rounded-lg text-[0.78125rem] font-semibold"
+          className="h-9 gap-1.5 rounded-lg border-line bg-background text-[0.75rem] font-semibold text-ink-strong shadow-xs transition-all hover:border-line-strong hover:bg-muted/30"
           disabled={!vm.connected || !vm.enabled}
           onClick={vm.release}
         >
+          <Feather size="0.75rem" />
           {t('gripper:actions.release')}
         </Button>
       </div>
 
-      {/* 急停：始终可达，移动中也不排队（§6.3） */}
-      <div className="flex gap-1.5">
+      {/* 安全与急停工具条 */}
+      <div className="flex gap-2">
         <Button
           id="gripper-stop"
           data-testid="gripper-stop"
           variant="destructive"
-          className="h-[2.125rem] flex-1 gap-1.5 rounded-lg text-[0.78125rem] font-bold"
+          className="h-8.5 flex-1 gap-1.5 rounded-lg text-[0.75rem] font-bold shadow-xs"
           disabled={!vm.present}
           title={t('gripper:actions.stop')}
           onClick={vm.stop}
         >
-          <ShieldAlert size="0.8125rem" /> {t('gripper:actions.stop')}
+          <ShieldAlert size="0.75rem" />
+          {t('gripper:actions.stop')}
         </Button>
         <Button
           id="gripper-reset-stop"
           data-testid="gripper-reset-stop"
           variant="outline"
-          className="h-[2.125rem] gap-1.5 rounded-lg text-[0.75rem] font-semibold"
+          className="h-8.5 gap-1 rounded-lg px-2.5 text-[0.71875rem] font-medium"
           disabled={!vm.present || !vm.estopped}
           onClick={vm.resetStop}
         >
-          <RotateCcw size="0.75rem" /> {t('gripper:actions.resetStop')}
+          <RotateCcw size="0.6875rem" />
+          {t('gripper:actions.resetStop')}
         </Button>
         <Button
           id="gripper-clear-fault"
           data-testid="gripper-clear-fault"
           variant="outline"
-          className="h-[2.125rem] gap-1.5 rounded-lg text-[0.75rem] font-semibold"
+          className="h-8.5 gap-1 rounded-lg px-2.5 text-[0.71875rem] font-medium"
           disabled={!vm.connected}
           onClick={vm.clearFault}
         >
-          <TriangleAlert size="0.75rem" /> {t('gripper:actions.clearFault')}
+          <TriangleAlert size="0.6875rem" />
+          {t('gripper:actions.clearFault')}
         </Button>
       </div>
 
       {busyText ? (
-        <div id="gripper-busy" data-testid="gripper-busy" className="text-[0.6875rem] text-muted-foreground">
-          {busyText}
+        <div id="gripper-busy" data-testid="gripper-busy" className="flex items-center gap-1.5 text-[0.65625rem] text-muted-foreground">
+          <div className="size-1.5 animate-ping rounded-full bg-primary" />
+          <span>{busyText}</span>
         </div>
       ) : null}
 
       {probing && vm.calib ? (
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-1.5 rounded-lg border border-line bg-muted/20 p-2">
           <Progress value={Math.round(vm.calib.progress * 100)} />
           <div className="text-[0.625rem] text-muted-foreground">{vm.calib.detail}</div>
         </div>
       ) : null}
 
-      {/* 读数：只留会改变操作决策的量。驱动器状态已由标题旁的徽标给出，
-          不在读数格里再重复一遍。 */}
-      <div className="grid grid-cols-3 gap-2 border-t border-line pt-2.5">
-        <Stat label={t('gripper:readout.force')} value={state ? state.forceN.toFixed(2) : '--'} unit="N" />
-        <Stat label={t('gripper:readout.torque')} value={state ? state.torqueNm.toFixed(2) : '--'} unit="Nm" />
-        <Stat label={t('gripper:readout.velocity')} value={state ? state.velocityMmS.toFixed(1) : '--'} unit="mm/s" />
-      </div>
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[0.625rem] text-muted-foreground">
-        <span className="flex items-center gap-1">
-          <Gauge size="0.6875rem" />
-          <span
-            id="gripper-temps"
-            data-testid="gripper-temps"
-            className="font-mono"
-            title={t('gripper:readout.temperature')}
-          >
-            MOS {state?.temps.mosTemp ?? '—'} °C · COIL {state?.temps.coilTemp ?? '—'} °C
-          </span>
-        </span>
-        {state && !state.fresh ? <span className="text-warn">{t('gripper:readout.stale')}</span> : null}
-        {state && state.errorCode !== 0 && state.errorCode !== 1 ? (
-          <span className="text-destructive">
-            {t('gripper:readout.errorCode')}: 0x{state.errorCode.toString(16).toUpperCase()}
-          </span>
-        ) : null}
-        {vm.conn?.error ? (
-          <span className="truncate text-destructive" title={vm.conn.error}>
-            {vm.conn.error}
-          </span>
-        ) : null}
-      </div>
-
-      {/* 参数：默认收起 —— 它们是"调一次"的，操作要按的是上面那四个按钮 */}
-      <details className="border-t border-line pt-2.5">
-        <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[0.6875rem] font-semibold text-ink-muted">
-          <Wrench size="0.75rem" />
-          {t('gripper:params.title')}
-          <span className="ml-auto font-mono font-normal text-muted-foreground">
-            {vm.forceN} N · {vm.speedMmS} mm/s
-          </span>
-        </summary>
-        <div className="mt-2 flex flex-col gap-2">
-          <Param
-            id="gripper-force-value"
-            label={t('gripper:params.targetForce')}
-            value={vm.forceN}
-            unit="N"
-            min={0}
-            max={FORCE_MAX_N}
-            step={1}
-            disabled={!vm.connected}
-            onChange={vm.setForceN}
-            onCommit={vm.commitForce}
-          />
-          <Param
-            id="gripper-speed-value"
-            label={t('gripper:params.moveSpeed')}
-            value={vm.speedMmS}
-            unit="mm/s"
-            min={SPEED_MIN_MM_S}
-            max={SPEED_MAX_MM_S}
-            step={1}
-            disabled={!vm.connected}
-            onChange={vm.setSpeedMmS}
-            onCommit={vm.commitSpeed}
-          />
+      {/* 实时遥测指标与芯片温度 */}
+      <div className="overflow-hidden rounded-lg border border-line bg-background shadow-xs">
+        <div className="grid grid-cols-3 divide-x divide-line py-2.5">
+          <div className="flex flex-col items-center justify-center px-1">
+            <span className="text-[0.625rem] font-medium text-muted-foreground">{t('gripper:readout.force')}</span>
+            <span className="font-mono text-[0.875rem] font-bold text-foreground">
+              {state ? state.forceN.toFixed(2) : '--'}
+              <span className="ml-0.5 text-[0.625rem] font-normal text-muted-foreground">N</span>
+            </span>
+          </div>
+          <div className="flex flex-col items-center justify-center px-1">
+            <span className="text-[0.625rem] font-medium text-muted-foreground">{t('gripper:readout.torque')}</span>
+            <span className="font-mono text-[0.875rem] font-bold text-foreground">
+              {state ? state.torqueNm.toFixed(2) : '--'}
+              <span className="ml-0.5 text-[0.625rem] font-normal text-muted-foreground">Nm</span>
+            </span>
+          </div>
+          <div className="flex flex-col items-center justify-center px-1">
+            <span className="text-[0.625rem] font-medium text-muted-foreground">{t('gripper:readout.velocity')}</span>
+            <span className="font-mono text-[0.875rem] font-bold text-foreground">
+              {state ? state.velocityMmS.toFixed(1) : '--'}
+              <span className="ml-0.5 text-[0.625rem] font-normal text-muted-foreground">mm/s</span>
+            </span>
+          </div>
         </div>
-      </details>
 
-      {/* 标定与连接：来源、两个端点角、装配方向、CAN 通道都在这里，折叠的是**显示**
-          而不是数据（§6.3）；闸门原因只在非就绪时出现，就绪时徽标已经说清了。 */}
-      <details className="group border-t border-line pt-2.5">
-        <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[0.6875rem] font-semibold text-ink-muted">
-          <Gauge size="0.75rem" />
-          {t('gripper:source.label')}
-          <span className="font-normal text-muted-foreground">·</span>
-          <span id="gripper-source" data-testid="gripper-source" className="truncate font-normal text-muted-foreground">
-            {sourceLabel(vm, t)}
+        <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5 border-t border-line/70 bg-muted/20 px-2.5 py-1.5 text-[0.625rem] text-muted-foreground">
+          <span className="flex items-center gap-1">
+            <Thermometer size="0.6875rem" />
+            <span
+              id="gripper-temps"
+              data-testid="gripper-temps"
+              className="font-mono"
+              title={t('gripper:readout.temperature')}
+            >
+              MOS {state?.temps.mosTemp ?? '—'} °C · COIL {state?.temps.coilTemp ?? '—'} °C
+            </span>
           </span>
-        </summary>
-        <div className="mt-2 flex flex-col gap-2">
+          {state && !state.fresh ? <span className="text-warn">{t('gripper:readout.stale')}</span> : null}
+          {state && state.errorCode !== 0 && state.errorCode !== 1 ? (
+            <span className="text-destructive font-mono">
+              {t('gripper:readout.errorCode')}: 0x{state.errorCode.toString(16).toUpperCase()}
+            </span>
+          ) : null}
+          {vm.conn?.error ? (
+            <span className="truncate text-destructive" title={vm.conn.error}>
+              {vm.conn.error}
+            </span>
+          ) : null}
+        </div>
+      </div>
+
+      {/* ── 配置与标定区 (Configuration & Diagnostics) ─────────
+          参数与标定各是一组，中间一条细线；这个盒子本身不拉长 —— 多余的高度
+          归卡片上的 `justify-between`，均匀分给各段之间，而不是摊在这里，
+          让两段各自看着像没写完。 */}
+      <div className="flex flex-col gap-3 rounded-xl border border-line bg-muted/35 p-3">
+        {/* 参数调节组 */}
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center text-xs font-semibold text-ink-strong">
+            <span className="flex items-center gap-1.5">
+              <Wrench size="0.8125rem" className="text-muted-foreground" />
+              {t('gripper:params.title')}
+            </span>
+          </div>
+
+          {/* 两行的数值列等宽：不然两根滑条的右端错开，看起来像没对齐。 */}
+          <div className="flex flex-col gap-2 px-0.5">
+            <div className="flex items-center gap-2.5">
+              <span className="w-16 flex-none text-xs font-medium text-ink-muted">
+                {t('gripper:params.targetForce')}
+              </span>
+              <Slider
+                id="gripper-force-value-slider"
+                data-testid="gripper-force-value-slider"
+                aria-label={t('gripper:params.targetForce')}
+                className="min-w-0 flex-1"
+                value={[vm.forceN]}
+                min={0}
+                max={FORCE_MAX_N}
+                step={1}
+                disabled={!vm.connected}
+                onValueChange={([v]) => vm.setForceN(v)}
+                onValueCommit={([v]) => vm.commitForce(v)}
+              />
+              <span
+                id="gripper-force-value"
+                data-testid="gripper-force-value"
+                className="w-[4.25rem] flex-none text-right font-mono text-xs font-bold text-foreground"
+              >
+                {vm.forceN} N
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2.5">
+              <span className="w-16 flex-none text-xs font-medium text-ink-muted">
+                {t('gripper:params.moveSpeed')}
+              </span>
+              <Slider
+                id="gripper-speed-value-slider"
+                data-testid="gripper-speed-value-slider"
+                aria-label={t('gripper:params.moveSpeed')}
+                className="min-w-0 flex-1"
+                value={[vm.speedMmS]}
+                min={SPEED_MIN_MM_S}
+                max={SPEED_MAX_MM_S}
+                step={1}
+                disabled={!vm.connected}
+                onValueChange={([v]) => vm.setSpeedMmS(v)}
+                onValueCommit={([v]) => vm.commitSpeed(v)}
+              />
+              <span
+                id="gripper-speed-value"
+                data-testid="gripper-speed-value"
+                className="w-[4.25rem] flex-none text-right font-mono text-xs font-bold text-foreground"
+              >
+                {vm.speedMmS} mm/s
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* 分隔细线 */}
+        <div className="h-px bg-line/80" />
+
+        {/* 标定与硬件信息组 */}
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-between text-xs font-semibold text-ink-strong">
+            <span className="flex items-center gap-1.5">
+              <Gauge size="0.8125rem" className="text-muted-foreground" />
+              {t('gripper:source.label')}
+            </span>
+            <span
+              id="gripper-source"
+              data-testid="gripper-source"
+              className="truncate font-mono text-[0.6875rem] font-medium text-muted-foreground"
+            >
+              {sourceLabel(vm, t)}
+            </span>
+          </div>
+
           {warning ? (
-            <div className="rounded-lg border border-warn-line bg-warn-soft px-2.5 py-1.5 text-[0.65625rem] leading-relaxed text-warn">
+            <div className="rounded-md border border-warn-line bg-warn-soft px-2.5 py-1.5 text-xs leading-relaxed text-warn">
               {t(warning)}
             </div>
           ) : null}
-          <div className="grid grid-cols-2 gap-2">
-            <Stat
-              label={`${t('gripper:source.closed')} (rad)`}
-              value={vm.conn?.closedRad == null ? '—' : vm.conn.closedRad.toFixed(4)}
-            />
-            <Stat
-              label={`${t('gripper:source.open')} (rad)`}
-              value={vm.conn?.openRad == null ? '—' : vm.conn.openRad.toFixed(4)}
-            />
-            <Stat label={`${t('gripper:connection.travel')} (mm)`} value={vm.travelMm.toFixed(1)} />
-            <Stat
-              label={t('gripper:connection.mount')}
-              value={mountLabel(vm, t)}
-            />
+
+          {/* 规格列表 */}
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 rounded-lg border border-line/60 bg-background/50 p-2 text-xs">
+            <div className="flex items-baseline justify-between">
+              <span className="text-muted-foreground">{t('gripper:source.closed')}</span>
+              <span className="font-mono font-medium text-foreground">
+                <span>{vm.conn?.closedRad == null ? '—' : vm.conn.closedRad.toFixed(4)}</span>
+                {vm.conn?.closedRad != null ? <span className="ml-1 text-[0.6875rem] text-muted-foreground">rad</span> : null}
+              </span>
+            </div>
+            <div className="flex items-baseline justify-between">
+              <span className="text-muted-foreground">{t('gripper:source.open')}</span>
+              <span className="font-mono font-medium text-foreground">
+                <span>{vm.conn?.openRad == null ? '—' : vm.conn.openRad.toFixed(4)}</span>
+                {vm.conn?.openRad != null ? <span className="ml-1 text-[0.6875rem] text-muted-foreground">rad</span> : null}
+              </span>
+            </div>
+            <div className="flex items-baseline justify-between">
+              <span className="text-muted-foreground">{t('gripper:connection.travel')}</span>
+              <span className="font-mono font-medium text-foreground">
+                <span>{vm.travelMm.toFixed(1)}</span>
+                <span className="ml-1 text-[0.6875rem] text-muted-foreground">mm</span>
+              </span>
+            </div>
+            <div className="flex items-baseline justify-between">
+              <span className="text-muted-foreground">{t('gripper:connection.mount')}</span>
+              <span className="font-medium text-foreground">
+                {mountLabel(vm, t)}
+              </span>
+            </div>
           </div>
-          <div className="font-mono text-[0.59375rem] text-muted-foreground">{connectionLine(vm, t)}</div>
+
+          <div className="font-mono text-[0.6875rem] text-muted-foreground">
+            {connectionLine(vm, t)}
+          </div>
+
           {vm.mountMismatch ? (
-            <div className="text-[0.65625rem] leading-relaxed text-warn">
+            <div className="text-xs leading-relaxed text-warn">
               {t('gripper:connection.mountMismatch', {
                 declared: t(
                   `gripper:connection.mount${vm.conn?.declaredMount === 'reverse' ? 'Reverse' : 'Normal'}`,
@@ -508,18 +608,20 @@ export function GripperPanel() {
               })}
             </div>
           ) : null}
+
           {vm.conn?.path ? (
-            <div className="truncate font-mono text-[0.59375rem] text-muted-foreground" title={vm.conn.path}>
+            <div className="truncate font-mono text-[0.6875rem] text-muted-foreground" title={vm.conn.path}>
               {vm.conn.path}
             </div>
           ) : null}
+
           {gateKey === 'READY' ? null : (
-            <div className="text-[0.65625rem] leading-relaxed text-muted-foreground">
+            <div className="text-xs leading-relaxed text-muted-foreground">
               {t(`gripper:gate.${gateKey}_why`)}
             </div>
           )}
         </div>
-      </details>
+      </div>
     </Card>
   )
 }
