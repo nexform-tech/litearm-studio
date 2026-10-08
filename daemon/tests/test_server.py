@@ -707,7 +707,7 @@ def _serve_must_not_run(monkeypatch, cli):
 
 def test_main_reuses_the_running_instance_instead_of_starting_a_second(
         monkeypatch, capsys) -> None:
-    """关掉窗口再启动一次, 不该另起一个连不上机械臂的会话 (串口被上一个进程独占)。
+    """再启动一次, 不该另起一个连不上机械臂的会话 (串口被上一个进程独占)。
 
     ⚠ 探测本身由 `test_instance.py` 钉住; 这里替换掉它, 断言的是**启动路径的走向**:
     没走到 `serve`, 就没有第二个守护进程。
@@ -716,23 +716,45 @@ def test_main_reuses_the_running_instance_instead_of_starting_a_second(
 
     _serve_must_not_run(monkeypatch, cli)
     monkeypatch.setattr(cli, "find_running", lambda *a, **k: "http://127.0.0.1:8765/")
-    monkeypatch.setattr(cli, "_open_browser", lambda url: None)
+    monkeypatch.setattr(cli, "focus_running", lambda url: True)
 
     assert cli.main(["--no-open"]) == 0
     assert "复用它" in capsys.readouterr().out
 
 
-def test_main_opens_a_window_onto_the_running_instance(monkeypatch) -> None:
-    """复用时必须**把窗口指向它** —— 否则进程退得干干净净, 操作员什么都没看到。"""
+def test_main_raises_the_running_window_instead_of_opening_a_second_one(
+        monkeypatch, capsys) -> None:
+    """复用时必须**把它的窗口抬到前面**。
+
+    窗口现在由那个进程自己拥有 (一个进程一个窗口), 所以第二次启动不再新开窗口 —— 那会
+    造出两个窗口指向同一个会话。抬不起来 (旧实例是无界面运行) 时说清楚地址即可。
+    """
     from litearm_studio_daemon import __main__ as cli
 
     _serve_must_not_run(monkeypatch, cli)
     monkeypatch.setattr(cli, "find_running", lambda *a, **k: "http://127.0.0.1:8765/")
-    opened: list[str] = []
-    monkeypatch.setattr(cli, "_open_browser", opened.append)
+    focused: list[str] = []
+    monkeypatch.setattr(cli, "focus_running",
+                        lambda url: (focused.append(url), True)[1])
 
     assert cli.main([]) == 0
-    assert opened == ["http://127.0.0.1:8765/"]
+    assert focused == ["http://127.0.0.1:8765/"]
+    assert "抬到前面" in capsys.readouterr().out
+
+
+def test_main_does_not_touch_windows_when_asked_to_run_without_one(
+        monkeypatch, capsys) -> None:
+    """`--no-open` 是显式要求无界面 ⇒ 复用也不该去抬窗口, 只把地址打出来。"""
+    from litearm_studio_daemon import __main__ as cli
+
+    _serve_must_not_run(monkeypatch, cli)
+    monkeypatch.setattr(cli, "find_running", lambda *a, **k: "http://127.0.0.1:8765/")
+    focused: list[str] = []
+    monkeypatch.setattr(cli, "focus_running", focused.append)
+
+    assert cli.main(["--no-open"]) == 0
+    assert focused == []
+    assert "http://127.0.0.1:8765/" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("argv", [

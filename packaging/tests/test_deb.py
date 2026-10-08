@@ -110,6 +110,22 @@ def test_desktop_entry_launches_the_wrapper():
     assert entry.endswith("\n")
 
 
+def test_desktop_entry_groups_the_window_under_our_own_icon():
+    """`StartupWMClass` 必须与**窗口自己报的** WM_CLASS 相等。
+
+    这条等式就是"任务栏里显示我们的 LOGO 还是别人的图标"的全部机制: 桌面按它把窗口归到
+    这个启动条目下。两处分别写在 `packaging/deb.py`(字符串) 与 `window.py`(设进 GTK/Qt),
+    谁也管不着谁 —— 所以在这里钉住, 免得以后改了一处忘了另一处 (症状是"能用但图标不对",
+    最难在评审里看见的一种回归)。同一段文字与 daemon 的 `WINDOW_CLASS` 逐字比较。
+    """
+    from litearm_studio_daemon.window import WINDOW_CLASS
+
+    entry = deb.desktop_entry()
+    assert f"StartupWMClass={WINDOW_CLASS}" in entry
+    # 图标名与 WM_CLASS 也要一致: 桌面用 `Icon=` 找图, 用 `StartupWMClass=` 找窗口。
+    assert f"Icon={WINDOW_CLASS}" in entry
+
+
 def test_launcher_is_a_wrapper_around_the_bundled_executable():
     script = deb.launcher_script()
     assert script.startswith("#!/bin/sh\n")

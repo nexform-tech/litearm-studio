@@ -154,6 +154,11 @@ def desktop_entry() -> str:
         f"Comment={SYNOPSIS}\n"
         f"Exec={LAUNCHER}\n"
         f"Icon={LAUNCHER}\n"
+        # ⚠ 桌面靠这一行把**窗口**归到这个启动图标下 (Dock/任务栏显示的就是它)。窗口的
+        # WM_CLASS 由 `window._set_desktop_identity()` 设成同一个值, 两处必须相等 ——
+        # 不等的话窗口会借用别的程序的图标, 看起来"能用但就是不对"。
+        # `packaging/tests/test_deb.py` 钉住这个等式。
+        f"StartupWMClass={LAUNCHER}\n"
         "Terminal=false\n"
         "Categories=Utility;Science;\n"
         "Keywords=robot;arm;litearm;can;\n"

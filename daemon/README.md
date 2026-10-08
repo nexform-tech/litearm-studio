@@ -8,7 +8,7 @@ LiteArm Studio 的**本地程序（守护进程）**——上位机上唯一持�
 本机 Python 进程持有串口。它就是本包：
 
 ```
-浏览器 (React UI)
+本进程拥有的窗口 (React UI 跑在嵌入式 webview 里)
    │  HTTP  → 静态资源、/api/health
    │  WS    → 状态推送(下行) / 命令(上行)
    ▼
@@ -16,6 +16,9 @@ LiteArm Studio 的**本地程序（守护进程）**——上位机上唯一持�
    ▼
 litearm-python ──USB CDC (1d50:606f)──> STM32 ──CAN──> 电机
 ```
+
+**窗口也是本进程开的**（`window.py`，嵌入式 webview），所以"一个程序"在进程层面成立：
+关掉窗口 ⇒ `webview.start()` 返回 ⇒ 收尾失能 + 释放串口。不需要任何计时器或心跳。
 
 接口契约（消息格式、命令白名单、状态字段、位姿格式）见
 [`docs/REFACTOR_PLAN.md`](../docs/REFACTOR_PLAN.md) 第 3 节。
@@ -33,6 +36,21 @@ git clone https://github.com/nexform-tech/litearm-python.git
 pip install -e ../litearm-python
 pip install -e "daemon[test]"     # 在仓库根目录执行
 ```
+
+- **应用窗口要 `pywebview`**（在 `ui` extra 里，不是默认依赖：无界面运行、CI 与测试都不需要
+  一个 GUI 栈）。Linux 上它需要一个 webview 后端，本项目默认走 Qt —— 它是预编译 wheel，
+  一条 pip 命令就够：
+
+```bash
+pip install -e "daemon[ui]"       # 桌面运行需要
+litearm-studio-daemon             # 开窗口；关掉窗口就是退出
+litearm-studio-daemon --no-open   # 无界面运行；界面用浏览器连它打印出的地址
+```
+
+  ⚠ Linux 上也可以走 GTK 后端（`python3-gi` + `gir1.2-webkit2-4.1`），更小更原生，但
+  **PyGObject 用 pip 装不上**（只有 sdist，编译要一套系统开发包）。系统里装了那两个包时
+  pywebview 会自动优先选 GTK，此时不需要 `ui` extra 里的 Qt。没有 GTK 也没有 Qt 时报错
+  退出码 3，并且**不会**静默退回无界面 —— 见 `window.WindowUnavailable`。
 
 - **`litegrip`（litegrip-python）同样不在 PyPI 上，而且只在 Linux 上有意义**
   （import 需要 `fcntl` / `PF_CAN`）。要真机驱动夹爪就必须装它：
@@ -66,7 +84,7 @@ litearm-studio-daemon --port /dev/ttyACM1 --http-port 9000 --no-open
 | 控制台 | `http://127.0.0.1:<port>/`（默认 8765，被占用会自动换并打印实际端口） |
 | WebSocket | `ws://127.0.0.1:<port>/ws` |
 | 健康检查 | `http://127.0.0.1:<port>/api/health` |
-| 窗口 | 默认用 Chrome/Edge 的 `--app=` 模式开无地址栏窗口；找不到 Chromium 系则退回普通标签页 |
+| 窗口 | 由本进程自己开的嵌入式窗口（`window.py`）；**关掉它即退出程序**，刷新页面不会退出 |
 
 **只监听 `127.0.0.1`**：越线暴露一个能驱动机械臂的接口是安全事故，不是配置项——
 换地址只能改代码，没有开关。
@@ -87,18 +105,25 @@ litearm-studio-daemon --allow-origin http://localhost:8000
 
 ### 第二次启动：复用已经在跑的实例（#75）
 
-关掉窗口**不**停止守护进程（见下一节）。于是第二次启动本来会另起一个会话：它绑下一个
-空闲端口，而串口是独占的（SDK 的 `SerialTransport` 用 `flock`），新进程打不开 —— 窗口里
-是「打不开 /dev/ttyACM0」，机械臂却正握在上一个进程手里。界面把这读成硬件故障。
+窗口现在属于本进程，关掉它就退出了（见下一节），所以正常路径上不会有旧进程留着。这条复用
+是给另外两种情况兜底：**图标被连点两次**，以及**升级后旧版本的进程还活着**。它们原本会另起
+一个会话：绑下一个空闲端口，而串口是独占的（SDK 的 `SerialTransport` 用 `flock`），新进程
+打不开 —— 窗口里是「打不开 /dev/ttyACM0」，机械臂却正握在上一个进程手里。界面把这读成
+硬件故障。
 
 现在启动时会先扫一遍 `--http-port` 起的那一组端口（范围与 `pick_free_http_port` 一致：
-上一个实例可能因为 8765 被别的程序占着而挪到了 8766），探到**同一个构建**的守护进程就把
-窗口指向它并立即退出，不再起第二个：
+上一个实例可能因为 8765 被别的程序占着而挪到了 8766），探到**同一个构建**的守护进程就
+`POST /api/focus` 请它**把自己的窗口抬到前面**，然后立即退出，不再起第二个：
 
 ```bash
-$ litearm-studio-daemon --no-open
+$ litearm-studio-daemon
 [litearm-studio-daemon] 已有实例在运行, 复用它: http://127.0.0.1:8765/
+[litearm-studio-daemon] 已把它的窗口抬到前面
 ```
+
+⚠ **不新开窗口**：一个进程一个窗口，新开一个会让两个窗口指向同一个会话。旧实例是无界面
+运行的（`--no-open`）时没有窗口可抬，此时如实把地址打出来。`--no-open` 的本次启动也不碰
+任何窗口。
 
 判据只有两条，都来自不需要会话的 `/api/health`（见 `instance.py`）：
 
@@ -116,13 +141,16 @@ $ litearm-studio-daemon --no-open
 
 ### 退出行为（#14）
 
-进程收尾（Ctrl-C / 关掉控制台 / 服务停止）时会**先 `disable()` 降能量**，然后再关链路：
+进程收尾有**两个**触发点：**关掉应用窗口**（正常路径，见 `window.py`），或进程收到信号
+（Ctrl-C / 服务停止）。两者都走同一条收尾路径，并且会**先 `disable()` 降能量**，然后再关链路：
 
 - 进程一走链路就断，把「电机是否还使能」留给固件看门狗不是我们能保证的事；在还有链路时
   明确降能量才是确定的行为。失败只记日志（链路可能已经断），不影响收尾。
 - 用 `disable` 而不是 `estop`：后者会锁存一个急停故障，下次连接还得先清错。
-- **`disconnect()` 不降能量**——这是刻意的：关窗口/断开只是结束这次会话，不打断在途状态
-  （计划 2 节原则 4）。只有**进程收尾**才降能量。
+- **`disconnect()` 不降能量**——这是刻意的：界面上的"断开"只是结束这次会话。只有**进程收尾**
+  才降能量。关窗口属于进程收尾。
+- ⚠ **刷新页面不是退出信号**：刷新发生在 webview 内核里，窗口与进程都没动，WebSocket 断了
+  会自己重连。退出只看窗口关没关。
 - 需要保留使能（例如只想重启本地程序、机械臂另有保持手段）时用 `--keep-enabled`。
 
 ### 断线检测与自愈（#48）

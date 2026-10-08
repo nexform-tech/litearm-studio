@@ -69,7 +69,7 @@ litearm-studio-daemon
 litearm-studio-daemon --port /dev/ttyACM1 --http-port 9000 --no-open
 ```
 
-The daemon prints the address it actually bound to (default `http://127.0.0.1:8765/`; if the port is busy it increments and prints the new one) and opens a Chromium `--app=` window when one is available, otherwise a normal tab.
+The daemon prints the address it actually bound to (default `http://127.0.0.1:8765/`; if the port is busy it increments and prints the new one) and opens its own embedded application window. No browser needs to be installed. Closing that window quits the program.
 
 | | |
 | --- | --- |
@@ -144,11 +144,11 @@ This arm has not been activated yet. Go to **Settings → Activation** and follo
 
 The daemon automatically picks the next free port and prints it; read the printed console URL rather than assuming 8765.
 
-### Closing the window stopped the UI but not the arm
+### Closing the window quits the program
 
-That is deliberate: closing the browser window does not tear down an arm session. Use **Disconnect** or **STOP** in the UI, or stop the daemon process, to end the session.
+That is deliberate: the window belongs to the program, so closing it ends the session — the arm is de-energised and the serial port is released. Reloading the page does **not** quit; only closing the window does.
 
-Starting the program again while that daemon is still running opens a window onto it, so you get the arm session back rather than a second program that cannot reach the arm.
+Start the program again and you get a clean session. If an instance is still running (an older version, or the icon was clicked twice), starting the program **raises that instance's window** instead of starting a second program.
 
 ### The window says the port cannot be opened but the arm is connected
 

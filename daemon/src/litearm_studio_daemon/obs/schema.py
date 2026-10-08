@@ -260,6 +260,8 @@ EVENTS: Final[Tuple[Tuple[str, str, str, str], ...]] = (
      "慢客户端导致 log 帧被丢弃"),
     ("daemon.started", KIND_SYSTEM, "INFO",
      "守护进程已启动"),
+    ("daemon.window.closed", KIND_SYSTEM, "INFO",
+     "应用窗口已关闭, 守护进程随之退出"),
     ("state.sample", KIND_SAMPLE, "DEBUG",
      "机械臂状态采样 (1Hz 抽稀)"),
     ("daemon.startup_refused", KIND_SYSTEM, "ERROR",
@@ -326,6 +328,7 @@ UPSTREAM_INVALID: Final[str] = "daemon.upstream.invalid"
 COMMAND_TIMEOUT: Final[str] = "daemon.command.timeout"
 LOG_DROPPED: Final[str] = "daemon.log.dropped"
 DAEMON_STARTED: Final[str] = "daemon.started"
+DAEMON_WINDOW_CLOSED: Final[str] = "daemon.window.closed"
 STARTUP_REFUSED: Final[str] = "daemon.startup_refused"
 
 STATE_SAMPLE: Final[str] = "state.sample"

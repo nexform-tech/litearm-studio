@@ -51,6 +51,16 @@ dependencies = [
 # `httpx` 只有一处用途: `fastapi.testclient.TestClient` 要它做 HTTP 传输。
 test = ["pytest>=7", "httpx"]
 
+# 应用窗口 (`window.py`)。这是**桌面运行**才需要的东西, 所以放 extra 而不是 dependencies:
+# CI、测试和台架上的无界面运行 (`--no-open`) 都不该为它装一个 GUI 栈。
+#
+# ⚠ 为什么是 `[qt]` 而不是 `[gtk]`: GTK 后端要 PyGObject, 而 PyGObject 在 pip 上只有
+# sdist, 编译它需要一套系统开发包 (libgirepository*-dev / libcairo2-dev) —— "pip 装不了"
+# 是它最常见的失败形状。Qt 后端是预编译 wheel, 一条 pip 命令就够, 不需要 apt。
+# GTK 仍然是可用的 (pywebview 在 Linux 上先试 GTK): 系统装了 python3-gi 与
+# gir1.2-webkit2-4.1 时它会自动被选中, 那时不需要这个 extra 里的 Qt。
+ui = ["pywebview[qt]"]
+
 [project.scripts]
 litearm-studio-daemon = "litearm_studio_daemon.__main__:main"
 

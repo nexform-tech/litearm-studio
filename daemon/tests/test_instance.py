@@ -14,7 +14,7 @@ import pytest
 import uvicorn
 
 from litearm_studio_daemon import __version__, create_app
-from litearm_studio_daemon.instance import find_running, is_same_instance, probe
+from litearm_studio_daemon.instance import find_running, focus, is_same_instance, probe
 from litearm_studio_daemon.server import HTTP_PORT_TRIES, pick_free_http_port
 from litearm_studio_daemon.session import Session
 
@@ -157,3 +157,64 @@ def test_probe_finds_a_real_daemon_over_a_real_socket() -> None:
         server.should_exit = True
         thread.join(timeout=10)
         session.close()
+
+
+# ------------------------------------------------------------------ 抬起窗口
+
+class _FakeFocusService(http.server.BaseHTTPRequestHandler):
+    """一个只有 `/api/focus` 的服务 —— 钉住请求的**方法与路径**, 以及应答的解析。"""
+
+    payload = b'{"ok": true, "focused": true}'
+    paths: list = []
+
+    def do_POST(self):  # noqa: N802 - BaseHTTPRequestHandler 的接口名
+        type(self).paths.append(self.path)
+        body = type(self).payload
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):  # noqa: D102 - 测试里不需要访问日志
+        return
+
+
+@pytest.fixture
+def fake_focus_service():
+    _FakeFocusService.paths = []
+    srv = http.server.HTTPServer(("127.0.0.1", 0), _FakeFocusService)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        yield srv
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_focus_posts_to_the_focus_path_and_reports_success(fake_focus_service) -> None:
+    """⚠ 方法必须是 POST, 路径必须是 `/api/focus`, 且 URL 尾部的斜杠不能拼成双斜杠。"""
+    _FakeFocusService.payload = b'{"ok": true, "focused": true}'
+    port = fake_focus_service.server_address[1]
+    assert focus(f"http://127.0.0.1:{port}/", timeout=0.5) is True
+    assert _FakeFocusService.paths == ["/api/focus"]
+
+
+def test_focus_reports_false_when_the_other_instance_is_headless(
+        fake_focus_service) -> None:
+    """无界面运行的实例没有窗口可抬 —— 它如实回 false, 这里也如实返回 `False`。"""
+    _FakeFocusService.payload = b'{"ok": true, "focused": false}'
+    port = fake_focus_service.server_address[1]
+    assert focus(f"http://127.0.0.1:{port}/", timeout=0.5) is False
+
+
+def test_focus_is_false_when_the_answer_is_not_ours(fake_focus_service) -> None:
+    """对端回了个形状不对的 JSON ⇒ 没抬起来, 不是崩掉 (启动路径上不能抛)。"""
+    _FakeFocusService.payload = b'{"hello": "world"}'
+    port = fake_focus_service.server_address[1]
+    assert focus(f"http://127.0.0.1:{port}/", timeout=0.5) is False
+
+
+def test_focus_is_false_when_nothing_is_listening() -> None:
+    port = pick_free_http_port("127.0.0.1", start=19900, tries=50)
+    assert focus(f"http://127.0.0.1:{port}/", timeout=0.3) is False

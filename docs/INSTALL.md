@@ -71,17 +71,18 @@ litearm-studio --fake     # offline: a complete session with no hardware
 
 The program prints the address it listens on, `http://127.0.0.1:8765/` by default, and
 opens a window. If that port is taken it picks the next free one, prints it, and **the
-printed address is the one to use**. The window is the whole interface: closing it does
-not stop the program, and stopping the program disables the arm on exit.
+printed address is the one to use**. The window is the whole interface, and it belongs to
+the program: **closing it quits the program**, which de-energises the arm and releases the
+serial port. Reloading the page does not quit — only closing the window does.
 
-Because the program outlives its window, starting `litearm-studio` again while an instance
-is still running opens a window onto that instance instead of starting a second program.
-This matters: a second program cannot reach the arm, because the first one holds the
-serial port. Options that ask for a specific session — `--port`, `--fake`, `--can-channel`,
-`--ui-dir` and the other session flags — start a separate instance instead, since reusing
-the running one would silently discard them. A running instance of a *different* version
-is not reused either, so after a package upgrade the new launch starts normally while the
-old program is still there.
+Starting `litearm-studio` again while an instance is already running **raises that
+instance's window** instead of starting a second program. This matters: a second program
+cannot reach the arm, because the first one holds the serial port. Options that ask for a
+specific session — `--port`, `--fake`, `--can-channel`, `--ui-dir` and the other session
+flags — start a separate instance instead, since reusing the running one would silently
+discard them. A running instance of a *different* version is not reused either, so after a
+package upgrade the new launch starts normally. Run `litearm-studio --no-open` to start
+without a window (the UI is then reachable in a browser at the printed address).
 
 ### 2.4 What the package sets up
 
