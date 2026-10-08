@@ -73,7 +73,7 @@
     "send": "发送",
     "sendTitle": "发送运动命令",
     "releaseOnly": "松手即下发",
-    "releaseOnlyTitle": "松手（释放滑条）时才下发指令"
+    "releaseOnlyTitle": "松开滑条立即下发指令，无需再点「发送」"
   },
   "preview": {
     "title": "3D 实时预览",
