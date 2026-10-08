@@ -26,6 +26,30 @@ from litearm_studio_daemon.session import Session
 
 VERSION = "9.9.9-test"
 
+def await_response(ws, *, limit: int = 20):
+    """读帧直到 `res` —— 跳过 `log_meta` 这类流自身的帧。
+
+    `log_meta` 是接入时宣告日志流位置的握手帧 (见 `Daemon._log_meta`), 它排在 `conn`
+    之后、任何 `res` 之前。断言"下一条是 res"的用例必须跳过它; 反过来把宣告往后挪是
+    错的 —— 页面必须先知道流的位置, 才分得清"中间断了"与"什么都没发生"。
+    与 `conftest.py` 里的同名函数是一对: 那一个给用到 `next_frame` 的用例用。
+    """
+    for _ in range(limit):
+        frame = ws.receive_json()
+        if frame.get("t") == "res":
+            return frame
+    raise AssertionError(f"没有等到 res 帧 (已读 {limit} 条)")
+
+
+def next_frame(ws, *, skip: tuple = ("log_meta",)):
+    """读下一条不是流自身的帧。"""
+    while True:
+        frame = ws.receive_json()
+        if frame.get("t") not in skip:
+            return frame
+
+
+
 
 def _client():
     """未连接的会话 + 应用 (静态目录强制指向不存在的路径 ⇒ 与构建产物有无无关)。"""
@@ -343,7 +367,7 @@ def test_ws_handshake_sends_hello_then_conn() -> None:
                 assert hello["daemon"] == VERSION
                 assert hello["sdk"]
 
-                conn = ws.receive_json()
+                conn = next_frame(ws)
                 assert conn["t"] == "conn"
                 assert conn["status"] == "disconnected"
                 assert "port" in conn and "firmware" in conn and "n" in conn
@@ -374,6 +398,7 @@ def test_ws_reports_a_dead_link_on_the_conn_frame(monkeypatch) -> None:
             with client.websocket_connect("/ws") as ws:
                 assert ws.receive_json()["t"] == "hello"
                 assert ws.receive_json()["status"] == "connected"
+                assert ws.receive_json()["t"] == "log_meta"
                 real = session._arm.get_state
                 frozen = Msg(value=real().value, hz=0.0,
                              timestamp=time.monotonic() - 60.0)
@@ -439,8 +464,9 @@ def test_ws_rejects_a_non_json_frame() -> None:
             with client.websocket_connect("/ws") as ws:
                 ws.receive_json()                 # hello
                 ws.receive_json()                 # conn
+                ws.receive_json()                 # log_meta
                 ws.send_text("这不是 JSON")
-                res = ws.receive_json()
+                res = await_response(ws)
                 assert res["t"] == "res"
                 assert res["ok"] is False
                 assert res["err"]["kind"] == "BadMessage"
@@ -456,7 +482,7 @@ def test_ws_rejects_an_unknown_message_type() -> None:
                 ws.receive_json()
                 ws.receive_json()
                 ws.send_json({"t": "nope", "id": 3})
-                res = ws.receive_json()
+                res = await_response(ws)
                 assert res["id"] == 3
                 assert res["err"]["kind"] == "BadMessage"
     finally:
@@ -510,7 +536,7 @@ def test_ws_command_without_a_session_returns_a_structured_error() -> None:
                 ws.receive_json()
                 ws.receive_json()
                 ws.send_json({"t": "cmd", "id": 7, "m": "enable", "p": {}})
-                res = ws.receive_json()
+                res = await_response(ws)
                 assert res["t"] == "res"
                 assert res["id"] == 7
                 assert res["ok"] is False
@@ -542,6 +568,7 @@ def test_ws_license_command_round_trips_the_record() -> None:
             with client.websocket_connect("/ws") as ws:
                 ws.receive_json()                 # hello
                 ws.receive_json()                 # conn
+                ws.receive_json()                 # log_meta
                 ws.send_json({"t": "cmd", "id": 11, "m": "license", "p": {}})
                 while True:                       # 状态帧会插进来, 认 id
                     frame = ws.receive_json()
@@ -566,7 +593,7 @@ def test_ws_command_requires_the_m_field() -> None:
                 ws.receive_json()
                 ws.receive_json()
                 ws.send_json({"t": "cmd", "id": 8})
-                res = ws.receive_json()
+                res = await_response(ws)
                 assert res["id"] == 8
                 assert res["err"]["kind"] == "BadMessage"
     finally:
@@ -582,7 +609,10 @@ def test_ws_estop_does_not_wait_for_a_command_in_flight() -> None:
     """
     session, app = _client()
     try:
-        def fake_execute(m, p=None, *, on_event=None):
+        def fake_execute(m, p=None, *, on_event=None, trace=None):
+            # `trace` 是服务端为这次连接绑定的 trace id (见 `Daemon._traced_execute`)。
+            # 假件必须接受它: 少了这个参数, 注入会以 TypeError 的形式静默变成
+            # "命令失败", 而这条用例真正想钉的是「急停不排队」。
             if m == "movej":
                 time.sleep(0.5)
             return None
@@ -592,10 +622,11 @@ def test_ws_estop_does_not_wait_for_a_command_in_flight() -> None:
             with client.websocket_connect("/ws") as ws:
                 ws.receive_json()               # hello
                 ws.receive_json()               # conn
+                ws.receive_json()               # log_meta
                 ws.send_json({"t": "cmd", "id": 1, "m": "movej",
                               "p": {"q": [0.1] * 7}})
                 ws.send_json({"t": "cmd", "id": 2, "m": "estop", "p": {}})
-                first = ws.receive_json()
+                first = await_response(ws)
                 assert first["t"] == "res"
                 assert first["id"] == 2, (
                     f"急停应先在途命令返回, 实际先回的是 id={first['id']}")
@@ -787,6 +818,7 @@ def test_ws_receives_firmware_progress_and_result_frames() -> None:
             with client.websocket_connect("/ws") as ws:
                 assert ws.receive_json()["t"] == "hello"
                 assert ws.receive_json()["t"] == "conn"
+                assert ws.receive_json()["t"] == "log_meta"
 
                 inspected = session.execute(
                     "firmware_inspect",

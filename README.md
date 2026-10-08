@@ -32,16 +32,29 @@ litearm-python  ──USB CDC (1d50:606f)──>  STM32  ──CAN──>  motor
   - Cartesian jogging in base and tool frames, plus linear `movel` to a target pose;
   - Ready pose, firmware homing, zero-gravity drag teaching, enable/disable, fault clearing;
   - High-priority **STOP** (emergency stop) that is reachable during motion.
+- **Logs** (the `/log` page)
+  - Every daemon decision as a structured record: connections, reconnects, command
+    invocations with their arguments and outcome, activation, firmware phases, and
+    gripper alerts;
+  - One JSONL file per daemon, rotating by size, in OpenTelemetry's field naming —
+    readable by `jq`, Loki, Fluent Bit or an OTel Collector with no translation, and
+    **not** tied to the browser's origin (so it survives a port change; see
+    [issue #80](https://github.com/nexform-tech/litearm-studio/issues/80));
+  - A live view over the WebSocket with level, category and text filters, expandable
+    raw fields and exceptions, and JSONL export; the daemon's history is read back
+    over `/api/logs`, which is how the page still shows earlier records after a reload.
 - **Telemetry**
-  - 10 Hz joint sampling (angles, velocities, torques, temperatures, driver error codes);
-  - Client-side IndexedDB session recording with a configurable retention cap (10–500 MB) and CSV export.
+  - 10 Hz joint sampling (angles, velocities, torques, temperatures, driver error codes),
+    recorded in the browser with a configurable retention cap and CSV export;
+  - 1 Hz state records in the daemon's log file as `kind: "sample"`, so a session's
+    numbers sit next to its events.
 - **LiteGrip gripper** (Linux only) — enable, open, close, grasp and release, with live position, force, torque and temperature readings and a calibration check on the Gripper page.
 - **Settings and activation** — payload, gravity and inertia, per-joint gains and soft limits, the firmware self-test, USB DFU firmware update, and the one-time arm activation.
 - **Internationalization** — English / 简体中文.
 
 ### Not in this build
 
-Trajectory teaching/playback, the controller-log page, dexterous-hand panels and per-joint impedance or hold modes are out of scope ([docs/REFACTOR_PLAN.md](docs/REFACTOR_PLAN.md) §5–6). Everything the Settings page exposes (payload, gains, limits, self-test, gripper bus, activation, firmware update) *is* wired to the daemon.
+Trajectory teaching/playback, dexterous-hand panels and per-joint impedance or hold modes are out of scope ([docs/REFACTOR_PLAN.md](docs/REFACTOR_PLAN.md) §5–6). The controller-log page the plan dropped is back, rebuilt on the daemon's own records — see [docs/LOGS.md](docs/LOGS.md). Everything the Settings page exposes (payload, gains, limits, self-test, gripper bus, activation, firmware update) *is* wired to the daemon.
 
 ---
 
@@ -147,6 +160,7 @@ so an untracked icon silently falls back to PyInstaller's default executable ico
 - **[用户操作手册 (简体中文)](docs/USER_MANUAL_ZH.md)** — same caveat.
 - **[Quickstart](docs/QUICKSTART.md)** / **[快速开始](docs/QUICKSTART_ZH.md)**
 - **[Activation contract](docs/ACTIVATION.md)** / **[激活接口约定](docs/ACTIVATION_ZH.md)** — the firmware, daemon and vendor-signer agreement behind activation. For developers changing any of the three.
+- **[Log format](docs/LOGS.md)** — the record schema, where the files live, how to read them, and what is never written to them. For anyone answering "what happened?" after a session.
 - **[Refactor plan](docs/REFACTOR_PLAN.md)** — architecture, interface contract and scope decisions.
 - **[Daemon README](daemon/README.md)**
 

@@ -177,6 +177,61 @@ $ litearm-studio-daemon --no-open
 硬性指定，且**界面选的口优先于它**（`--fake` 下两者都只是占位字符串）。
 
 
+## 日志（#79）
+
+守护进程写一份**结构化日志文件**：一行一个 JSON 对象（JSON Lines），字段名照
+OpenTelemetry 的日志数据模型。页面的「日志」页是它的一个视图，而文件本身才是权威历史 ——
+关掉窗口、换一个端口、换一个浏览器 profile，历史都还在（这正是 issue #80 的修法）。
+
+默认位置按平台惯例（`obs/handlers.default_log_dir`）：
+
+| 平台 | 目录 |
+| --- | --- |
+| Linux | `$XDG_STATE_HOME/litearm-studio/daemon.jsonl`（默认 `~/.local/state/litearm-studio/`） |
+| macOS | `~/Library/Logs/litearm-studio/daemon.jsonl` |
+| Windows | `%LOCALAPPDATA%\litearm-studio\Logs\daemon.jsonl` |
+
+```bash
+# 看最近发生了什么
+tail -n 20 ~/.local/state/litearm-studio/daemon.jsonl | jq -c '{ts,severity,event,body}'
+
+# 只看失败的命令
+jq -c 'select(.event=="arm.command.failed") | {ts,method:.fields.method,err:.fields.error_kind}' \
+  ~/.local/state/litearm-studio/daemon.jsonl
+
+# 改目录 / 级别 / 轮转
+litearm-studio-daemon --log-dir /tmp/litearm-logs --log-level DEBUG
+```
+
+开关（`--help` 里有同样的说明）：
+
+- `--log-dir DIR`（也可用环境变量 `LITEARM_STUDIO_LOG_DIR`）—— 换目录。
+- `--log-level LEVEL` —— 写入**文件**的最低级别，默认 `INFO`。`DEBUG` 会记下每一条命令
+  的参数与返回，用于排障；`INFO` 只记真正改变机器的命令（`enable`/`movej`/`estop`…）
+  与所有失败。
+- `--log-max-bytes` / `--log-backups` —— 按体积轮转，默认 5MB × 5 份。
+- `--log-stdout` —— 把同样的 JSONL 也写到 stderr，给 Fluent Bit / Loki / 容器运行时采集用。
+
+实现**只用标准库，没有额外依赖**：记录 schema 在本仓的 `obs/schema.py`（字段名照
+OpenTelemetry 的日志数据模型），写入是 `logging.handlers.RotatingFileHandler` 加一个
+自定义 Formatter，trace/span 上下文是 `contextvars`。轮转与整行原子写入交给那个标准库
+handler —— 它已经在轮转与写入之间持锁，这正是自己实现最容易写错的一步。
+
+**不要**把 uvicorn 或 SDK 的 `logging` 也塞进这个文件：那是人读的文本，混进来会让采集器
+解析失败。人读的那一路走 stderr，结构化记录走 `litearm.obs` 这一条独立 logger。
+
+**记录里没有的东西**（`obs/redact.py` 强制，不是靠自觉）：激活请求里的联系人信息与设备
+UID、从激活服务取回的凭据、固件镜像的字节、任何叫 `token`/`password`/`secret` 的字段。
+新增一条日志时**不要**自己拼字段绕过 `obs.emit` —— 脱敏是那条路上的唯一一道闸。
+
+字段含义的完整表、事件目录、以及**永远不会写进文件的东西**见
+[../docs/LOGS.md](../docs/LOGS.md); 代码里的权威定义是 `obs/schema.py`。
+
+字段含义（速查）：`ts`（RFC 3339 UTC）、`ts_ns`
+（OTLP `time_unix_nano`）、`severity`/`severity_number`（OTLP 六档）、`event`
+（稳定事件名，机器读这一个）、`body`（人读的一句话）、`trace_id`（一次浏览器连接）、
+`span_id`（一条命令）、`service`/`version`/`host`/`pid`/`thread`/`source`、`fields`。
+
 ## 夹爪（LiteGrip）
 
 同一个守护进程还能同时驱动一把 LiteGrip 夹爪，走**与机械臂关节同一条 CAN 总线**

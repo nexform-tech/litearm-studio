@@ -30,6 +30,11 @@ license = { text = "Apache-2.0" }
 dependencies = [
     "fastapi",
     "uvicorn[standard]",
+    # ⚠ 结构化日志 (issue #79) **只用标准库, 没有额外依赖**: 记录 schema 在本仓的
+    # `obs/schema.py` (字段名照 OpenTelemetry 的日志数据模型), 写入是
+    # `logging.handlers.RotatingFileHandler` 加一个自定义 Formatter, trace/span 上下文
+    # 是 `contextvars`。轮转与整行原子写入交给那个标准库 handler —— 它已经在轮转与写入
+    # 之间持锁, 这正是自己写最容易写错的一步。见 `obs/__init__.py` 的模块说明。
     # 固件升级（USB DFU）的烧录引擎。**在 PyPI 上**，所以可以正常声明 —— 与
     # `litearm` / `litegrip` 那两个必须从 checkout 装的 SDK 不同。
     #

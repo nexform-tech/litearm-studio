@@ -42,12 +42,16 @@ from litearm import Arm
 from . import statemap
 from . import activation
 from . import dfu
+from . import obs
 from . import ports
 from .errors import (FirmwareUpgradeError, MotionBusyError,
                      NotConnectedCommandError, PortChangeWhileConnectedError,
                      UpgradeBusyError, UnknownCommandError)
 
 log = logging.getLogger("litearm_studio_daemon.session")
+
+#: `_note_command(trace=...)` 的哨兵 —— 见那里的说明。
+_TRACE_UNSET: Any = object()
 
 #: 状态轮询周期 (秒) —— 20ms = 50Hz。**必须自己节流**: SDK 那条路径读的是缓存帧,
 #: 不节流的话轮询线程会以 GIL 允许的最高速率空转 (实测能把整套用例拖慢一个量级)。
@@ -65,6 +69,16 @@ POLL_PERIOD_S = 0.02
 #: 快订阅, 不会让整页重渲染。该判据由 `test_state_push_rate_feeds_the_3d_preview` 钉住。
 #: ⚠ **状态串变化 / 故障变化一律立即推** (见 `_poll_loop`), 节流只管"同样内容重复推"。
 STATE_PUSH_INTERVAL_S = 0.02
+
+#: 采样记录的抽稀间隔 (秒)。50Hz 的状态轮询**不是**日志: 每一拍都写一条, 10MB 的
+#: 文件半小时就见底, 而操作员真正要读的是事件。1Hz 足够画出趋势与"那一刻的读数",
+#: 完整的 10Hz 采样仍由页面写在自己的采样表里 (见 `telemetryRecorder`)。
+SAMPLE_RECORD_INTERVAL_S = 1.0
+
+#: 采样记录的抽稀间隔 (秒)。50Hz 的状态轮询**不是**日志: 每一拍都写一条, 5MB 的文件
+#: 几分钟就见底, 而操作员真正要读的是事件。1Hz 足够画出趋势与"那一刻的读数"; 完整的
+#: 10Hz 采样仍由页面写在自己的采样表里 (见 `telemetryRecorder`)。
+SAMPLE_RECORD_INTERVAL_S = 1.0
 
 #: 链路"没声音"多久即判为断 (秒) —— 判据是**固件那条 100Hz 被动状态流的到达时刻**。
 #:
@@ -315,6 +329,10 @@ class Session:
         self._connected_at = 0.0
         self._last_emit_key: Any = None
         self._last_emit_at = 0.0
+        #: 上一次落采样记录的时刻 (见 `SAMPLE_RECORD_INTERVAL_S`)。
+        self._last_sample_at = 0.0
+        #: 上一次落采样记录的时刻 (见 `SAMPLE_RECORD_INTERVAL_S`)。
+        self._last_sample_at = 0.0
         self._zero_g_since: Optional[float] = None
         #: 运动在飞计数 (不是 bool: 同一瞬间可能既有在途、又有刚提交的)
         self._motion_count = 0
@@ -433,7 +451,8 @@ class Session:
             return None if self._state_dict is None else dict(self._state_dict)
 
     # ------------------------------------------------------------------ 连接/断开
-    def connect(self, port: Optional[str] = None) -> bool:
+    def connect(self, port: Optional[str] = None, *,
+                trace: Optional[str] = None) -> bool:
         """连接 (幂等) —— 已连接时**是 no-op**, 返回 `True`。
 
         `port` = **这一次**要连的口 (顶栏下拉里选的那个), 覆盖自动发现与 `--port`。
@@ -458,6 +477,10 @@ class Session:
         同时成立。换口是操作员的决定 —— 先 `disconnect()`, 会话不自己挪链路。
         `port` 为空或正是当前口时仍是幂等 no-op (`main.tsx` 每次页面加载自动发的那条无参
         `connect` 走的就是这条)。
+
+        `trace` 是发起这次连接的浏览器连接标识 (见 `obs.trace`): 有它, 页面上
+        "点连接 → 握手 → 成功/失败"这几条记录会归到同一次操作下。可选, 因为
+        `Session` 也能在没有服务端的情况下被单测直接驱动。
         """
         requested = (port or "").strip() or None
         with self._lock:
@@ -477,6 +500,9 @@ class Session:
             # (或这次自愈) 已被断开/关闭作废。
             self._connect_gen += 1
             gen = self._connect_gen
+        obs.info(obs.CONNECT_STARTED, body="开始连接机械臂",
+                 fields={"target": self._port or "auto", "fake": self._fake},
+                 trace_id=trace)
         self._broadcast({"t": "conn", **self.arm_info()})
 
         def _open(gen: int) -> None:
@@ -499,14 +525,22 @@ class Session:
                     last = e
                     log.info("连接 %s 失败: %s: %s", target, type(e).__name__, e)
                     continue
-                self._commit_link(arm, target, gen)
+                self._commit_link(arm, target, gen, trace)
                 return
             if last is None:
                 last = litearm.TransportError(
                     "未发现 STM32 CDC 设备 (VID:PID 1d50:606f); 请插好设备或用 --port 指定")
-            self._connect_failed(last, None, gen)
+            # ⚠ 记录排在 `_connect_failed` **之后**: 那条路才把会话落进 `error` 态, 而
+            # "试过哪些口、最后为什么没成"是这次连接的**结局**, 不是某一跳的插曲。
+            # 顺序反了还会在状态位与日志之间留一个窗口 —— 观察到"已经试过了"的那一刻
+            # 会话却还在 `connecting`, 于是紧接着的第二次 `connect` 被判成"正在连接中"
+            # 而返回 False (真机不会, 但那是靠时序侥幸)。
+            self._connect_failed(last, None, gen, targets)
 
-        self._executor.submit(_open, gen)
+        # ⚠ 在 trace 上下文**之内**提交: 执行器线程继承提交那一刻的 contextvars,
+        # 于是 `_open`/`_commit_link` 里的记录自动带上同一个 trace_id。
+        with obs.trace(trace):
+            self._executor.submit(_open, gen)
         return True
 
     def _connect_candidates(self) -> List[str]:
@@ -550,7 +584,8 @@ class Session:
                    if self._fake else None)
         return Arm(port=target, transport_factory=factory).connect()
 
-    def _commit_link(self, arm: Arm, target: str, gen: int) -> bool:
+    def _commit_link(self, arm: Arm, target: str, gen: int,
+                     trace: Optional[str] = None) -> bool:
         """把一条新建好的链路装进会话 —— 代次/收尾守卫不过就**丢弃它**。
 
         两条调用者 (`connect()` 的 `_open`、断线自愈的 `_recover_link`) 共用: 差别只在
@@ -575,6 +610,10 @@ class Session:
             # 握手/自愈期间用户按了「断开」(或进程在收尾) —— 这个会话没人要了。
             # ⚠ 必须在这里把它关掉: 否则串口被一个「已断开」的会话占着。
             log.info("链路建成时已被断开/关闭, 丢弃它: port=%s", target)
+            obs.emit(obs.CONNECT_DISCARDED,
+                     body=f"链路建成时已被断开/关闭, 丢弃 {target}",
+                     fields={"port": target, "reason": "disconnected_during_handshake"},
+                     trace_id=trace)
             self._close_arm(arm)
             return False
         # 记住这个口 —— 下次启动/不带口的连接先试它 (只是提示, 见 `_connect_candidates`)。
@@ -588,10 +627,21 @@ class Session:
             log.info("已连接: port=%s firmware=%s n=%d cart=%s",
                      target, arm.firmware, arm.n,
                      getattr(arm, "_cart_supported", None))
+            obs.info(obs.CONNECT_SUCCEEDED,
+                     body=f"已连接: {target} (固件 {arm.firmware or '未识别'}, "
+                          f"{int(getattr(arm, 'n', 0) or 0)} 轴)",
+                     fields={"port": target, "firmware": arm.firmware or "",
+                             "n": int(getattr(arm, "n", 0) or 0),
+                             "cart": bool(getattr(arm, "_cart_supported", False)),
+                             "fake": self._fake},
+                     trace_id=trace)
             self._broadcast({"t": "conn", **self.arm_info()})
             self._start_polling()
         except Exception as e:  # noqa: BLE001
             log.exception("连接收尾失败 (已转为 error 态)")
+            obs.error(obs.CONNECT_FAILED, body=f"连接收尾失败: {type(e).__name__}: {e}",
+                      fields={"port": target, "phase": "commit"},
+                      exception=e, trace_id=trace)
             self._connect_failed(e, arm, gen)
             return False
         return True
@@ -615,6 +665,8 @@ class Session:
                 self._status = "disconnected"
                 self._last_error = None
                 self._resolved_port = None
+                obs.info(obs.DISCONNECTED, body="断开 (当时没有链路)",
+                         fields={"cancelled": bool(was_busy)})
                 return was_busy
         self._stop_polling()
         arm = self._take_arm()
@@ -629,7 +681,10 @@ class Session:
             self._motion_count = 0
             self._status = "disconnected"
             self._last_error = None
+            closed_port = self._resolved_port
             self._resolved_port = None
+        obs.info(obs.DISCONNECTED, body="已断开机械臂连接",
+                 fields={"port": closed_port, "had_link": arm is not None})
         self._broadcast({"t": "conn", **self.arm_info()})
         return True
 
@@ -646,7 +701,8 @@ class Session:
             log.warning("关闭会话时抛出异常 (已忽略)", exc_info=True)
 
     def _connect_failed(self, exc: BaseException, arm: Optional[Arm],
-                        gen: Optional[int] = None) -> None:
+                        gen: Optional[int] = None,
+                        candidates: Optional[List[str]] = None) -> None:
         """连接（或连接收尾）失败 —— 落 `error` 态并推一条带原因的 `conn`。
 
         ⚠ **必须把异常转成状态, 不许让它逃出去**: 本方法跑在命令执行器的那条 Future
@@ -662,12 +718,27 @@ class Session:
             if gen is not None and self._connect_gen != gen:
                 log.info("握手失败时已被断开/关闭, 不上报 error: %s: %s",
                          type(exc).__name__, exc)
+                obs.emit(obs.CONNECT_DISCARDED,
+                         body="握手失败, 但这次连接已被断开/关闭作废",
+                         fields={"error_kind": type(exc).__name__,
+                                 "reason": "superseded"},
+                         exception=exc)
                 return
             self._arm = None
             self._status = "error"
             self._last_error = f"{type(exc).__name__}: {exc}"
             self._resolved_port = None
         log.warning("连接失败: %s", self._last_error)
+        # ⚠ 这里是**所有**连接失败的收口 (握手、dial、收尾), 所以终局记录只在这里发一次。
+        # 调用方若再补一条, 一条失败的连接会留下两条 `session.connect.failed` ——
+        # 页面上的"几次失败"就成了两倍。
+        obs.error(obs.CONNECT_FAILED, body=f"连接失败: {self._last_error}",
+                  fields={"port": self._port or "auto", "fake": self._fake,
+                          "error_kind": type(exc).__name__,
+                          # 试过哪些口是排障的第一手材料 ("我明明插着它"), 而它只有
+                          # 候选循环那一层知道。
+                          **({"candidates": candidates} if candidates else {})},
+                  exception=exc)
         self._broadcast({"t": "conn", **self.arm_info()})
 
     # ------------------------------------------------------------------ 链路存活 / 自愈
@@ -710,6 +781,10 @@ class Session:
             gen = self._connect_gen
             reconnect = self._reconnect
         log.warning("链路已断开 (port=%s): %s", last_port, reason)
+        obs.warning(obs.LINK_LOST,
+                    body=f"链路已断开 ({last_port or '未知端口'}): {reason}",
+                    fields={"port": last_port, "reason": reason,
+                            "auto_reconnect": bool(reconnect)})
         self._broadcast({"t": "conn", **self.arm_info()})
         if not reconnect:
             # 没开自愈: 旧链路仍然要收掉 (它占着串口), 但**不**排在那条可能阻塞
@@ -740,7 +815,8 @@ class Session:
                 out.append(cand)
         return out
 
-    def _recover_link(self, gen: int, hint: Optional[str], old_arm: Arm) -> None:
+    def _recover_link(self, gen: int, hint: Optional[str], old_arm: Arm,
+                      trace: Optional[str] = None) -> None:
         """断线自愈 —— 关掉死链路, 重新解析 CDC 设备, 在窗口内重试建会话。
 
         窗口 (`_reconnect_window`) 与间隔 (`_reconnect_period`) 见两个常量的说明。三条
@@ -776,9 +852,18 @@ class Session:
                     except Exception as e:  # noqa: BLE001 - 设备还没回来是**预期结局**
                         last_detail = f"{target}: {type(e).__name__}: {e}"
                         log.info("自愈第 %d 次尝试失败: %s", attempts, last_detail)
+                        obs.info(obs.RECOVER_FAILED,
+                                 body=f"自愈第 {attempts} 次尝试失败: {last_detail}",
+                                 fields={"port": target, "attempt": attempts,
+                                         "error_kind": type(e).__name__},
+                                 trace_id=trace)
                         continue
-                    if self._commit_link(arm, target, gen):
+                    if self._commit_link(arm, target, gen, trace):
                         log.info("链路已恢复: port=%s (第 %d 次尝试)", target, attempts)
+                        obs.info(obs.LINK_RECOVERED,
+                                 body=f"链路已恢复: {target} (第 {attempts} 次尝试)",
+                                 fields={"port": target, "attempt": attempts},
+                                 trace_id=trace)
                         return
                     # 认领失败: 要么代次被作废 (用户手动连/断), 要么收尾那一步抛了错
                     # (`_commit_link` 两种情况都已经把这条 arm 关掉并落好状态) ⇒ 收工。
@@ -792,11 +877,20 @@ class Session:
                 self._last_error = (f"链路已断开, 自动重连 {attempts} 次未成功"
                                     f" ({self._reconnect_window:.0f}s 内): {last_detail}")
             log.warning("自愈窗口用尽: %s", self._last_error)
+            obs.error(obs.RECOVER_GAVE_UP, body=f"自动重连失败: {self._last_error}",
+                      fields={"attempts": attempts,
+                              "window_s": round(self._reconnect_window, 1),
+                              "detail": last_detail or "没有发现可用的 STM32 CDC 设备"},
+                      trace_id=trace)
             self._broadcast({"t": "conn", **self.arm_info()})
-        except Exception:  # noqa: BLE001 - 自愈线程不许带着栈死掉
+        except Exception as e:  # noqa: BLE001 - 自愈线程不许带着栈死掉
             # 设备发现 (用户注入的 `port_finder`) 或 SDK 构造都可能抛意料之外的东西。
             # 会话留在 `error` 态 (下面 finally 会落下 `_recovering`), 由操作员手工重连。
             log.exception("断线自愈异常结束 (会话停在 error 态, 需手工重连)")
+            obs.error(obs.RECOVER_ERROR,
+                      body=f"断线自愈异常结束, 会话停在 error 态: {type(e).__name__}: {e}",
+                      fields={"error_kind": type(e).__name__},
+                      exception=e, trace_id=trace)
         finally:
             with self._lock:
                 # ⚠ 只清**自己**那次: 极窄的窗口里新一次断线可能已经起了新的自愈线程,
@@ -830,6 +924,8 @@ class Session:
             with self._lock:
                 self._status = "disconnected"
         self._safety_executor.shutdown(wait=True)
+        obs.info(obs.SESSION_CLOSED, body="守护进程收尾: 会话已关闭",
+                 fields={"had_link": arm is not None})
 
     def _deenergize(self, arm: Arm) -> None:
         """退出前的降能量 —— **任何失败都只记日志**, 收尾不能因此中断。
@@ -842,12 +938,18 @@ class Session:
         """
         if not self._disable_on_exit:
             log.info("退出前保持使能 (disable_on_exit=False)")
+            obs.info(obs.DEENERGIZE_SKIPPED, body="退出前保持使能 (--keep-enabled)",
+                     fields={"disable_on_exit": False})
             return
         try:
             arm.disable()
             log.info("退出前已失能 (降能量)")
-        except Exception:  # noqa: BLE001 - 链路可能已断, 收尾不许因此失败
+            obs.info(obs.DEENERGIZED, body="退出前已失能 (降能量)")
+        except Exception as e:  # noqa: BLE001 - 链路可能已断, 收尾不许因此失败
             log.warning("退出前失能失败 (已忽略; 链路可能已断)", exc_info=True)
+            obs.warning(obs.DEENERGIZE_FAILED,
+                        body=f"退出前失能失败 (已忽略; 链路可能已断): {type(e).__name__}",
+                        fields={"error_kind": type(e).__name__}, exception=e)
 
     # ------------------------------------------------------------------ 状态轮询
     def _start_polling(self) -> None:
@@ -939,7 +1041,23 @@ class Session:
                 return None
             self._last_emit_key = key
             self._last_emit_at = now
+            # ⚠ 采样记录的节拍与**推送**节拍是两件事: 推送 50Hz/变化即推, 采样 1Hz。
+            sample_due = (now - self._last_sample_at) >= SAMPLE_RECORD_INTERVAL_S
+            if sample_due:
+                self._last_sample_at = now
+        if sample_due:
+            # 记录在锁外发: `obs.emit` 要走广播扇出, 不该在持有会话锁时做。
+            self._note_sample(doc)
         return {"t": "state", "stamp": round(now, 4), "state": doc}
+
+    def _note_sample(self, doc: dict) -> None:
+        """把这一拍的状态落成一条**采样记录** —— 与事件同一套 schema, `kind=sample`。
+
+        ⚠ 它只写 `fields`, 不写 `body` 之外的任何文本: 采样是数值记录, 页面要拿它画
+        趋势、算最大值, 不是拿它读句子。
+        """
+        obs.debug(obs.STATE_SAMPLE, body=f"state={doc.get('state', '')}",
+                  fields=sample_fields(doc))
 
     def _is_link_stale(self, msg: Any, now: float) -> bool:
         """这一拍还"听得见"这条链路吗 —— 判据是**被动状态流的到达时刻**。
@@ -988,7 +1106,8 @@ class Session:
 
     # ------------------------------------------------------------------ 命令执行
     def execute(self, m: str, p: Optional[dict] = None, *,
-                on_event: Optional[Callable[[dict], None]] = None) -> Any:
+                on_event: Optional[Callable[[dict], None]] = None,
+                trace: Optional[str] = None) -> Any:
         """执行一条白名单命令 —— **阻塞**直到 SDK 调用返回 (调用方负责丢线程/线程池)。
 
         准入判据按顺序 (前三条**在提交之前**判定, 所以是"立刻被拒"而不是"排队再拒"):
@@ -1006,9 +1125,31 @@ class Session:
         这个标志位, 于是"标志位说已连接、每条命令都撞 `[Errno 5]`"能持续几个小时。异常
         照旧往上抛 (调用方要看到失败), 但会话同时落 `error` 态并推一条 `conn` —— 前端
         与守护进程对"现在还能不能指挥这台臂"必须给同一个答案。
+
+        ⚠ **一条命令一条记录** (issue #79 第 3、4 点): 这里是"方法发出 / 值或异常返回"的
+        唯一漏斗, 所以 SDK 交互的台账记在这里, 而不是在每个命令实现里各补一次。
+        `arm.command.succeeded` 对读操作是 DEBUG (10Hz 的 `get_tcp` 不该写进文件),
+        对真正改变机器的命令是 INFO; 失败一律 ERROR。参数经 `obs` 脱敏后才落盘。
         """
         params = dict(p or {})
+        span = obs.new_span_id()
+        started = time.perf_counter()
+        with obs.span(span), obs.trace(trace):
+            try:
+                value = self._execute_command(m, params, on_event=on_event)
+            except Exception as e:  # noqa: BLE001 - 失败照旧往上抛, 这里只记台账
+                self._note_command(m, params, None, e,
+                                   duration_ms=(time.perf_counter() - started) * 1000,
+                                   span=span, trace=trace)
+                raise
+            self._note_command(m, params, value, None,
+                               duration_ms=(time.perf_counter() - started) * 1000,
+                               span=span, trace=trace)
+            return value
 
+    def _execute_command(self, m: str, params: dict, *,
+                         on_event: Optional[Callable[[dict], None]]) -> Any:
+        """`execute` 的准入与派发 —— 拆出来只为让台账那一段包住整个调用。"""
         # 会话无关的命令 —— **排在连接判定之前**。DFU 期间设备在 ROM bootloader 里,
         # 恰恰没有会话, 而"校验镜像 / 看进度 / 取消"必须仍然可用。
         if m in SESSION_FREE_COMMANDS:
@@ -1056,6 +1197,39 @@ class Session:
             if m in MOTION_COMMANDS:
                 with self._lock:
                     self._motion_count = max(0, self._motion_count - 1)
+
+    def _note_command(self, m: str, params: dict, value: Any,
+                      exc: Optional[BaseException], *, duration_ms: float,
+                      span: str, trace: Any = _TRACE_UNSET) -> None:
+        """一条命令的台账 —— 成功与失败都走这里。
+
+        ⚠ 参数**必须**经 `obs.redact.command_arguments`: 激活请求带着操作员的注册信息
+        与设备 UID, 固件升级带着镜像 token。脱敏是构造性的 (见 `obs.redact` 的模块说明),
+        这里的 `fields` 就是它唯一的入口。会话无关的命令 (`firmware_inspect` 等) 同样
+        走这里 —— 它们的参数是**最**需要脱敏的一类。
+        """
+        fields: Dict[str, Any] = {
+            "method": m,
+            "outcome": "ok" if exc is None else "error",
+            "duration_ms": round(float(duration_ms), 1),
+            "span_id": span,
+            "args": obs.redact_command_arguments(m, params),
+        }
+        if exc is not None:
+            fields["error_kind"] = type(exc).__name__
+        else:
+            fields["result"] = obs.describe_value(value)
+        event = obs.COMMAND_SUCCEEDED if exc is None else obs.COMMAND_FAILED
+        notable = (m in obs.NOTABLE_COMMANDS) or exc is not None
+        body = (f"命令 {m} 完成 ({fields['duration_ms']:.0f}ms)" if exc is None
+                else f"命令 {m} 失败: {type(exc).__name__}: {exc}")
+        # ⚠ `trace` 的默认值是哨兵而不是 `None`: "调用方明确给了没有 trace" 与
+        # "调用方没表态" 是两件事 —— 后者要回落到**当前上下文**里的 trace (浏览器
+        # 那条连接绑定的), 否则从 WS 来的命令会丢掉自己的 trace_id。
+        obs.emit(event, body=body, fields=fields, exception=exc,
+                 severity=None if notable else "DEBUG",
+                 level=None if notable else "DEBUG", span_id=span,
+                 trace_id=obs.current_trace() if trace is _TRACE_UNSET else trace)
 
     def _run_command(self, arm: Arm, m: str, p: dict,
                      on_event: Optional[Callable[[dict], None]]) -> Any:
@@ -1199,15 +1373,28 @@ class Session:
                 #   设备的授权记录)。读不到就在这里停下, 不出一字节。
                 raise activation.ActivationError(*_uid_unavailable(arm))
             if device_uid != request["uid"]:
+                # ⚠ 消息里**不写两个 UID**: 它是激活服务认的凭据, 而这条消息会进日志文件
+                # (issue #79 第 6 点)。前端拿到的是"不一致"这件事, 不是一个可以外传的标识。
                 raise activation.ActivationError(
                     "uid_mismatch",
-                    f"提交的 UID ({request['uid']}) 不是当前这台机器 ({device_uid})")
+                    "提交的设备 UID 与当前这台机器不一致 —— 请重新读取设备信息后重试")
             # ↓ 这一段在**调用方线程**上跑: 它不碰串口, 不该占着 SDK 那条线程。
             lic = activation.request_license(
                 self._activation_url, request, expected_uid=device_uid)
-            return self._sdk_call(arm, lambda: _submit_license(arm, lic), "activate")
+            written = self._sdk_call(arm, lambda: _submit_license(arm, lic), "activate")
+            obs.info(obs.ACTIVATE_SUCCEEDED,
+                     body=f"在线激活成功 (设备状态 {written.get('stateName', '未知')})",
+                     fields={"state": written.get("state"),
+                             "state_name": written.get("stateName"),
+                             "factory_mode": bool(written.get("factoryMode")),
+                             "activation_url": self._activation_url})
+            return written
         except Exception as e:  # noqa: BLE001 - 命令失败是预期结果, 由 server 转成 err
             log.info("命令 activate 失败: %s: %s", type(e).__name__, e)
+            obs.error(obs.ACTIVATE_FAILED, body=f"在线激活失败: {type(e).__name__}: {e}",
+                      fields={"error_kind": type(e).__name__,
+                              "reason": getattr(e, "reason", None)},
+                      exception=e)
             raise
 
     def _note_zero_g(self, active: bool, on_event: Optional[Callable[[dict], None]]) -> None:
@@ -1284,6 +1471,12 @@ class Session:
                 self._images.pop(self._image_order.pop(0), None)
         log.info("固件镜像已校验: %s (%d B, 版本 %s)",
                  summary.name, summary.size, summary.version or "未识别")
+        obs.info(obs.IMAGE_INSPECTED,
+                 body=f"固件镜像已校验: {summary.name} ({summary.size} B, "
+                      f"版本 {summary.version or '未识别'})",
+                 fields={"name": summary.name, "size": summary.size,
+                         "version": summary.version or "",
+                         "base": summary.base})
         return {**summary.to_dict(), "token": token}
 
     def _upgrade_status(self) -> dict:
@@ -1366,6 +1559,10 @@ class Session:
         th.start()
         log.info("固件升级开始: job=%s 镜像=%s (%d B)",
                  job, summary.name, summary.size)
+        obs.info(obs.UPGRADE_STARTED,
+                 body=f"固件升级开始: {summary.name} ({summary.size} B)",
+                 fields={"job": job, "name": summary.name, "size": summary.size,
+                         "version": summary.version or ""})
         return {"job": job, "phase": dfu.PHASE_VALIDATE}
 
     def _run_upgrade(self, blob: bytes, base: int, summary: Any, job: str) -> None:
@@ -1384,6 +1581,10 @@ class Session:
             # `run_upgrade` 自己已经把一切折成 `Result`; 这一层是"连兜底都炸了"的
             # 最后一道 —— 宁可报一句笼统的失败, 也不能让线程带着栈死掉。
             log.exception("固件升级线程异常结束")
+            obs.error(obs.UPGRADE_CRASHED,
+                      body=f"固件升级线程异常结束: {type(e).__name__}: {e}",
+                      fields={"job": job, "error_kind": type(e).__name__},
+                      exception=e)
             result = dfu.Result(False, "flash_failed", f"{type(e).__name__}: {e}")
 
         doc = result.to_dict(job)
@@ -1396,6 +1597,12 @@ class Session:
                 self._status = "error"
                 self._last_error = f"固件升级失败: {result.message}"
         log.info("固件升级结束: job=%s ok=%s reason=%s", job, result.ok, result.reason)
+        (obs.info if result.ok else obs.error)(
+            obs.UPGRADE_FINISHED,
+            body=f"固件升级{'成功' if result.ok else '失败'}: {result.reason}",
+            fields={"job": job, "ok": bool(result.ok), "reason": result.reason,
+                    "message": result.message,
+                    "reconnected": self._arm is not None})
         self._broadcast({"t": "firmware_result", **doc})
         self._broadcast({"t": "conn", **self.arm_info()})
 
@@ -1445,6 +1652,7 @@ class Session:
             self._state_stamp = 0.0
             self._last_emit_key = None
         log.info("固件升级: 设备已交棒进 ROM bootloader")
+        obs.info(obs.ENTERED_BOOTLOADER, body="固件升级: 设备已交棒进 ROM bootloader")
 
     def _dfu_wait(self, is_cancelled: Callable[[], bool]) -> None:
         """等 `0483:DF11` **可用**（不只是"存在"）, 并把引擎会话**开好**。
@@ -1535,6 +1743,10 @@ class Session:
                     continue
                 if self._commit_link(arm, target, gen):
                     log.info("升级后链路已恢复: port=%s (第 %d 次尝试)", target, attempts)
+                    obs.info(obs.FIRMWARE_LINK_RESTORED,
+                             body=f"升级后链路已恢复: {target} (第 {attempts} 次尝试)",
+                             fields={"port": target, "attempt": attempts,
+                                     "firmware": getattr(arm, "firmware", "") or ""})
                     return target, getattr(arm, "firmware", "") or ""
                 raise dfu.UpgradeError("reconnect_failed", "重建会话时被断开/收尾")
             self._stop.wait(self._reconnect_period)
@@ -1543,6 +1755,21 @@ class Session:
             f"固件已写入并通过读回校验, 但 {UPGRADE_RECONNECT_WINDOW_S:.0f}s 内没能"
             f"重新连上 ({attempts} 次): {last or '没有发现 STM32 CDC 设备'} —— "
             f"断电重上电即可")
+
+
+#: 采样记录里保留的状态字段。**刻意不是全部**: `flagNames`/`faultDetail` 这类给人读的
+#: 文本每一条都带着, 文件会胖一倍, 而它们在事件 (`conn` 帧与故障记录) 里已经有了。
+SAMPLE_FIELDS = ("q", "dq", "tau", "errs", "temps", "fault", "state",
+                 "enabled", "faulted", "cartBusy", "seq", "mode", "modeName")
+
+
+def sample_fields(doc: dict) -> dict:
+    """`state` 帧的字典 → 采样记录要落的那几项。
+
+    ⚠ 白名单而不是整份拷贝: 状态帧的字段会随版本增加, 而"日志文件里突然多出一堆
+    没人读的字段"是缓慢发生的体积泄漏。要加一项就在这里加。
+    """
+    return {key: doc[key] for key in SAMPLE_FIELDS if key in doc}
 
 
 def _is_permission_error(exc: BaseException) -> bool:

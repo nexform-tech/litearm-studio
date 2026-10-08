@@ -1,8 +1,8 @@
 {
   "control": "控制",
   "controlTitle": "机械臂控制台",
-  "log": "遥测",
-  "logTitle": "遥测记录",
+  "log": "日志",
+  "logTitle": "日志",
   "settings": "设置",
   "settingsTitle": "控制器参数",
   "connect": "连接",
