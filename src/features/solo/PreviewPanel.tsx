@@ -1,5 +1,5 @@
 import { Suspense, forwardRef, lazy, useEffect, useRef, useState, type CSSProperties } from 'react'
-import { Box, Maximize2 } from 'lucide-react'
+import { Box, Eye, Focus, Maximize2, Axis3d } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import { SegmentedControl, type SegItem } from '../../components/SegmentedControl'
@@ -93,58 +93,64 @@ export function PreviewPanel(vm: { viewTabs: SegItem[]; viewBadge: string; previ
   }
 
   return (
-    <Card className="flex-none gap-2.5 rounded-[0.875rem] p-3">
-      <div className="flex items-center justify-between">
+    <Card className="flex-1 gap-2 rounded-[0.875rem] p-3">
+      {/* 标题行：视口工具与实机/仿真都收在这一行，正文整块留给 3D */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
         <div className="flex items-center gap-2 text-[0.90625rem] font-semibold text-foreground">
           <Box size="0.9375rem" /> {t('solo:preview.title')}
         </div>
-        <SegmentedControl
-          items={vm.viewTabs}
-          containerStyle={{ display: 'flex', gap: '0.1875rem', background: 'var(--line-soft)', borderRadius: '0.5625rem', padding: '0.1875rem' }}
-          itemStyle={{ display: 'flex', alignItems: 'center', gap: '0.375rem', padding: '0.3125rem 0.75rem', borderRadius: '0.4375rem', fontSize: '0.78125rem', color: 'var(--ink-subtle)', fontWeight: 500 }}
-          activeItemStyle={{ background: 'var(--seg-active)', color: 'var(--ink)', fontWeight: 650, boxShadow: '0 0.0625rem 0.125rem rgba(16,24,40,.1)' }}
-        />
-      </div>
 
-      <div className="flex gap-[0.3125rem]">
-        <Button
-          type="button"
-          variant="outline"
-          aria-pressed={showAxes}
-          onClick={() => setShowAxes((v) => !v)}
-          className={cn(
-            'h-auto flex-1 rounded-[0.4375rem] py-[0.3125rem] text-xs font-normal text-ink-soft',
-            // 用 ! 覆盖 Button outline variant 的 dark:bg-input/* 默认值
-            showAxes && 'border-chip! bg-chip! text-chip-fg! hover:bg-chip! hover:text-chip-fg!',
-          )}
-        >
-          {t('solo:preview.axes')}
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          onClick={focusAll}
-          className="h-auto flex-1 rounded-[0.4375rem] py-[0.3125rem] text-xs font-normal text-ink-soft"
-        >
-          {t('solo:preview.focus')}
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          onClick={topViewAll}
-          className="h-auto flex-1 rounded-[0.4375rem] py-[0.3125rem] text-xs font-normal text-ink-soft"
-        >
-          {t('solo:preview.topView')}
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="icon"
-          onClick={() => setExpanded(true)}
-          className="h-auto w-[2.375rem] rounded-[0.4375rem] py-[0.3125rem] text-ink-soft"
-        >
-          <Maximize2 size="0.75rem" />
-        </Button>
+        <div className="ml-auto flex flex-wrap items-center gap-1.5">
+          <SegmentedControl
+            items={vm.viewTabs}
+            containerStyle={{ display: 'flex', gap: '0.1875rem', background: 'var(--line-soft)', borderRadius: '0.5625rem', padding: '0.1875rem' }}
+            itemStyle={{ display: 'flex', alignItems: 'center', gap: '0.375rem', padding: '0.25rem 0.625rem', borderRadius: '0.4375rem', fontSize: '0.75rem', color: 'var(--ink-subtle)', fontWeight: 500 }}
+            activeItemStyle={{ background: 'var(--seg-active)', color: 'var(--ink)', fontWeight: 650, boxShadow: '0 0.0625rem 0.125rem rgba(16,24,40,.1)' }}
+          />
+
+          <Button
+            type="button"
+            variant="outline"
+            aria-pressed={showAxes}
+            onClick={() => setShowAxes((v) => !v)}
+            className={cn(
+              'h-auto gap-1 rounded-[0.4375rem] px-2 py-[0.3125rem] text-[0.75rem] font-normal text-ink-soft',
+              // 用 ! 覆盖 Button outline variant 的 dark:bg-input/* 默认值
+              showAxes && 'border-chip! bg-chip! text-chip-fg! hover:bg-chip! hover:text-chip-fg!',
+            )}
+          >
+            <Axis3d size="0.75rem" />
+            {t('solo:preview.axes')}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={focusAll}
+            className="h-auto gap-1 rounded-[0.4375rem] px-2 py-[0.3125rem] text-[0.75rem] font-normal text-ink-soft"
+          >
+            <Focus size="0.75rem" />
+            {t('solo:preview.focus')}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={topViewAll}
+            className="h-auto gap-1 rounded-[0.4375rem] px-2 py-[0.3125rem] text-[0.75rem] font-normal text-ink-soft"
+          >
+            <Eye size="0.75rem" />
+            {t('solo:preview.topView')}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            onClick={() => setExpanded(true)}
+            title={t('solo:preview.expand')}
+            className="h-auto w-[1.875rem] rounded-[0.4375rem] py-[0.3125rem] text-ink-soft"
+          >
+            <Maximize2 size="0.75rem" />
+          </Button>
+        </div>
       </div>
 
       <PreviewViewport
@@ -183,12 +189,10 @@ const PreviewViewport = forwardRef<
         overflow: 'hidden',
       }
     : {
-        // aspect-ratio (not a fixed px height) lets the box scale with the
-        // fluid column width instead of overflowing on narrow columns or
-        // looking tiny on a 4K one.
-        aspectRatio: '5 / 3',
-        minHeight: '11.25rem',
-        maxHeight: '21.25rem',
+        // 视口吃掉左列剩余高度：位姿与曲线都是固定高度，窗口越高 3D 越大，
+        // 而不是在底部留一条空白。minHeight 保住窄/矮窗口下的可用性。
+        flex: '1 1 auto',
+        minHeight: '15rem',
         borderRadius: '0.625rem',
         position: 'relative',
         overflow: 'hidden',

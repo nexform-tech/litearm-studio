@@ -59,22 +59,14 @@ describe('useArmMetrics axis count', () => {
     expect(result.current.shown).toEqual([0, 1, 2, 3, 4, 5, 6])
   })
 
-  it('exposes the four metrics in panel order', () => {
+  it('exposes the three metrics in panel order', () => {
     const { result } = renderHook(() => useArmMetrics({ real: true }))
 
     // 顺序即面板里的标签顺序，第一项是默认指标；满不满由用户切换决定，不再按高度丢弃。
-    expect(result.current.metricSeries.map((m) => m.id)).toEqual(['temp', 'dq', 'tau', 'err'])
-    expect(result.current.metricSeries.map((m) => m.unit)).toEqual(['°C', 'rad/s', 'Nm', 'rad'])
-  })
-
-  it('marks the metric the real broadcast does not carry as having no data', () => {
-    const { result } = renderHook(() => useArmMetrics({ real: true }))
-
-    const err = result.current.metricSeries.find((m) => m.id === 'err')
-    expect(err?.noData).toBe(true)
-    // 实机不伪造跟踪误差曲线：读数为 null，图内显示「暂无数据」。
-    expect(err?.live).toBeNull()
-    expect(result.current.metricSeries.find((m) => m.id === 'temp')?.noData).toBe(false)
+    // 跟踪误差已从面板删除：实机广播里没有这个字段，仿真里画一条真机上永远不存在的曲线
+    // 只会让人以为它在测。
+    expect(result.current.metricSeries.map((m) => m.id)).toEqual(['temp', 'dq', 'tau'])
+    expect(result.current.metricSeries.map((m) => m.unit)).toEqual(['°C', 'rad/s', 'Nm'])
   })
 
   it('gives every axis its own colour and cycles the palette past seven', () => {

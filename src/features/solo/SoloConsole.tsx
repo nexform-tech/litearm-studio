@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { useSoloState } from './useSoloState'
 import { PreviewPanel } from './PreviewPanel'
-import { PoseCards } from './PoseCards'
+import { PosePanel } from './PosePanel'
 import { MetricsPanel } from './MetricsPanel'
 import { ControlBar } from './ControlBar'
 import { JointSpacePanel } from './JointSpacePanel'
@@ -16,29 +16,40 @@ export function SoloConsole() {
 
   return (
     <div style={{ flex: 1, display: 'flex', gap: '0.875rem', padding: '0.875rem', minHeight: '0rem', ...ROW_OVERFLOW }}>
-      {/* LEFT: 状态 —— 曲线搬到右列后，剩余高度由「当前位姿」吃掉 */}
+      {/* LEFT: 状态 —— 3D 吃掉剩余高度，关节与笛卡尔合成一张卡，曲线压扁垫在最底下 */}
       <div style={{ ...SCROLL_COLUMN, ...SIDE_COL_WIDE, gap: '0.75rem' }}>
         <PreviewPanel viewTabs={vm.viewTabs} viewBadge={vm.viewBadge} preview={vm.preview} />
-        <PoseCards jointPose={vm.poseJoint} cartPose={vm.poseCart} />
+        <PosePanel jointPose={vm.poseJoint} cartPose={vm.poseCart} />
+        <MetricsPanel
+          compact
+          metrics={vm.metricSeries}
+          activeMetric={vm.activeMetric}
+          selectMetric={vm.selectMetric}
+          pauseLabel={vm.pauseLabel}
+          togglePause={vm.togglePause}
+          series={vm.series}
+          shown={vm.shown}
+          liveData={vm.liveData}
+          simMode={vm.simMode}
+          chips={vm.chips}
+          selectAll={vm.selectAll}
+        />
       </div>
 
       {/* MIDDLE: 操作 */}
       <div style={{ ...SCROLL_COLUMN, flex: '1 1 26rem', minWidth: '23rem', gap: '0.75rem' }}>
         <ControlBar
-          enableBg={vm.enableBg}
-          enableFg={vm.enableFg}
-          enableBd={vm.enableBd}
           enableDot={vm.enableDot}
           enabled={vm.enabled}
           toggleEnable={vm.toggleEnable}
-          modes={vm.modes}
           speed={vm.speed}
           setSpeed={vm.setSpeed}
-          fault={vm.fault}
           faultReason={vm.faultReason}
           clearFault={vm.clearFault}
-          homeJoints={vm.homeJoints}
           zeroJoints={vm.zeroJoints}
+          zeroGravity={vm.zeroGravity}
+          toggleZeroGravity={vm.toggleZeroGravity}
+          readyPose={vm.homeJoints}
         />
 
         {simMode ? <SimModeBanner /> : null}
@@ -57,7 +68,6 @@ export function SoloConsole() {
             simMode={simMode}
             cartUnsupported={vm.cartUnsupported}
             frames={vm.frames}
-            frameOrigin={vm.frameOrigin}
             transCells={vm.transCells}
             rotCells={vm.rotCells}
             onJogPress={vm.onJogPress}
@@ -74,25 +84,10 @@ export function SoloConsole() {
         </div>
       </div>
 
-      {/* RIGHT: 任务（急停常驻）+ 实时曲线 */}
+      {/* RIGHT: 任务（急停常驻）+ 夹爪 —— 夹爪顶掉原来曲线占的那一整块高度 */}
       <div style={{ ...SCROLL_COLUMN, flex: '0 1 clamp(20.5rem, 25vw, 28rem)', minWidth: '20.5rem', gap: '0.75rem' }}>
         <StopButton inert={simMode} />
-        <MetricsPanel
-          metrics={vm.metricSeries}
-          activeMetric={vm.activeMetric}
-          selectMetric={vm.selectMetric}
-          pauseLabel={vm.pauseLabel}
-          togglePause={vm.togglePause}
-          series={vm.series}
-          shown={vm.shown}
-          liveData={vm.liveData}
-          simMode={vm.simMode}
-          chips={vm.chips}
-          selectAll={vm.selectAll}
-          selectNone={vm.selectNone}
-        />
-        {/* 夹爪组件常驻在控制页右下角（老版本 EndEffectorControlPanel 的位置）：
-            夹爪和机械臂共用一条总线，操作它不该离开这一页。 */}
+        {/* 夹爪和机械臂共用一条总线，操作它不该离开这一页。 */}
         <GripperPanel />
       </div>
     </div>

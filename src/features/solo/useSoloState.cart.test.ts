@@ -136,7 +136,7 @@ describe('useSoloState cartesian capability gating', () => {
     expect(result.current.cartUnsupported).toBe(false)
     // 关节与笛卡尔同时可见 ⇒ 只要连着就轮询 TCP 位姿，不再等某个页签被点开。
     expect(mocks.getTcpPose).toHaveBeenCalled()
-    expect(result.current.poseCart?.[0]).toEqual({ k: 'X', v: '0.3200', u: 'm' })
+    expect(result.current.poseCart?.[0]).toEqual({ k: 'X', v: '0.320000', u: 'm' })
 
     await act(async () => {
       await result.current.movelTarget([0.3, 0, 0.4], [0, 1.57, 0])

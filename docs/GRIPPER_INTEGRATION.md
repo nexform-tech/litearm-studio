@@ -391,10 +391,11 @@ become device-parameterised before any gripper UI can exist.
 
 There are two surfaces, matching the retired product:
 
-- **A panel on the control page**, `src/features/solo/GripperPanel.tsx`, pinned in
+- **A panel on the control page**, `src/features/solo/GripperPanel.tsx`, filling
   the right column below the E-stop, for operating the gripper: connect state,
-  aperture, open/close/grasp/release, force and speed, live position and
-  temperature, fault clearing, E-stop state, and the CAN channel it connects on.
+  aperture, open/close/grasp/release, force and speed, live position, force,
+  torque, velocity and temperature, fault clearing, E-stop state, and the CAN
+  channel it connects on.
 - **A section in the existing settings page**, for configuring it: CAN channel,
   CAN ids, mount, which calibration file is in effect, import a calibration
   (typed path or a **Browse…** button that opens a control-machine directory

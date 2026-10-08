@@ -73,6 +73,9 @@
   --ok: #137a44;
   --ok-soft: #eaf7ef;
   --ok-line: #c6e9d3;
+  /* 实心成功按钮（控制栏「复位」）：扁平纯色，白字对比度约 5.4:1。 */
+  --ok-solid: #137a44;
+  --ok-solid-fg: #ffffff;
   --warn: #8a6410;
   --warn-soft: #fff7e2;
   --warn-line: #f2c86b;
@@ -185,6 +188,8 @@ a:hover {
   --color-ok: var(--ok);
   --color-ok-soft: var(--ok-soft);
   --color-ok-line: var(--ok-line);
+  --color-ok-solid: var(--ok-solid);
+  --color-ok-solid-fg: var(--ok-solid-fg);
   --color-warn: var(--warn);
   --color-warn-soft: var(--warn-soft);
   --color-warn-line: var(--warn-line);
@@ -262,6 +267,9 @@ a:hover {
   --ok: #4ade80;
   --ok-soft: #16301f;
   --ok-line: #245034;
+  /* 深色主题照 --chip 的做法反转：亮底 + 深字，实心按钮才压得住黑背景。 */
+  --ok-solid: #4ade80;
+  --ok-solid-fg: #0e151d;
   --warn: #f5c76b;
   --warn-soft: #33280f;
   --warn-line: #5c4718;

@@ -1,41 +1,49 @@
 {
   "modes": {
     "position": "Position",
-    "drag": "Drag"
+    "drag": "Zero Gravity"
   },
   "submodes": {
     "joint": "Joint",
     "cartesian": "Cartesian"
   },
   "pose": {
-    "jointTitle": "Joint Pose",
-    "cartTitle": "Cartesian Pose"
+    "title": "Status",
+    "jointLabel": "Joint {{n}}"
   },
   "controlBar": {
-    "clearFault": "Clear Error",
+    "enable": "Enable",
+    "enableTitle": "Energise the drives and hold the current pose",
+    "disable": "Disable",
+    "disableTitle": "Cut motor torque: the arm drops under gravity, support it first",
+    "reset": "Reset",
+    "resetTitle": "Clear latched drive faults and return the arm to an operable state",
+    "home": "Go Home",
+    "homeTitle": "Move to the zero pose (all axes 0 rad)",
+    "zeroGravityOnTitle": "Leave zero gravity: restore position control and hold the current pose",
+    "zeroGravityOffTitle": "Enter zero gravity: zero torque while energised, drag the arm by hand to teach",
     "readyPose": "Ready Pose",
     "readyPoseTitle": "Move to recommended ready pose Home",
-    "zeroPose": "Zero Pose",
-    "zeroPoseTitle": "Move to zero pose (all axes 0 rad)",
-    "speed": "Speed"
+    "speed": "Speed",
+    "speedDown": "Decrease speed",
+    "speedUp": "Increase speed"
   },
   "cartesian": {
-    "title": "Cartesian Space",
+    "title": "End-effector Trim",
     "baseFrame": "Base Frame",
     "toolFrame": "Tool Frame",
     "simHint": "Sim mode only supports joint space operations",
-    "unsupportedHint": "This firmware was built without cartesian planning (movel unavailable)",
+    "unsupportedHint": "This firmware was built without cartesian planning (linear motion unavailable)",
     "poseUnavailable": "No cartesian pose: this firmware has no cartesian planning",
-    "jogSubMode": "Directional Jog",
-    "targetSubMode": "Target Pose movel",
-    "origin": "Origin",
+    "targetSubMode": "Linear Motion",
     "transStep": "Trans Step",
     "rotStep": "Rot Step",
-    "transTitle": "Translation · mm",
-    "rotTitle": "Rotation · deg",
-    "targetPoseTitle": "Target position [X, Y, Z] (m) & Orientation [Roll, Pitch, Yaw] (rad)",
-    "syncCurrentPose": "⇠ Sync Current Pose",
-    "movelBtn": "Linear motion to target pose (movel)",
+    "transTitle": "Translate",
+    "rotTitle": "Rotate",
+    "transUnit": "(mm)",
+    "rotUnit": "(deg)",
+    "syncCurrentPose": "Sync Current Pose",
+    "movelBtn": "Move to target pose",
     "movelMoving": "Moving...",
     "pad": {
       "fwd": "Forward",
@@ -55,9 +63,7 @@
       "rotBaseZ": "Rot Base Z",
       "rotToolX": "Rot Tool X",
       "rotToolY": "Rot Tool Y",
-      "rotToolZ": "Rot Tool Z",
-      "pose": "Pose",
-      "toolPose": "Tool Pose"
+      "rotToolZ": "Rot Tool Z"
     }
   },
   "jointSpace": {
@@ -72,6 +78,7 @@
     "axes": "Axes",
     "focus": "Focus",
     "topView": "Top View",
+    "expand": "Expand",
     "loading": "Loading 3D model…"
   }
 }

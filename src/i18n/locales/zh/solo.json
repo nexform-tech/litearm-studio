@@ -1,41 +1,49 @@
 {
   "modes": {
     "position": "位置",
-    "drag": "拖动"
+    "drag": "零重力"
   },
   "submodes": {
     "joint": "关节",
     "cartesian": "笛卡尔"
   },
   "pose": {
-    "jointTitle": "关节位姿",
-    "cartTitle": "笛卡尔位姿"
+    "title": "状态",
+    "jointLabel": "关节 {{n}}"
   },
   "controlBar": {
-    "clearFault": "清错",
+    "enable": "使能",
+    "enableTitle": "使能驱动，锁住当前姿态",
+    "disable": "下使能",
+    "disableTitle": "切断力矩输出：机械臂会在自重下下坠，下使能前请先扶稳",
+    "reset": "复位",
+    "resetTitle": "清除驱动锁存故障，让机械臂回到可操作状态",
+    "home": "回零点",
+    "homeTitle": "移动至零位 (各轴 0 rad)",
+    "zeroGravityOnTitle": "关闭零重力：恢复位置控制并锁住当前姿态",
+    "zeroGravityOffTitle": "开启零重力：零力矩、仍使能，可用手直接拖动示教",
     "readyPose": "就绪姿态",
     "readyPoseTitle": "移动至推荐工作就绪姿态 Home",
-    "zeroPose": "回零位",
-    "zeroPoseTitle": "移动至零位 (各轴 0 rad)",
-    "speed": "速度"
+    "speed": "速度",
+    "speedDown": "降低速度",
+    "speedUp": "提高速度"
   },
   "cartesian": {
-    "title": "笛卡尔空间",
+    "title": "末端点位微调",
     "baseFrame": "基坐标系",
     "toolFrame": "工具坐标系",
     "simHint": "仿真模式仅支持关节空间操作",
-    "unsupportedHint": "当前固件未编译笛卡尔规划（movel 不可用）",
+    "unsupportedHint": "当前固件未编译笛卡尔规划（直线运动不可用）",
     "poseUnavailable": "无笛卡尔位姿：当前固件未编译笛卡尔规划",
-    "jogSubMode": "方向点动",
-    "targetSubMode": "目标位姿 movel",
-    "origin": "原点",
+    "targetSubMode": "直线运动",
     "transStep": "平移步长",
     "rotStep": "旋转步长",
-    "transTitle": "平移 · mm",
-    "rotTitle": "旋转 · deg",
-    "targetPoseTitle": "目标位置 [X, Y, Z] (m) 与姿态角 [Roll, Pitch, Yaw] (rad)",
-    "syncCurrentPose": "⇠ 同步当前位姿",
-    "movelBtn": "直线运动到目标位姿 (movel)",
+    "transTitle": "平移",
+    "rotTitle": "旋转",
+    "transUnit": "(mm)",
+    "rotUnit": "(deg)",
+    "syncCurrentPose": "同步当前位姿",
+    "movelBtn": "运动到目标位姿",
     "movelMoving": "正在移动...",
     "pad": {
       "fwd": "前",
@@ -55,9 +63,7 @@
       "rotBaseZ": "绕基Z",
       "rotToolX": "绕工具X",
       "rotToolY": "绕工具Y",
-      "rotToolZ": "绕工具Z",
-      "pose": "姿态",
-      "toolPose": "工具姿态"
+      "rotToolZ": "绕工具Z"
     }
   },
   "jointSpace": {
@@ -72,6 +78,7 @@
     "axes": "坐标系",
     "focus": "聚焦",
     "topView": "俯视",
+    "expand": "放大",
     "loading": "3D 模型加载中…"
   }
 }

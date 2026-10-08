@@ -33,7 +33,7 @@ import type { JointLimits } from './soloUtils'
 export { HOME_JOINTS, JOINT_LIMITS, ZERO_JOINTS, normalizeLimits, pctToRad, pctToRadNum, radToPct, readStoredSpeed } from './soloUtils'
 
 type Frame = 'base' | 'tool'
-type ArmMode = '位置' | '拖动'
+type ArmMode = '位置' | '零重力'
 
 export type { SeriesSample }
 
@@ -174,9 +174,9 @@ export function useSoloState() {
   const armStateRef = useRef(armState)
   armStateRef.current = armState
 
-  // 广播里的真实模式（zero_gravity ⇔ 拖动）；仿真/未连接时为 null。
+  // 广播里的真实模式（zero_gravity ⇔ 零重力）；仿真/未连接时为 null。
   const broadcastMode: ArmMode | null =
-    s.real && armState ? (armState.state === 'zero_gravity' ? '拖动' : '位置') : null
+    s.real && armState ? (armState.state === 'zero_gravity' ? '零重力' : '位置') : null
 
   // 模式意图对账：广播追上意图即清除意图，回到"以广播为准"。依赖的是派生出的
   // 模式字符串而非 armState 本身，否则 10Hz 广播会不停重置下面的超时定时器。
@@ -303,34 +303,33 @@ export function useSoloState() {
   // 实机模式展示真实状态；仿真模式保留本地开关（纯前端临时模拟）。
   const enableOn = s.real ? realEnabled : s.enabled
 
-  // 实机模式以广播的真实状态为准（zero_gravity ⇔ 拖动），避免 UI 与实际不符；
+  // 实机模式以广播的真实状态为准（zero_gravity ⇔ 零重力），避免 UI 与实际不符；
   // 切换指令在途时先按意图显示（modeIntent），仿真/未连接时退回本地选择。
   const realMode: ArmMode = s.modeIntent ?? broadcastMode ?? s.mode
 
-  const modes = (['位置', '拖动'] as const).map((name) => ({
-    key: name,
-    label: name === '位置' ? t('solo:modes.position') : t('solo:modes.drag'),
-    active: realMode === name,
-    onClick: () => {
-      if (!connected || !s.real) {
-        update({ mode: name, modeIntent: null })
-        return
-      }
-      update({ mode: name, modeIntent: name })
-      // 拖动模式 = 固件零重力；位置模式 = 退出零重力（固件没有 hold 指令）。
-      const action = name === '拖动' ? armClient.zeroGStart() : armClient.zeroGStop()
-      action
-        .then(() => setLastError(null))
-        .catch((err) => {
-          reportError(name === '拖动' ? '切换到拖动模式' : '退出拖动模式', err)
-          setS((p) => ({ ...p, modeIntent: null }))
-        })
-    },
-  }))
+  // 零重力是一颗可反复开关的按钮：按一下进入（固件 zero_g_start），再按一下退出
+  // （zero_g_stop，固件没有 hold 指令）。目标模式由**当前显示的模式**取反，
+  // 而不是由点击那一刻写死的目标决定 —— 否则连点两下会发出两条同样的命令。
+  const toggleZeroGravity = () => {
+    const target: ArmMode = realMode === '零重力' ? '位置' : '零重力'
+    if (!connected || !s.real) {
+      update({ mode: target, modeIntent: null })
+      return
+    }
+    update({ mode: target, modeIntent: target })
+    const action = target === '零重力' ? armClient.zeroGStart() : armClient.zeroGStop()
+    action
+      .then(() => setLastError(null))
+      .catch((err) => {
+        reportError(target === '零重力' ? '进入零重力模式' : '退出零重力模式', err)
+        setS((p) => ({ ...p, modeIntent: null }))
+      })
+  }
 
   // 仿真模式始终展示虚拟姿态；实机模式已连接时展示同步的实际关节角；
   // 未连接时也展示滑条对应的角度，避免读数与滑条不一致。
-  const jointVals = jointPct.map((pct, i) => toRad(pct, i).toFixed(3))
+  // 位姿卡给到 6 位小数：关节角差 0.001 rad、TCP 差 0.0001 m 在示教时都看得见。
+  const jointVals = jointPct.map((pct, i) => toRad(pct, i).toFixed(6))
   const poseJoint = jointVals.map((v, i) => ({ k: 'J' + (i + 1), v, u: 'rad' }))
 
   // 关节与笛卡尔同时展示（不再用页签二选一）。顺序取 daemon `get_tcp` 的原生顺序：
@@ -341,20 +340,20 @@ export function useSoloState() {
     ? null
     : cartPose
       ? [
-          { k: 'X', v: cartPose[0].toFixed(4), u: 'm' },
-          { k: 'Y', v: cartPose[1].toFixed(4), u: 'm' },
-          { k: 'Z', v: cartPose[2].toFixed(4), u: 'm' },
-          { k: 'RX', v: cartPose[3].toFixed(4), u: 'rad' },
-          { k: 'RY', v: cartPose[4].toFixed(4), u: 'rad' },
-          { k: 'RZ', v: cartPose[5].toFixed(4), u: 'rad' },
+          { k: 'X', v: cartPose[0].toFixed(6), u: 'm' },
+          { k: 'Y', v: cartPose[1].toFixed(6), u: 'm' },
+          { k: 'Z', v: cartPose[2].toFixed(6), u: 'm' },
+          { k: 'RX', v: cartPose[3].toFixed(6), u: 'rad' },
+          { k: 'RY', v: cartPose[4].toFixed(6), u: 'rad' },
+          { k: 'RZ', v: cartPose[5].toFixed(6), u: 'rad' },
         ]
       : [
-          { k: 'X', v: s.cart.X.toFixed(4), u: 'm' },
-          { k: 'Y', v: s.cart.Y.toFixed(4), u: 'm' },
-          { k: 'Z', v: s.cart.Z.toFixed(4), u: 'm' },
-          { k: 'RX', v: s.cart.RX.toFixed(4), u: 'rad' },
-          { k: 'RY', v: s.cart.RY.toFixed(4), u: 'rad' },
-          { k: 'RZ', v: s.cart.RZ.toFixed(4), u: 'rad' },
+          { k: 'X', v: s.cart.X.toFixed(6), u: 'm' },
+          { k: 'Y', v: s.cart.Y.toFixed(6), u: 'm' },
+          { k: 'Z', v: s.cart.Z.toFixed(6), u: 'm' },
+          { k: 'RX', v: s.cart.RX.toFixed(6), u: 'rad' },
+          { k: 'RY', v: s.cart.RY.toFixed(6), u: 'rad' },
+          { k: 'RZ', v: s.cart.RZ.toFixed(6), u: 'rad' },
         ]
 
   const joints = jointPct.map((pct, i) => {
@@ -395,17 +394,50 @@ export function useSoloState() {
     { id: 'tool', name: t('solo:cartesian.toolFrame') },
   ] as const).map((f) => ({ key: f.id, label: f.name, ...pillProps(s.frame, f.id), onClick: () => update({ frame: f.id }) }))
 
-  const frameOrigin = s.frame === 'base' ? 'BASE_LINK' : 'TOOL0 / TCP'
-
+  // 点动盘的格子顺序 = 盘面位置（十字形，见 `DirectionPad` 的 `PadCell`）：
+  // 顶部一对 → 上 → 左/标签/右 → 下。平移盘把 Z 拆成顶部那一对，X 走竖向、
+  // Y 走横向；旋转盘同理（RZ 一对、RY 竖向、RX 横向）。
   const transCells: PadCell[] =
     s.frame === 'base'
-      ? [null, ['X+', t('solo:cartesian.pad.fwd')], ['Z+', t('solo:cartesian.pad.up')], ['Y+', t('solo:cartesian.pad.left')], ['TCP', '', true], ['Y−', t('solo:cartesian.pad.right')], null, ['X−', t('solo:cartesian.pad.back')], ['Z−', t('solo:cartesian.pad.down')]]
-      : [null, ['TX+', t('solo:cartesian.pad.toolFwd')], ['TZ+', t('solo:cartesian.pad.feed')], ['TY+', t('solo:cartesian.pad.toolLeft')], ['TOOL', '', true], ['TY−', t('solo:cartesian.pad.toolRight')], null, ['TX−', t('solo:cartesian.pad.toolBack')], ['TZ−', t('solo:cartesian.pad.retract')]]
+      ? [
+          ['Z+', t('solo:cartesian.pad.up')],
+          ['Z−', t('solo:cartesian.pad.down')],
+          ['X+', t('solo:cartesian.pad.fwd')],
+          ['Y+', t('solo:cartesian.pad.left')],
+          [t('solo:cartesian.transTitle'), t('solo:cartesian.transUnit'), true],
+          ['Y−', t('solo:cartesian.pad.right')],
+          ['X−', t('solo:cartesian.pad.back')],
+        ]
+      : [
+          ['TZ+', t('solo:cartesian.pad.feed')],
+          ['TZ−', t('solo:cartesian.pad.retract')],
+          ['TX+', t('solo:cartesian.pad.toolFwd')],
+          ['TY+', t('solo:cartesian.pad.toolLeft')],
+          [t('solo:cartesian.transTitle'), t('solo:cartesian.transUnit'), true],
+          ['TY−', t('solo:cartesian.pad.toolRight')],
+          ['TX−', t('solo:cartesian.pad.toolBack')],
+        ]
 
   const rotCells: PadCell[] =
     s.frame === 'base'
-      ? [null, ['RX+', t('solo:cartesian.pad.rotBaseX')], ['RZ+', t('solo:cartesian.pad.rotBaseZ')], ['RY+', t('solo:cartesian.pad.rotBaseY')], [t('solo:cartesian.pad.pose'), '', true], ['RY−', t('solo:cartesian.pad.rotBaseY')], null, ['RX−', t('solo:cartesian.pad.rotBaseX')], ['RZ−', t('solo:cartesian.pad.rotBaseZ')]]
-      : [null, ['RTX+', t('solo:cartesian.pad.rotToolX')], ['RTZ+', t('solo:cartesian.pad.rotToolZ')], ['RTY+', t('solo:cartesian.pad.rotToolY')], [t('solo:cartesian.pad.toolPose'), '', true], ['RTY−', t('solo:cartesian.pad.rotToolY')], null, ['RTX−', t('solo:cartesian.pad.rotToolX')], ['RTZ−', t('solo:cartesian.pad.retract')]]
+      ? [
+          ['RZ+', t('solo:cartesian.pad.rotBaseZ')],
+          ['RZ−', t('solo:cartesian.pad.rotBaseZ')],
+          ['RY−', t('solo:cartesian.pad.rotBaseY')],
+          ['RX+', t('solo:cartesian.pad.rotBaseX')],
+          [t('solo:cartesian.rotTitle'), t('solo:cartesian.rotUnit'), true],
+          ['RX−', t('solo:cartesian.pad.rotBaseX')],
+          ['RY+', t('solo:cartesian.pad.rotBaseY')],
+        ]
+      : [
+          ['RTZ+', t('solo:cartesian.pad.rotToolZ')],
+          ['RTZ−', t('solo:cartesian.pad.rotToolZ')],
+          ['RTY−', t('solo:cartesian.pad.rotToolY')],
+          ['RTX+', t('solo:cartesian.pad.rotToolX')],
+          [t('solo:cartesian.rotTitle'), t('solo:cartesian.rotUnit'), true],
+          ['RTX−', t('solo:cartesian.pad.rotToolX')],
+          ['RTY+', t('solo:cartesian.pad.rotToolY')],
+        ]
 
   const viewTabs: SegItem[] = [
     { key: 'sim', label: t('common:sim'), active: !s.real, onClick: () => update({ real: false }) },
@@ -500,16 +532,14 @@ export function useSoloState() {
           .setSpeed(s.speed)
           .then(() => armClient.home())
           .then(() => setLastError(null))
-          .catch((err) => reportError('回零位', err))
+          .catch((err) => reportError('回零点', err))
       }
     },
-    enableBg: enableOn ? 'var(--chip)' : 'var(--card)',
-    enableFg: enableOn ? 'var(--chip-fg)' : 'var(--ink-strong)',
-    // 失能态与卡片同底（浅色白 / 深色卡片色）：必须给描边，否则看不出是个按钮。
-    enableBd: enableOn ? 'var(--ink)' : 'var(--line-strong)',
+    // 使能按钮只吃一颗状态点的颜色：按钮皮肤统一在 ControlBar（描边 + 圆点）。
     enableDot: enableOn ? '#4ade80' : '#f5a524',
-    enableLabel: enableOn ? t('common:enabled') : t('common:disabled'),
-    modes,
+    /** 零重力开关是否处于激活：实机跟随广播，指令在途时先跟随意图。 */
+    zeroGravity: realMode === '零重力',
+    toggleZeroGravity,
 
     joints,
     releaseOnly: s.releaseOnly,
@@ -582,7 +612,6 @@ export function useSoloState() {
     },
 
     frames,
-    frameOrigin,
     transCells,
     rotCells,
     transSteps: TRANS_STEPS,

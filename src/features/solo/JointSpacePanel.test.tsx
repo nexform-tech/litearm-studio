@@ -1,7 +1,9 @@
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { JointSpacePanel } from './JointSpacePanel'
-import '@/i18n'
+// 取 i18n 实例而不是写死标题：jsdom 的 navigator 语言决定了这里的默认语言，
+// 写死中文会在英文环境下翻车。这个 import 同时把实例注册给 react-i18next。
+import i18n from '@/i18n'
 
 // vitest 未开 globals，RTL 的自动 cleanup 不会注册：不手动挂 afterEach 的话，
 // 上一个用例的 DOM 会留在 document 里，slider 数量会叠加。
@@ -56,6 +58,7 @@ describe('JointSpacePanel axis range', () => {
   it('shows the full range and every slider on a seven-axis arm', () => {
     renderPanel(7)
 
+    expect(screen.getByText(i18n.t('solo:jointSpace.title'))).toBeDefined()
     expect(screen.getAllByRole('slider')).toHaveLength(7)
     expect(screen.getByText('J1–J7')).toBeDefined()
   })

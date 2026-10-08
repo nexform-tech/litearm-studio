@@ -21,7 +21,7 @@ describe('live curve metric selection', () => {
   })
 
   it('round-trips every metric the panel can show', () => {
-    for (const id of ['temp', 'dq', 'tau', 'err'] as const) {
+    for (const id of ['temp', 'dq', 'tau'] as const) {
       storeMetric(id)
       expect(readStoredMetric()).toBe(id)
       expect(window.localStorage.getItem(METRIC_STORAGE_KEY)).toBe(id)

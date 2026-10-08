@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@/i18n'
 import type { PadCell } from '@/components/DirectionPad'
@@ -18,14 +18,30 @@ const frames: SegItem[] = [
   { key: 'base', label: '基坐标系', active: true, onClick: vi.fn() },
   { key: 'tool', label: '工具坐标系', active: false, onClick: vi.fn() },
 ]
-const transCells: PadCell[] = [null, ['X+', '前'], ['Z+', '上']]
-const rotCells: PadCell[] = [null, ['RX+', '绕基X'], ['RZ+', '绕基Z']]
+// 盘面顺序即位置（十字形）：顶部一对 → 上 → 左/标签/右 → 下。
+const transCells: PadCell[] = [
+  ['Z+', '上'],
+  ['Z−', '下'],
+  ['X+', '前'],
+  ['Y+', '左'],
+  ['平移', '(mm)', true],
+  ['Y−', '右'],
+  ['X−', '后'],
+]
+const rotCells: PadCell[] = [
+  ['RZ+', '绕基Z'],
+  ['RZ−', '绕基Z'],
+  ['RY−', '绕基Y'],
+  ['RX+', '绕基X'],
+  ['旋转', '(deg)', true],
+  ['RX−', '绕基X'],
+  ['RY+', '绕基Y'],
+]
 
 function renderPanel(overrides: Partial<Parameters<typeof CartesianPanel>[0]> = {}) {
   return render(
     <CartesianPanel
       frames={frames}
-      frameOrigin="BASE_LINK"
       transCells={transCells}
       rotCells={rotCells}
       onJogPress={vi.fn()}
@@ -40,11 +56,6 @@ function renderPanel(overrides: Partial<Parameters<typeof CartesianPanel>[0]> = 
   )
 }
 
-/** 切到"目标位姿 movel"子模式，露出 movel 按钮。 */
-function openTargetSubMode() {
-  fireEvent.click(screen.getByRole('button', { name: '目标位姿 movel' }))
-}
-
 describe('CartesianPanel capability notice', () => {
   beforeEach(async () => {
     await i18n.changeLanguage('zh')
@@ -55,8 +66,8 @@ describe('CartesianPanel capability notice', () => {
 
     expect(screen.getByText(/未编译笛卡尔规划/)).toBeTruthy()
 
-    openTargetSubMode()
-    const movel = screen.getByRole('button', { name: /直线运动到目标位姿/ }) as HTMLButtonElement
+    // 盘面与 movel 表单同屏并存，不需要先切子模式。
+    const movel = screen.getByRole('button', { name: /运动到目标位姿/ }) as HTMLButtonElement
     expect(movel.disabled).toBe(true)
     const sync = screen.getByRole('button', { name: /同步当前位姿/ }) as HTMLButtonElement
     expect(sync.disabled).toBe(true)
@@ -67,8 +78,7 @@ describe('CartesianPanel capability notice', () => {
 
     expect(screen.queryByText(/未编译笛卡尔规划/)).toBeNull()
 
-    openTargetSubMode()
-    const movel = screen.getByRole('button', { name: /直线运动到目标位姿/ }) as HTMLButtonElement
+    const movel = screen.getByRole('button', { name: /运动到目标位姿/ }) as HTMLButtonElement
     expect(movel.disabled).toBe(false)
     expect(screen.getByRole('button', { name: /同步当前位姿/ })).toBeTruthy()
   })

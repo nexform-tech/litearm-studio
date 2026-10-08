@@ -136,7 +136,7 @@ The Solo Control page provides real-time 3D pose monitoring, state readouts, joi
   - Real Mode: Model strictly reflects live joint positions broadcast from the robot;
   - Sim Mode: Preview motions in the interface without issuing commands to the arm;
 - Navigation Controls: Left-drag to rotate view 360°, scroll wheel to zoom, right-drag to pan;
-- Toolbar Actions:
+- Toolbar Actions (on the title row, next to the Real/Sim switch):
   - Axes: Toggle coordinate frames on joints and base;
   - Focus: Recenter camera on the robot;
   - Top View: Jump to top-down orthographic view;
@@ -144,10 +144,11 @@ The Solo Control page provides real-time 3D pose monitoring, state readouts, joi
 
 ### 3.2 Pose Monitor
 
-Displays real-time joint and end-effector pose readings:
+Joint and Cartesian readings share one "Status" card, with both columns visible at once and six decimals each:
 
-- Joint Space: Real-time angles for all seven axes J1–J7 (rad);
-- Cartesian Space: Tool Center Point (TCP) spatial coordinates (`X, Y, Z` in meters) and Euler angles (`Roll, Pitch, Yaw` in radians) relative to the base coordinate frame.
+- Joint Space (left column): Real-time angles for joints 1–7 (rad);
+- Cartesian Space (right column): Tool Center Point (TCP) spatial coordinates (`X:`, `Y:`, `Z:` in meters) and Euler angles (`RX:`, `RY:`, `RZ:` in radians) relative to the base coordinate frame;
+- When the firmware has no Cartesian planner the right column says so instead of showing an invented pose.
 
 ### 3.3 Live Telemetry Curve
 
@@ -155,10 +156,12 @@ Shows one real-time waveform at a time; you pick which metric it plots:
 
 ![Telemetry Curve](images/en/06_solo_telemetry.png)
 
-- Metric Tabs: Switch between Temperature (°C), Velocity (rad/s), Torque (Nm), and Tracking Error (rad). The panel draws only the selected metric, at full height — the right column is not tall enough for four readable charts.
+- Placement: the panel sits under "Current Pose" in the left column at a fixed height (about 10rem, scaling with the window's font size), enough for one readable chart;
+- Metric Tabs: Switch between Temperature (°C), Velocity (rad/s), and Torque (Nm). The panel draws only the selected metric; the tabs are how you look at the others, instead of squeezing three charts together. The three tabs share the title row with the title and "Pause/Resume".
 - Remembered Choice: The selected metric is restored the next time you open the control page; temperature is the default.
-- Channel Filters: Select or deselect J1–J7 curves individually, with "Select All", "Clear", and "Pause/Resume" controls.
-- Current Readings: The J1–J7 numbers next to the metric name are the latest sample for the selected metric. Tracking error reads "no real-time data" because the controller broadcast does not carry it.
+- Channel Filters: The joint list has its own row under the title row, one checkbox per joint. Tick a box to plot that joint, clear it to hide the curve; the checkbox accent matches the curve colour. "Select All" closes the row on the right.
+- Hover Readout: Hovering the chart floats that moment's per-joint values and unit next to the cursor, two columns wide and colour-matched to the curves; it disappears when the pointer leaves. The readout floats above the panel, so the card never clips it.
+- Current Readings: The J1–J7 numbers above the chart are the latest sample for the selected metric.
 
 ---
 
@@ -168,19 +171,22 @@ Consolidates global robot controls and operating mode selection:
 
 #### Primary Controls
 
+The first row of the control bar holds five buttons ordered by kind: the two state switches first (Enable / Zero Gravity), then the three commands (Reset / Go Home / Ready Pose):
+
 - Enable / Disable: Controls motor power and holding state.
   - Click Enable: Energizes motors and locks current pose into ready state;
-  - Click Disable: Prompts for confirmation. Note: Disabling cuts motor holding torque; the arm will drop under gravity. Always support the arm or rest it on a secure surface before disabling;
-- Clear Fault: Resets driver error alarms (such as overcurrent or overtemperature). Once all joints are healthy, the arm automatically returns to ready state;
+  - Click Disable (the same button reads "Disable" while the arm is energised): cuts motor holding torque immediately; the arm will drop under gravity. Always support the arm or rest it on a secure surface before disabling;
+- Zero Gravity: Press once to enter zero gravity (the button turns blue), press again to leave it and return to position mode. Support the arm before entering; on exit it re-locks the current pose at high stiffness;
+- Reset: Resets driver error alarms (such as overcurrent or overtemperature). Once all joints are healthy, the arm automatically returns to ready state;
+- Go Home: Smoothly moves all axes to the upright zero point (all joints at 0 rad), typically used for initial calibration or recovery;
 - Ready Pose: Smoothly moves all axes to the default operating configuration, serving as an ideal baseline for operations;
-- Zero Position: Smoothly moves all axes to the upright zero position (all joints at 0 rad), typically used for initial calibration or recovery;
 - STOP (Emergency Stop): Immediately aborts all ongoing motions and locks the arm in place. In case of personnel danger or equipment collision, cut main power immediately.
 
 #### Operational Modes
 
-- Position Mode: Standard closed-loop servo control mode, high-stiffness position hold, precisely executing joint micro-stepping or Cartesian trajectory commands;
-- Drag Mode: Enables dynamic gravity compensation and zero-force teaching algorithms; motors cancel arm gravity in real time, allowing smooth manual lead-through by hand;
-- Global Speed Scale: Slider adjusting global speed ceiling from 1% to 100% across all motions (mapped to underlying driver and planner speed scaling).
+- Position Mode: Standard closed-loop servo control mode, high-stiffness position hold, precisely executing joint micro-stepping or Cartesian trajectory commands. This is the mode whenever zero gravity is off;
+- Zero Gravity Mode: Enables dynamic gravity compensation and zero-force teaching algorithms; motors cancel arm gravity in real time, allowing smooth manual lead-through by hand. The control bar's Zero Gravity button toggles it, and the badge at the bottom-left of the 3D preview shows the active mode (for example "Zero Gravity · Real");
+- Global Speed Scale: Its own row; the `−` / `+` stepper at the right end of the slider nudges it by 1%. Range 1%–100% across all motions (mapped to underlying driver and planner speed scaling).
 
 ---
 
@@ -194,7 +200,7 @@ Consolidates global robot controls and operating mode selection:
 
 ---
 
-### 3.6 Cartesian Space Control
+### 3.6 End-effector Trim (Cartesian Space)
 
 Supports spatial pose adjustments referenced to the end-effector tool:
 
@@ -205,22 +211,25 @@ Supports spatial pose adjustments referenced to the end-effector tool:
 - Reference Frame:
   - Base: Grounded to the robot mounting base;
   - Tool: Dynamic reference aligned with tool TCP orientation;
-- Translation Pad: Long-press `Forward / Backward / Left / Right / Up / Down` buttons for continuous linear moves; stop on release. Step sizes: 1 / 5 / 10 / 25 / 50 mm;
-- Rotation Pad: Long-press rotation buttons (around X / Y / Z axes) to rotate around TCP; stop on release. Step sizes: 1 / 5 / 10 / 15 / 30°.
+- Translation Pad (a cross): the top pair is `Z+ / Z−` (up/down), the vertical axis is `X+ / X−` (forward/back) and the horizontal axis is `Y+ / Y−` (left/right). Long-press for continuous linear moves; stop on release. Step size 1 / 5 / 10 / 25 / 50 mm, chosen on the title row;
+- Rotation Pad (the same cross): the top pair is `RZ+ / RZ−`, the vertical axis is `RY− / RY+` and the horizontal axis is `RX+ / RX−`. Long-press to rotate around the TCP; stop on release. Step size 1 / 5 / 10 / 15 / 30°;
+- Two cards side by side: the end-effector trim card on the left holds the jog pads and the linear-motion card on the right holds the absolute pose inputs, with no sub-mode tabs to switch between;
+- Reference frame: `Base Frame / Tool Frame` lives on the title row and already says which frame is in use, so the separate origin badge is gone.
 
-#### Linear Move to Target Pose
+#### Linear Motion to a Target Pose
 
 ![Cartesian Linear Motion](images/en/09_solo_cartesian_movel.png)
 
 - Target Pose Input: Enter target `X, Y, Z` coordinates (m) and `Roll, Pitch, Yaw` angles (rad);
-- ⇠ Sync Current: Populate inputs with live TCP pose for precision fine-tuning;
-- Execute: Plans a linear interpolation trajectory to smoothly move the arm to the target pose.
+- Sync Current: Populate inputs with live TCP pose for precision fine-tuning;
+- Execute: the end effector travels the **straight line** from its start to the target (firmware `0x3A`, a Cartesian straight move) and the orientation is interpolated along the shortest arc; the start is the live measured TCP, not the values in the fields;
+- ⚠ The firmware accepting the command does not mean the arm stopped on the target: a later motion can supersede the trajectory, so read the live TCP in the Status card for the real landing point.
 
 ---
 
 ### 3.7 LiteGrip Gripper
 
-The LiteGrip two-finger parallel gripper shares the arm's CAN bus and lives in a panel at the bottom of the control page's right column. It has its own connection, enable and stop controls; the CAN channel, mounting, calibration and travel are configured in **Settings → Gripper & bus** (§5.4).
+The LiteGrip two-finger parallel gripper shares the arm's CAN bus and fills the control page's right column below the E-stop. It has its own connection, enable and stop controls; the CAN channel, mounting, calibration and travel are configured in **Settings → Gripper & bus** (§5.4), and the panel repeats the channel and CAN ID as one line of monospace text at the bottom.
 
 - Connect / Disconnect: open or close the gripper session. **Connect** is available only when the program reports a gripper session — the Linux daemon has one, the Windows build does not;
 - Enable / Disable: energise or release the gripper drive. Opening, closing and calibration need the drive enabled;
