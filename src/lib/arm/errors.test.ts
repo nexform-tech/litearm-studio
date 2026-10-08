@@ -105,8 +105,10 @@ describe('formatArmError (daemon err.kind → i18n)', () => {
     expect(rejected).not.toMatch(/凭据无效|凭据是假|不是本机签发的|凭据有误/)
 
     await i18n.changeLanguage('en')
+    // 英文点名的是控制栏那颗按钮的名字（`solo:controlBar.disable` = "Disable"）：以前这里写
+    // "Disarm"，而控制栏上并没有叫这个名字的按钮。
     expect(formatArmError(
-      daemonErr('CommandRejectedError', 'ERR [3F,4]', { cmd: 63, code: 4 }))).toContain('Disarm')
+      daemonErr('CommandRejectedError', 'ERR [3F,4]', { cmd: 63, code: 4 }))).toContain('Disable')
 
     // 同一个数字在别的命令下**不**套用这些文案。
     await i18n.changeLanguage('zh')

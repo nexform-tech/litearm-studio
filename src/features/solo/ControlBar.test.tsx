@@ -25,11 +25,11 @@ beforeEach(async () => {
 function renderBar(overrides: Partial<Parameters<typeof ControlBar>[0]> = {}) {
   const props: Parameters<typeof ControlBar>[0] = {
     enabled: false,
-    enableDot: '#f5a524',
     toggleEnable: vi.fn(),
     speed: 50,
     setSpeed: vi.fn(),
     faultReason: null,
+    reset: vi.fn(),
     clearFault: vi.fn(),
     zeroJoints: vi.fn(),
     zeroGravity: false,
@@ -41,22 +41,36 @@ function renderBar(overrides: Partial<Parameters<typeof ControlBar>[0]> = {}) {
 }
 
 describe('ControlBar action row', () => {
-  it('carries the five actions in operator order: switches first, then commands', () => {
+  it('carries the six actions in operator order: switches, then fault recovery, then commands', () => {
     renderBar()
 
     const row = screen.getByTestId('control-bar-actions')
 
-    // 分组只靠顺序：前两颗是改状态的开关（使能 / 零重力），后三颗是一次性动作
-    // （复位 / 回零点 / 就绪姿态）。这一行必须是平铺的五颗，中间不夹分隔线之类的元素 ——
-    // 分隔线会把每颗按钮挤窄，而「就绪姿态」在中间列最窄时本来就已经贴着边。
+    // 分组只靠顺序：前两颗是改状态的开关（使能 / 零重力），中间两颗是故障恢复
+    // （复位 / 清除故障），后两颗是运动指令（回零点 / 就绪姿态）。这一行必须是平铺的
+    // 六颗，中间不夹分隔线之类的元素 —— 分隔线会把每颗按钮挤得更窄，而这一行在窄窗里
+    // 已经要折成两行才盛得下（见 ControlBar 里 BIG_BUTTON 的宽度账）。
     expect(within(row).getAllByRole('button').map((b) => b.textContent)).toEqual([
       i18n.t('solo:controlBar.enable'),
       i18n.t('solo:modes.drag'),
       i18n.t('solo:controlBar.reset'),
+      i18n.t('solo:controlBar.clearFault'),
       i18n.t('solo:controlBar.home'),
       i18n.t('solo:controlBar.readyPose'),
     ])
-    expect(row.children).toHaveLength(5)
+    expect(row.children).toHaveLength(6)
+  })
+
+  it('gives every button exactly one icon, all in the same colour', () => {
+    renderBar()
+    const row = screen.getByTestId('control-bar-actions')
+
+    for (const button of within(row).getAllByRole('button')) {
+      expect(button.querySelectorAll('svg')).toHaveLength(1)
+      // 六颗图标一律继承按钮文字色：没有哪一颗自带行内颜色。使能那颗曾经单独染成状态色，
+      // 于是同一行里出现两种图标色 —— 图标是"这颗按钮管什么"的标识，不是状态灯。
+      expect((button.querySelector('svg') as SVGElement).style.color).toBe('')
+    }
   })
 
   it('turns zero gravity on with the first press and off with the second', () => {
@@ -93,8 +107,11 @@ describe('ControlBar action row', () => {
     const { props } = renderBar()
 
     fireEvent.click(screen.getByRole('button', { name: i18n.t('solo:controlBar.reset') }))
+    fireEvent.click(screen.getByRole('button', { name: i18n.t('solo:controlBar.clearFault') }))
     fireEvent.click(screen.getByRole('button', { name: i18n.t('solo:controlBar.home') }))
 
+    // 复位与清除故障是两条不同的命令，各自那颗按钮必须打到各自的回调上。
+    expect(props.reset).toHaveBeenCalledTimes(1)
     expect(props.clearFault).toHaveBeenCalledTimes(1)
     expect(props.zeroJoints).toHaveBeenCalledTimes(1)
   })

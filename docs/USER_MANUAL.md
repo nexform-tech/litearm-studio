@@ -171,16 +171,19 @@ Consolidates global robot controls and operating mode selection:
 
 #### Primary Controls
 
-The first row of the control bar holds five buttons ordered by kind: the two state switches first (Enable / Zero Gravity), then the three commands (Reset / Go Home / Ready Pose):
+The first row of the control bar holds six buttons ordered by kind: the two state switches first (Enable / Zero Gravity), then the two fault-recovery commands (Reset / Clear Fault), then the two motion commands (Go Home / Ready Pose). Each button carries an icon from the gripper panel's set — power, feather, rotate, warning triangle, house, target — beside its label. Six across needs a wide window, so on a 1440-wide window the row folds into two rows of three; the buttons themselves do not change:
 
-- Enable / Disable: Controls motor power and holding state.
-  - Click Enable: Energizes motors and locks current pose into ready state;
+- Enable / Disable: Controls motor power and holding state. The label states what the next press does: **Enable** while the arm is released, **Disable** while it is energised. An energised arm turns that button into the row's only solid green (label and icon reversed out), so the current state is visible at a glance; the other five, Reset included, are outline buttons.
+  - Click Enable: Energizes motors and locks current pose into ready state. While the arm is released or faulted, this press clears the drives' latched faults first, then energises;
   - Click Disable (the same button reads "Disable" while the arm is energised): cuts motor holding torque immediately; the arm will drop under gravity. Always support the arm or rest it on a secure surface before disabling;
 - Zero Gravity: Press once to enter zero gravity (the button turns blue), press again to leave it and return to position mode. Support the arm before entering; on exit it re-locks the current pose at high stiffness;
-- Reset: Resets driver error alarms (such as overcurrent or overtemperature). Once all joints are healthy, the arm automatically returns to ready state;
+- Reset: Resets the controller (firmware `0x14 reset`) — clears latched faults and re-anchors the trajectory reference to the current measured pose. It is not a full reboot, and it does not also send Clear Fault;
+- Clear Fault: Clears the latched fault bits in each drive's RAM (firmware `0x13 clear_faults`: overcurrent, overtemperature, overvoltage, undervoltage). It does not write flash. Press it first once the obstruction or overheating is resolved and the drives have cooled;
 - Go Home: Smoothly moves all axes to the upright zero point (all joints at 0 rad), typically used for initial calibration or recovery;
 - Ready Pose: Smoothly moves all axes to the default operating configuration, serving as an ideal baseline for operations;
 - STOP (Emergency Stop): Immediately aborts all ongoing motions and locks the arm in place. In case of personnel danger or equipment collision, cut main power immediately.
+
+**Do not** use Reset or Clear Fault as a stop button: the firmware counts both `0x13` and `0x14` as commands that discard the in-flight Cartesian plan (`cart_invalidate_before_motion()`), so pressing either silently drops the linear move that is currently running. Use STOP to stop; the two fault commands only exist to clear a latched alarm after its cause is gone.
 
 #### Operational Modes
 
@@ -237,7 +240,7 @@ The LiteGrip two-finger parallel gripper shares the arm's CAN bus and fills the 
 - Open / Close: drive to the open or closed mechanical stop;
 - Grasp: close with the **target force** limit, so a fragile part is not crushed;
 - Zero gravity: release the drive so the jaws can be moved by hand;
-- Stop / Reset stop / Clear fault: stop immediately, release a latched stop, and clear a drive fault;
+- Stop / Release Stop / Clear Fault: stop immediately, release a latched stop, and clear a drive fault;
 - Gripper parameters (collapsed by default): **target force** (0–40 N) and **move speed** (5–150 mm/s);
 - Calibration: the panel names the calibration in effect (measured, nominal template, or factory fallback). With the nominal template it refuses millimetre targets until you run the zero calibration.
 
@@ -381,7 +384,7 @@ The page then reports that the update finished and shows the device's current ve
 | **"Enable" does nothing** | The arm has not been activated yet | Follow §1.4. Everything except Enable works in the meantime |
 | Activation shows an error | The message and its fix are listed in the table in §1.4 | Follow that table; if the consent box was not ticked, tick it and submit again |
 | "Arm is moving, please wait" | In-flight motion in progress; mutex guard active | Normal safety behavior; wait for move completion or click STOP |
-| Red fault indicator: "Joint N Fault" | Collision obstruction, overcurrent, or driver overtemperature (>80°C) | 1. Clear physical obstructions and allow cooling<br>2. Click "Clear Fault" on control bar<br>3. If persistent, support arm, disable, and re-enable |
-| "Controller in fault state" | Safety protection triggered (overspeed, boundary limit, communication timeout) | System-level safety protection triggered; support the arm, disable and re-enable. If it does not recover, restart the local program |
-| Gripper shows "Disconnected" | Cable loose, device offline, or power drop | 1. Check the end-effector connector<br>2. Click **Connect** in the gripper panel<br>3. Click **Clear fault** once the cause is gone |
+| Red fault indicator: "Joint N Fault" | Collision obstruction, overcurrent, or driver overtemperature (>80°C) | 1. Clear physical obstructions and allow cooling<br>2. Click **Clear Fault** on the control bar<br>3. If it does not clear, click **Reset**<br>4. Still faulted: support the arm, disable, and re-enable |
+| "Controller in fault state" | Safety protection triggered (overspeed, boundary limit, communication timeout) | Clear Fault only clears latched drive alarms and Reset only resets the controller; neither guarantees a release. Support the arm, disable and re-enable. If it does not recover, restart the local program |
+| Gripper shows "Disconnected" | Cable loose, device offline, or power drop | 1. Check the end-effector connector<br>2. Click **Connect** in the gripper panel<br>3. Click **Clear Fault** once the cause is gone |
 | No telemetry recorded | Arm is not in "Connected" status | Telemetry starts automatically upon live connection |

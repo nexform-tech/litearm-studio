@@ -19,8 +19,15 @@ describe('i18n Internationalization', () => {
     expect(i18n.t('common:connected')).toBe('已连接')
     expect(i18n.t('common:enable')).toBe('使能')
     expect(i18n.t('solo:controlBar.reset')).toBe('复位')
+    expect(i18n.t('solo:controlBar.clearFault')).toBe('清除故障')
+    // 夹爪与机械臂的清障按钮说同一个词：各写一套的话，现场会看到两个名字指同一条
+    // `clear_faults` 命令 —— 夹具面板还多一句「正在清除故障…」，更不该对不上。
+    expect(i18n.t('gripper:actions.clearFault')).toBe(i18n.t('solo:controlBar.clearFault'))
     expect(i18n.t('solo:controlBar.home')).toBe('回零点')
-    expect(i18n.t('solo:controlBar.disable')).toBe('下使能')
+    expect(i18n.t('solo:controlBar.disable')).toBe('失能')
+    // 按钮叫什么，点名它的文案就得叫什么。这句报错指的是控制栏这颗按钮（激活写入要求先失能），
+    // 而中文名曾经是「下使能」、全 app 其它地方都写「失能」—— 现场照着提示找不到那颗按钮。
+    expect(i18n.t('common:errors.activationMustDisable')).toContain(i18n.t('solo:controlBar.disable'))
     expect(i18n.t('solo:modes.drag')).toBe('零重力')
     expect(i18n.t('nav:settings')).toBe('设置')
     expect(i18n.t('settings:payload.title')).toBe('末端负载')
@@ -29,7 +36,10 @@ describe('i18n Internationalization', () => {
     expect(i18n.t('nav:gripper')).toBe('夹爪')
     expect(i18n.t('nav:gripperTitle')).toBe('LiteGrip 夹爪')
     expect(i18n.t('gripper:actions.open')).toBe('张开')
-    expect(i18n.t('gripper:actions.resetStop')).toBe('复位急停')
+    expect(i18n.t('gripper:actions.resetStop')).toBe('解除急停')
+    // 错误提示点名的那颗按钮必须真的叫这个名字：「复位急停」改名时漏掉引用，现场就会
+    // 照着提示去找一颗不存在的按钮。机械臂的「复位」是控制器复位，两者不能再撞车。
+    expect(i18n.t('common:errors.gripperEstopped')).toContain(i18n.t('gripper:actions.resetStop'))
     expect(i18n.t('gripper:source.template')).toBe('标称模板（从未实测）')
     expect(i18n.t('gripper:gate.TEMPLATE')).toBe('标称模板')
     expect(i18n.t('gripper:state.grasping')).toBe('夹持中')
@@ -61,8 +71,11 @@ describe('i18n Internationalization', () => {
     expect(i18n.t('common:connected')).toBe('Connected')
     expect(i18n.t('common:enable')).toBe('Enable')
     expect(i18n.t('solo:controlBar.reset')).toBe('Reset')
+    expect(i18n.t('solo:controlBar.clearFault')).toBe('Clear Fault')
+    expect(i18n.t('gripper:actions.clearFault')).toBe(i18n.t('solo:controlBar.clearFault'))
     expect(i18n.t('solo:controlBar.home')).toBe('Go Home')
     expect(i18n.t('solo:controlBar.disable')).toBe('Disable')
+    expect(i18n.t('common:errors.activationMustDisable')).toContain(i18n.t('solo:controlBar.disable'))
     expect(i18n.t('solo:modes.drag')).toBe('Zero Gravity')
     expect(i18n.t('nav:settingsTitle')).toBe('Controller Parameters')
     expect(i18n.t('settings:header.title')).toBe('Controller Parameters & Calibration')
@@ -71,7 +84,8 @@ describe('i18n Internationalization', () => {
     expect(i18n.t('nav:gripper')).toBe('Gripper')
     expect(i18n.t('nav:gripperTitle')).toBe('LiteGrip Gripper')
     expect(i18n.t('gripper:actions.open')).toBe('Open')
-    expect(i18n.t('gripper:actions.resetStop')).toBe('Reset stop')
+    expect(i18n.t('gripper:actions.resetStop')).toBe('Release Stop')
+    expect(i18n.t('common:errors.gripperEstopped')).toContain(i18n.t('gripper:actions.resetStop'))
     expect(i18n.t('gripper:source.template')).toBe('Nominal template (never measured)')
     expect(i18n.t('gripper:gate.BLOCKED')).toBe('Blocked')
     expect(i18n.t('gripper:state.grasping')).toBe('Grasping')
