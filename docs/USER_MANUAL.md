@@ -198,7 +198,7 @@ The first row of the control bar holds six buttons ordered by kind: the two stat
 - J1–J7 Independent Sliders: Mapped to joint limits, displaying real-time percentages and radian values;
 - Nudge Buttons: Single-step micro adjustments (`◀` / `▶`) per joint;
 - Send on Release:
-  - Checked (default): Command is issued immediately when releasing the slider;
+  - Checked (default): Command is issued immediately when releasing the slider; the "Send" button in the panel header is greyed out but stays in place;
   - Unchecked: Staging mode; adjust multiple sliders and click "Send" to execute a coordinated multi-joint motion.
 
 ---

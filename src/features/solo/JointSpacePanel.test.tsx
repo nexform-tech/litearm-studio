@@ -32,11 +32,11 @@ function joints(count: number) {
   }))
 }
 
-function renderPanel(count: number) {
+function renderPanel(count: number, releaseOnly = true) {
   return render(
     <JointSpacePanel
       joints={joints(count)}
-      releaseOnly
+      releaseOnly={releaseOnly}
       toggleReleaseOnly={vi.fn()}
       disabled={false}
       onDispatch={vi.fn()}
@@ -61,5 +61,23 @@ describe('JointSpacePanel axis range', () => {
     expect(screen.getByText(i18n.t('solo:jointSpace.title'))).toBeDefined()
     expect(screen.getAllByRole('slider')).toHaveLength(7)
     expect(screen.getByText('J1–J7')).toBeDefined()
+  })
+})
+
+describe('JointSpacePanel send button', () => {
+  // 勾选“松手即下发”时按钮只是置灰，不能消失：隐藏会让标题行抖动，
+  // 操作员也会以为功能被移走了。
+  it('keeps the send button in the DOM but disabled while send-on-release is on', () => {
+    renderPanel(7, true)
+
+    const send = screen.getByRole<HTMLButtonElement>('button', { name: i18n.t('solo:jointSpace.send') })
+    expect(send.disabled).toBe(true)
+  })
+
+  it('enables the send button once send-on-release is off', () => {
+    renderPanel(7, false)
+
+    const send = screen.getByRole<HTMLButtonElement>('button', { name: i18n.t('solo:jointSpace.send') })
+    expect(send.disabled).toBe(false)
   })
 })
