@@ -103,23 +103,46 @@ jobs:
         # 静默换成自带 Qt 的 243 MB 产物（见 packaging/build.py）。
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3-gi gir1.2-webkit2-4.1
+          sudo apt-get install -y python3-gi python3-venv gir1.2-webkit2-4.1
 
       - name: Install the SDK, the daemon and PyInstaller
         working-directory: litearm-studio
         shell: bash # 两条分支都要能在两个平台上写成同一段
         run: |
-          python -m pip install --upgrade pip
-          pip install -e ../litearm-python
+          # ⚠ Linux 上必须用**系统解释器**建 venv, 不能用 `actions/setup-python` 那个。
+          # `apt install python3-gi` 装的是**系统 python** 的绑定, setup-python 的解释器
+          # (v0.17.2 那次是 3.12) 看不见它 —— `import gi` 失败, 于是 GTK 后端判不可用,
+          # 发布构建当场失败、Linux 产物一个都没有。`--system-site-packages` 就是那条
+          # 让 venv 看得见 `python3-gi` 的通道。
+          # ⚠ PyGObject 本身**不能**用 pip 装: 它只有 sdist, 编译要一整套开发包, 而
+          # typelib 始终来自系统。
           if [ "${{ runner.os }}" = "Linux" ]; then
-            pip install ../litegrip-python
+            python3 -m venv --system-site-packages .venv-build
+            PY="$PWD/.venv-build/bin/python"
+          else
+            PY=python
+          fi
+          echo "PYTHON=$PY" >> "$GITHUB_ENV"
+          "$PY" -m pip install --upgrade pip
+          "$PY" -m pip install -e ../litearm-python
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            "$PY" -m pip install ../litegrip-python
           fi
           # ⚠ 窗口依赖是**打包必需**的, 不是可选的: `packaging/build.py` 的
           # `window_build_args()` 在缺 pywebview 时直接判失败 —— 一个开不了窗口的产物
           # 里"关掉窗口就是退出"根本无从谈起。
           # ⚠ 这里**不**装 `ui-qt`: 那会把 Qt WebEngine 拉进构建机, 而它只在拿不到
           # 系统 GTK 时才是需要的后端。
-          pip install -e "daemon[test,ui]" pyinstaller
+          "$PY" -m pip install -e "daemon[test,ui]" pyinstaller
+
+      - name: Check the window backend is the one we think it is
+        if: runner.os == 'Linux'
+        working-directory: litearm-studio
+        # 先单独问一次, 让"后端不可用"以一行读得懂的原因失败, 而不是埋在 PyInstaller
+        # 参数里。这一步与下面那次构建用的是同一个解释器。
+        run: |
+          "$PYTHON" -c "import gi; gi.require_version('WebKit2', '4.1'); \
+            from gi.repository import WebKit2; print('PyGObject and WebKit2 are visible to', '$PYTHON')"
 
       - name: Package (one-file executable)
         working-directory: litearm-studio
@@ -133,7 +156,10 @@ jobs:
           # Actions → Variables），不必改工作流，也不必让用户设环境变量。
           # 不设置 = 用 daemon 里的内置生产地址（见 activation.PRODUCTION_ACTIVATION_URL）。
           LITEARM_ACTIVATION_URL: ${{ vars.LITEARM_ACTIVATION_URL }}
-        run: python packaging/build.py
+        # ⚠ `shell: bash` 是必需的: `$PYTHON` 是上面那步写进 `GITHUB_ENV` 的, 而 Windows
+        # 的默认 shell 是 pwsh, 在那里它读不到。两条分支都用 bash 才不会一边悄悄跑错解释器。
+        shell: bash
+        run: '"$PYTHON" packaging/build.py'
 
       - name: Name the artifact (unix)
         if: runner.os != 'Windows'
@@ -151,8 +177,11 @@ jobs:
       - name: Build the Debian package
         if: runner.os == 'Linux'
         working-directory: litearm-studio
+        # ⚠ 用与构建可执行文件**同一个**解释器: `deb.py` 不需要 gi, 但它要与 `$PYTHON`
+        # 那次构建的后端选择一致 (见 `WINDOW_BACKEND_ENV` 的默认值取自环境)。
+        shell: bash
         run: |
-          python packaging/deb.py \
+          "$PYTHON" packaging/deb.py \
             --binary packaging/dist/litearm-studio-daemon \
             --version "$VERSION" \
             --outdir upload
