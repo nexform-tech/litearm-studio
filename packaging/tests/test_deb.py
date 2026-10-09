@@ -68,18 +68,42 @@ def _control(**overrides) -> str:
     return deb.control_text(**args)
 
 
+def _depends(window_backend: str = "gtk") -> list:
+    line = next(line for line in _control(window_backend=window_backend).splitlines()
+                if line.startswith("Depends:"))
+    return [entry.strip() for entry in line[len("Depends:"):].split(",")]
+
+
 def test_control_declares_the_glibc_floor():
     assert deb.GLIBC_FLOOR == "2.35"
-    assert f"Depends: libc6 (>= {deb.GLIBC_FLOOR})" in _control()
+    assert f"libc6 (>= {deb.GLIBC_FLOOR})" in _depends()
 
 
 def test_control_never_pulls_a_browser_in():
-    # Any browser works and the program degrades to a normal tab, so a browser must never
-    # be a dependency: `Recommends` would install a second browser by default on a
-    # workstation that already has one.
-    depends = [line for line in _control().splitlines() if line.startswith("Depends:")]
-    assert depends == [f"Depends: libc6 (>= {deb.GLIBC_FLOOR})"]
-    assert "Suggests:" in _control()
+    """A browser is never a dependency, whichever backend built the executable.
+
+    The program brings its own renderer, so a machine with no browser installed must
+    still work. A browser stays a `Suggests`, for people who want to open the interface
+    in one — and never a `Recommends`, which would install a second browser by default
+    on a workstation that already has one.
+    """
+    for backend in ("gtk", "qt"):
+        depends = " ".join(_depends(backend))
+        for browser in ("firefox", "chromium", "google-chrome", "epiphany"):
+            assert browser not in depends, f"{browser} leaked into the {backend} Depends"
+        assert "Suggests:" in _control(window_backend=backend)
+
+
+def test_control_borrows_the_system_webkit_only_for_the_gtk_build():
+    """GTK 借系统的 WebKit, Qt 自带内核 —— 这条决定了包是 63 MB 还是 243 MB。
+
+    `libwebkit2gtk` 一个库就有 94 MB。GTK 产物把它留在系统上，用 `Depends` 要过来
+    （`gir1.2-webkit2-4.1` 会一并带出 typelib 与 GTK 那条链）；Qt 全部打进产物，于是
+    `Depends` 只剩 libc6。**两边写反的后果都不是构建失败**：Qt 包会白拉 126 MB 到用户
+    机器上，GTK 包则一开窗就报"没有可用的 webview 后端"。
+    """
+    assert deb.WEBKIT_DEPENDS in _depends("gtk")
+    assert _depends("qt") == [f"libc6 (>= {deb.GLIBC_FLOOR})"]
 
 
 def test_control_looks_like_a_debian_control_file():

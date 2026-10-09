@@ -95,6 +95,16 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm build
 
+      - name: Install the window stack (Linux)
+        if: runner.os == 'Linux'
+        # ⚠ 这一条决定 Linux 产物是 63 MB 还是 243 MB。借系统的 WebKitGTK 就把
+        # `libwebkit2gtk`（94 MB）留在用户机器上、由 `.deb` 的 `Depends` 要过来；
+        # 装不上它时 `LITEARM_STUDIO_WINDOW_BACKEND=gtk` 会让构建**判失败**，而不是
+        # 静默换成自带 Qt 的 243 MB 产物（见 packaging/build.py）。
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-gi gir1.2-webkit2-4.1
+
       - name: Install the SDK, the daemon and PyInstaller
         working-directory: litearm-studio
         shell: bash # 两条分支都要能在两个平台上写成同一段
@@ -104,15 +114,21 @@ jobs:
           if [ "${{ runner.os }}" = "Linux" ]; then
             pip install ../litegrip-python
           fi
-          # ⚠ `ui` 是**打包必需**的, 不是可选的: `packaging/build.py` 的
+          # ⚠ 窗口依赖是**打包必需**的, 不是可选的: `packaging/build.py` 的
           # `window_build_args()` 在缺 pywebview 时直接判失败 —— 一个开不了窗口的产物
-          # 里"关掉窗口就是退出"根本无从谈起。顺带把 Qt 后端一起装进来。
+          # 里"关掉窗口就是退出"根本无从谈起。
+          # ⚠ 这里**不**装 `ui-qt`: 那会把 Qt WebEngine 拉进构建机, 而它只在拿不到
+          # 系统 GTK 时才是需要的后端。
           pip install -e "daemon[test,ui]" pyinstaller
 
       - name: Package (one-file executable)
         working-directory: litearm-studio
         env:
           LITEARM_STUDIO_VERSION: ${{ needs.release.outputs.new_tag }}
+          # ⚠ 显式钉住后端, 不靠自动判据: Linux 走 GTK（见上面那步）, 其余平台用系统
+          # 自带的内核。写死之后, 构建机上少了谁都会**当场失败**, 而不是换一个体积
+          # 差 4 倍的后端悄悄发出去。
+          LITEARM_STUDIO_WINDOW_BACKEND: ${{ runner.os == 'Linux' && 'gtk' || 'native' }}
           # 激活服务地址：在仓库变量里改（Settings → Secrets and variables →
           # Actions → Variables），不必改工作流，也不必让用户设环境变量。
           # 不设置 = 用 daemon 里的内置生产地址（见 activation.PRODUCTION_ACTIVATION_URL）。

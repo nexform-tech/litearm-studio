@@ -97,10 +97,19 @@ def _set_desktop_identity() -> None:
     try:
         from gi.repository import GLib  # noqa: PLC0415 - 有 GTK 后端才有
 
+        # `set_prgname` 喂的是 X11 的 WM_CLASS **instance** 与 Wayland 的 app id —— 两者
+        # 都正是 `WINDOW_CLASS`，桌面据此就能对上 `litearm-studio.desktop`。
+        #
+        # ⚠ X11 的 WM_CLASS **class** 那一半我们控制不了：实测它在 GTK 里既不跟着
+        # `set_prgname` 也不跟着 `set_application_name`（`Gdk.set_program_class` 也被
+        # GTK 初始化时覆盖掉了，设了与不设完全一样）。GTK 给出的是 `Litearm-studio`
+        # ——与 `StartupWMClass=litearm-studio` 只差首字母大小写。桌面的匹配对
+        # instance 与 class 都会试，且实际比较不区分大小写，所以图标能归对组;
+        # 万一某台机器上不行，改 `deb.desktop_entry()` 的 `StartupWMClass` 即可。
         GLib.set_prgname(WINDOW_CLASS)
         GLib.set_application_name(APP_NAME)
     except Exception:  # noqa: BLE001 - 没有 GTK 后端
-        log.debug("未设置 GLib 程序名 (没有 GTK 后端)", exc_info=True)
+        log.debug("未设置 GTK 程序名 (没有 GTK 后端)", exc_info=True)
 
     for module in ("qtpy", "PyQt6", "PySide6"):
         try:
@@ -123,8 +132,12 @@ def _import_webview() -> Any:
 
 def _unavailable_message(cause: Any) -> str:
     return ("无法打开应用窗口: 没有可用的 webview 后端。\n"
-            "    安装界面依赖:  pip install \"litearm-studio-daemon[ui]\"\n"
-            "    或者无界面运行: litearm-studio-daemon --no-open\n"
+            "    Linux（推荐, 用系统的 WebKitGTK）:\n"
+            "        apt install python3-gi gir1.2-webkit2-4.1\n"
+            "    或者自带内核的 Qt（不需要 apt, 但多 ~200 MB）:\n"
+            "        pip install \"litearm-studio-daemon[ui-qt]\"\n"
+            "    或者无界面运行:\n"
+            "        litearm-studio-daemon --no-open\n"
             f"    (原始错误: {cause})")
 
 

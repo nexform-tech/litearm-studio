@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import math
+import os
 import shutil
 import subprocess
 import sys
@@ -76,6 +77,16 @@ HOMEPAGE = "https://github.com/nexform-tech/litearm-studio"
 MAINTAINER = "Laurence Young <yangdong@nexform.tech>"
 SYNOPSIS = "Operator console for LiteArm 7-DoF collaborative robotic arms"
 
+#: The GTK build leaves `libwebkit2gtk` on the system (94 MB) and asks for it here.
+#: `gir1.2-webkit2-4.1` is the idiomatic request: it brings the typelib and, through
+#: `gir1.2-gtk-3.0`, the rest of the stack that `libwebkit2gtk` links against.
+WEBKIT_DEPENDS = "gir1.2-webkit2-4.1"
+
+#: Same variable `build.py` reads, so one setting drives both the artifact and what the
+#: package says it needs. They must agree: a Qt build that declared the WebKit dependency
+#: would pull 126 MB onto a machine that does not need it.
+WINDOW_BACKEND_ENV = "LITEARM_STUDIO_WINDOW_BACKEND"
+
 #: Browsers are a `Suggests`, never a `Depends` or a `Recommends`. The program works with
 #: any browser (it opens a tab when it cannot find a Chromium build) and a `Recommends`
 #: would pull a second browser onto an operator workstation that already has one.
@@ -102,8 +113,19 @@ def deb_version(version: str) -> str:
     return value
 
 
-def control_text(*, version: str, arch: str, installed_size_kb: int) -> str:
-    """The `DEBIAN/control` file. Field order follows `dpkg-deb`'s own output."""
+def control_text(*, version: str, arch: str, installed_size_kb: int,
+                 window_backend: str = "gtk") -> str:
+    """The `DEBIAN/control` file. Field order follows `dpkg-deb`'s own output.
+
+    `window_backend` decides whether the package borrows the system's WebKitGTK.
+
+    The GTK build ships PyGObject and GTK inside the executable but deliberately leaves
+    `libwebkit2gtk` on the system: that shared library is 94 MB, and pulling it in would
+    put the package back at Qt's size. `gir1.2-webkit2-4.1` is the idiomatic way to ask
+    for it — it brings the typelib and, through `gir1.2-gtk-3.0`, the rest of the stack.
+
+    The Qt build bundles everything and needs no system library beyond `libc6`.
+    """
     description = "\n".join(
         [
             f" {SYNOPSIS}.",
@@ -126,12 +148,25 @@ def control_text(*, version: str, arch: str, installed_size_kb: int) -> str:
         "Priority: optional\n"
         f"Architecture: {arch}\n"
         f"Maintainer: {MAINTAINER}\n"
-        f"Depends: libc6 (>= {GLIBC_FLOOR})\n"
+        f"Depends: {', '.join(depends_for(window_backend))}\n"
         f"Suggests: {BROWSER_SUGGESTS}\n"
         f"Installed-Size: {installed_size_kb}\n"
         f"Homepage: {HOMEPAGE}\n"
         f"Description: {description}\n"
     )
+
+
+def depends_for(window_backend: str) -> list[str]:
+    """The `Depends` list for one window backend.
+
+    ⚠ A browser is never a dependency, in either backend: the program brings its own
+    renderer, so a machine with no browser installed must still work. `Suggests` is where
+    a browser belongs, and only for people who want to open the interface in one.
+    """
+    depends = [f"libc6 (>= {GLIBC_FLOOR})"]
+    if window_backend == "gtk":
+        depends.append(WEBKIT_DEPENDS)
+    return depends
 
 
 def launcher_script() -> str:
@@ -298,13 +333,15 @@ def write_tree(root: Path, entries: Iterable[Entry]) -> int:
     return math.ceil(total / 1024)
 
 
-def stage(root: Path, binary: Path, *, version: str, arch: str) -> Tuple[Path, int]:
+def stage(root: Path, binary: Path, *, version: str, arch: str,
+          window_backend: str = "gtk") -> Tuple[Path, int]:
     """Build the package tree under `root`; return it and its Installed-Size in KiB."""
     shutil.rmtree(root, ignore_errors=True)
     installed_kb = write_tree(root, payload(binary))
     control = root / "DEBIAN" / "control"
     control.write_text(
-        control_text(version=version, arch=arch, installed_size_kb=installed_kb),
+        control_text(version=version, arch=arch, installed_size_kb=installed_kb,
+                     window_backend=window_backend),
         encoding="utf-8",
     )
     control.chmod(0o644)
@@ -317,8 +354,6 @@ def resolve_version() -> str:
     Same source of truth as build.py: the git tag. Unlike the executable's version this
     one is not optional — a Debian package without a version number is meaningless.
     """
-    import os
-
     env = os.environ.get("LITEARM_STUDIO_VERSION", "").strip()
     if env:
         return env
@@ -350,6 +385,11 @@ def build_parser() -> argparse.ArgumentParser:
                         help=f"where to write the .deb (default: {OUT_DIST})")
     parser.add_argument("--work", default=str(WORK), metavar="DIR",
                         help=f"scratch directory for the package tree (default: {WORK})")
+    parser.add_argument("--window-backend", choices=("gtk", "qt"),
+                        default=os.environ.get(WINDOW_BACKEND_ENV, "").strip() or "gtk",
+                        help="which window backend the executable was built with; decides "
+                             "whether the package depends on the system's WebKitGTK "
+                             f"(default: {WINDOW_BACKEND_ENV}, else gtk)")
     return parser
 
 
@@ -366,10 +406,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     version = deb_version(args.version or resolve_version())
     out_dir = Path(args.outdir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    root, installed_kb = stage(Path(args.work) / "root", binary, version=version, arch=args.arch)
+    root, installed_kb = stage(Path(args.work) / "root", binary, version=version,
+                               arch=args.arch, window_backend=args.window_backend)
 
     target = out_dir / f"{PACKAGE}_{version}_{args.arch}.deb"
     print(f"[deb] staged {root} (Installed-Size {installed_kb} KiB)")
+    print(f"[deb] window backend = {args.window_backend} "
+          f"(Depends: {', '.join(depends_for(args.window_backend))})")
     subprocess.run(
         ["dpkg-deb", "--build", "--root-owner-group", str(root), str(target)],
         check=True, cwd=ROOT)

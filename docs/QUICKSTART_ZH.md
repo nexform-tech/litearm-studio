@@ -45,9 +45,10 @@ cd litearm-studio
 
 pip install -e ../litearm-python
 pip install -e "daemon[test,ui]"
+sudo apt install python3-gi gir1.2-webkit2-4.1   # 仅 Linux：窗口的渲染内核
 ```
 
-`ui` 这个 extra 就是应用窗口（`pywebview`）。只有当你永远用 `--no-open` 无界面运行时才可以不装：少了它程序会直接报错退出，而不是开一个窗口。
+`ui` 这个 extra 就是 `pywebview`，窗口本身。Linux 上它还需要一个渲染内核，小的那个是系统的 WebKitGTK（`python3-gi` + `gir1.2-webkit2-4.1`）。**不要**顺手换成 `daemon[ui-qt]`：它自带一个 Chromium，会把 `.deb` 从 63 MB 变成 243 MB。只有当你永远用 `--no-open` 无界面运行时才可以把窗口整个省掉；没有渲染内核时程序会直接报错退出，而不是开一个窗口。
 
 构建本地程序要托管的界面（`dist/` 已存在可跳过）：
 

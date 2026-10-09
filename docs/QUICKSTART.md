@@ -46,10 +46,14 @@ cd litearm-studio
 
 pip install -e ../litearm-python
 pip install -e "daemon[test,ui]"
+sudo apt install python3-gi gir1.2-webkit2-4.1   # Linux only: the window's renderer
 ```
 
-The `ui` extra is the application window (`pywebview`). Leave it out only if you always
-run headless with `--no-open`: without it the program exits with an error instead of
+The `ui` extra is `pywebview`, the window itself. On Linux it still needs a renderer, and
+the small one is the system's WebKitGTK (`python3-gi` plus `gir1.2-webkit2-4.1`). Do not
+reach for `daemon[ui-qt]` unless those packages are unavailable: it bundles a Chromium and
+takes the `.deb` from 63 MB to 243 MB. Leave the window out entirely only if you always run
+headless with `--no-open`; without a renderer the program exits with an error rather than
 opening a window.
 
 Build the UI that the daemon will serve (skip only if `dist/` already exists):

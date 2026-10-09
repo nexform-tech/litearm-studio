@@ -88,13 +88,17 @@ def test_importing_the_daemon_does_not_pull_in_pywebview() -> None:
 def test_a_missing_backend_says_what_to_install(monkeypatch) -> None:
     """没有后端要说清楚装什么 —— 不是静默退回无界面。
 
+    ⚠ 两条路都要给出来: 借系统的 GTK (小) 与自带内核的 Qt (大)。只说前者会让装不上
+    apt 包的机器无从下手, 只说后者会让人白白多背 200 MB。
+
     `sys.modules[...] = None` 是让 `import webview` 抛 ImportError 的标准做法。
     """
     monkeypatch.setitem(sys.modules, "webview", None)
     with pytest.raises(window.WindowUnavailable) as excinfo:
         window.run_window("http://127.0.0.1:1/", on_ready=lambda handle: None)
     message = str(excinfo.value)
-    assert "litearm-studio-daemon[ui]" in message
+    assert "python3-gi" in message and "gir1.2-webkit2-4.1" in message
+    assert "daemon[ui-qt]" in message
     assert "--no-open" in message
 
 
@@ -148,6 +152,10 @@ def test_window_identity_is_set_on_both_backends(monkeypatch) -> None:
 
     不设的后果不是报错: 桌面找不到 `litearm-studio.desktop`, 窗口就借用了通用图标 ——
     "能用但就是不对"的那种缺陷, 所以两个后端都钉住。
+
+    ⚠ GTK 那边只有 `set_prgname` 是可用的那一个 —— 它喂 X11 的 WM_CLASS instance 与
+    Wayland 的 app id。X11 的 class 那一半由 GTK 自己定 (实测是 `Litearm-studio`),
+    `Gdk.set_program_class` 会被 GTK 初始化覆盖, 所以这里**不**钉它。
     """
     seen: dict = {}
 
@@ -181,6 +189,7 @@ def test_window_identity_is_set_on_both_backends(monkeypatch) -> None:
 
     assert seen["prgname"] == window.WINDOW_CLASS
     assert seen["application_name"] == window.APP_NAME
+    # WM_CLASS 的 instance (与 Wayland 的 app id) 就是桌面条目的 StartupWMClass。
     assert seen["application_name_qt"] == window.WINDOW_CLASS
     assert seen["desktop_file_name"] == window.WINDOW_CLASS
 

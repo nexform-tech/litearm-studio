@@ -38,19 +38,25 @@ pip install -e "daemon[test]"     # 在仓库根目录执行
 ```
 
 - **应用窗口要 `pywebview`**（在 `ui` extra 里，不是默认依赖：无界面运行、CI 与测试都不需要
-  一个 GUI 栈）。Linux 上它需要一个 webview 后端，本项目默认走 Qt —— 它是预编译 wheel，
-  一条 pip 命令就够：
+  一个 GUI 栈）。`pywebview` 是纯 Python，真正渲染的内核要么来自系统，要么自带一个：
 
 ```bash
-pip install -e "daemon[ui]"       # 桌面运行需要
+pip install -e "daemon[ui]"                       # pywebview 本体
+
+# Linux: 借系统的 WebKitGTK。包只有 ~63 MB，因为 libwebkit2gtk 留在系统上。
+sudo apt install python3-gi gir1.2-webkit2-4.1
+
 litearm-studio-daemon             # 开窗口；关掉窗口就是退出
 litearm-studio-daemon --no-open   # 无界面运行；界面用浏览器连它打印出的地址
 ```
 
-  ⚠ Linux 上也可以走 GTK 后端（`python3-gi` + `gir1.2-webkit2-4.1`），更小更原生，但
-  **PyGObject 用 pip 装不上**（只有 sdist，编译要一套系统开发包）。系统里装了那两个包时
-  pywebview 会自动优先选 GTK，此时不需要 `ui` extra 里的 Qt。没有 GTK 也没有 Qt 时报错
-  退出码 3，并且**不会**静默退回无界面 —— 见 `window.WindowUnavailable`。
+  ⚠ Linux 上还有一个**自带内核**的备选：`pip install -e "daemon[ui-qt]"`（Qt WebEngine）。
+  它不需要 apt，但把一整个 Chromium 打进产物 —— 实测 `.deb` 从 **63 MB** 变成 **243 MB**。
+  只在拿不到系统 GTK 时才用它。
+
+  Windows 的 WebView2 与 macOS 的 WKWebView 都是系统自带的，两边什么都不用装。
+
+  没有可用后端时报错退出码 3，并且**不会**静默退回无界面 —— 见 `window.WindowUnavailable`。
 
 - **`litegrip`（litegrip-python）同样不在 PyPI 上，而且只在 Linux 上有意义**
   （import 需要 `fcntl` / `PF_CAN`）。要真机驱动夹爪就必须装它：

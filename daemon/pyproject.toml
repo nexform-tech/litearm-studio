@@ -51,25 +51,18 @@ dependencies = [
 # `httpx` 只有一处用途: `fastapi.testclient.TestClient` 要它做 HTTP 传输。
 test = ["pytest>=7", "httpx"]
 
-# 应用窗口 (`window.py`)。这是**桌面运行**才需要的东西, 所以放 extra 而不是 dependencies:
-# CI、测试和台架上的无界面运行 (`--no-open`) 都不该为它装一个 GUI 栈。
+# 应用窗口 (`window.py`)。`pywebview` 本身是纯 Python —— 真正渲染的内核要么来自系统,
+# 要么由 `ui-qt` 自带一个。
 #
-# ⚠ 按平台分开, **不要**写成 `pywebview[qt]`: 那个 extra 在 Windows/macOS 上也会拉一个
-# ~200MB 的 Qt + QtWebEngine, 而那两处用的是系统自带的 webview 内核 (Windows 的
-# WebView2, macOS 的 WKWebView), pywebview 自己会拉 pythonnet。只有 Linux 缺一个能
-# pip 装上、又不依赖系统包的内核。
-#
-# ⚠ Linux 上为什么是 Qt 而不是 GTK: GTK 后端要 PyGObject, 而 PyGObject 在 pip 上只有
-# sdist, 编译它需要一套系统开发包 (libgirepository*-dev / libcairo2-dev) —— "pip 装不了"
-# 是它最常见的失败形状。Qt 是预编译 wheel, 一条 pip 命令就够, 不需要 apt, 而且全部打进
-# PyInstaller 产物, 于是 `.deb` 的依赖面保持 `libc6` 一条 (见 `packaging/build.py`)。
-# GTK 仍然可用 (pywebview 在 Linux 上先试 GTK): 系统装了 python3-gi 与
-# gir1.2-webkit2-4.1 时它会自动被选中, 那时不需要这里的 Qt。
-ui = [
-    "pywebview",
-    # ⚠ `QtPy` 必须显式写: pywebview 的 Qt 后端靠它选绑定, 而它**不在** pywebview 的基础
-    # 依赖里 (只有 `pywebview[qt]` 那个 extra 才带)。漏掉的表现是构建成功、启动即报
-    # "没有可用的 webview 后端" —— 实测踩过这一次。
+# ⚠ Linux 上"系统内核"= GTK/WebKitGTK, 而它是**系统包**, pip 装不了:
+#     apt install python3-gi gir1.2-webkit2-4.1
+# Windows 的 WebView2 与 macOS 的 WKWebView 都是系统自带的, 什么都不用装。
+ui = ["pywebview"]
+
+# 备选: 自带一个 Chromium (Qt WebEngine)。不需要 apt, 但产物与安装体积都多 ~200 MB ——
+# 只在拿不到系统 GTK 时才用它, 见 `packaging/build.py` 的后端选择。实测: 借系统 WebKitGTK
+# 的 `.deb` 是 63 MB, 自带 Qt 的是 243 MB。
+ui-qt = [
     "QtPy; sys_platform == 'linux'",
     "PyQt6; sys_platform == 'linux'",
     "PyQt6-WebEngine; sys_platform == 'linux'",
