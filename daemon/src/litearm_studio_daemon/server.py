@@ -759,6 +759,26 @@ def export_filename(suggested: str) -> str:
     return name[:120]
 
 
+def _export_saver(handles: List[Any], *, window: bool
+                  ) -> Optional[Callable[[str], Optional[str]]]:
+    """`/api/export` 的落点询问; 没有窗口的进程返回 `None` (接口回 `no-window`)。
+
+    ⚠ **"没有窗口" 与 "操作员按了取消" 是两种回答, 不能都用一个恒返回 `None` 的闭包
+    表示。** 无界面运行 (`--no-open`)、或者在纯浏览器里用这个 daemon 时, 页面收到
+    `no-window` 才会回退到浏览器下载; 收到 `cancelled` 就什么都不做 —— 而那正是
+    "按了导出没反应" 的另一种写法。
+    """
+    if not window:
+        return None
+
+    def _save_path(name: str) -> Optional[str]:
+        if not handles:            # 窗口还没建好, 或已经关掉了
+            return None
+        return handles[0].ask_save_path(name)
+
+    return _save_path
+
+
 def create_app(session: Session, *, gripper: Optional[Any] = None,
                version: str = __version__,
                ui_dir: Optional[str] = None,
@@ -1028,15 +1048,9 @@ async def serve(session: Session, *, gripper: Optional[Any] = None,
             return False
         handles[0].raise_window()
         return True
-
-    def _save_path(name: str) -> Optional[str]:
-        """`/api/export` 的落点询问 —— 没有窗口就返回 `None` (接口回 `no-window`)。"""
-        if not handles:
-            return None
-        return handles[0].ask_save_path(name)
-
     app = create_app(session, gripper=gripper, version=version, ui_dir=ui_dir,
-                     allow_origins=allow_origins, focus=_focus, save_path=_save_path)
+                     allow_origins=allow_origins, focus=_focus,
+                     save_path=_export_saver(handles, window=open_browser))
     config = uvicorn.Config(app, host=host, port=port, log_level="info",
                             ws_ping_interval=20.0, ws_ping_timeout=20.0)
     server = uvicorn.Server(config)

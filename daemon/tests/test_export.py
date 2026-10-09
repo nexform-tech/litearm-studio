@@ -6,6 +6,8 @@
 """
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from pathlib import Path
 
 import pytest
@@ -164,3 +166,60 @@ def test_export_filename_keeps_a_name_and_nothing_else(suggested, expected) -> N
 def test_export_filename_drops_control_characters() -> None:
     """控制字符会让对话框与文件系统各自理解出不同的名字。"""
     assert export_filename("litearm\n-logs\x00.jsonl") == "litearm-logs.jsonl"
+
+
+# ── 接线: "没有窗口" 与 "操作员取消了" 不是同一件事 ─────────────────────────
+
+def test_a_windowless_process_has_no_save_hook_at_all() -> None:
+    """⚠ 无界面运行 (`--no-open`) 时钩子必须是 `None`, 不能是一个恒返回 `None` 的闭包。
+
+    后者会被接口读成 `cancelled`, 于是页面既不下文件、也不说话 —— "按了导出没反应"
+    的另一种写法。这条是打过包的二进制在 `--no-open` 下实测出来的 (它当时回的正是
+    `cancelled`)。
+    """
+    assert server._export_saver([], window=False) is None
+
+
+def test_a_windowed_process_asks_the_window_that_exists() -> None:
+    """有窗口时问窗口: 拿到路径就回路径, 还没建好/已关掉则回 `None` (取消)。"""
+    class _Handle:
+        def ask_save_path(self, name: str):
+            return f"/tmp/{name}"
+
+    ask = server._export_saver([_Handle()], window=True)
+    assert ask is not None and ask("x.jsonl") == "/tmp/x.jsonl"
+    assert server._export_saver([], window=True)("x.jsonl") is None
+
+
+def test_serve_hands_a_windowless_run_the_no_window_answer(monkeypatch) -> None:
+    """`serve(open_browser=False)` 建出来的应用, `/api/export` 必须回 `no-window`。
+
+    上面那条量的是钩子函数本身, 这条量的是 `serve` 有没有把它接对 —— 缺陷当初就长在
+    这条缝里 (`serve` 传了一个永远返回 `None` 的闭包)。
+    """
+    captured: dict = {}
+    real_create_app = server.create_app
+
+    def spy(*args, **kwargs):
+        captured.update(kwargs)
+        return real_create_app(*args, **kwargs)
+
+    monkeypatch.setattr(server, "create_app", spy)
+
+    async def _run_headless() -> None:
+        task = asyncio.create_task(server.serve(
+            Session(port_finder=lambda: None), http_port=0,
+            ui_dir="/nonexistent-ui", open_browser=False))
+        try:
+            for _ in range(200):
+                if "save_path" in captured:
+                    break
+                await asyncio.sleep(0.02)
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    asyncio.run(_run_headless())
+
+    assert captured.get("save_path") is None
