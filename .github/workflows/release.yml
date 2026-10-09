@@ -114,10 +114,15 @@ jobs:
           # (v0.17.2 那次是 3.12) 看不见它 —— `import gi` 失败, 于是 GTK 后端判不可用,
           # 发布构建当场失败、Linux 产物一个都没有。`--system-site-packages` 就是那条
           # 让 venv 看得见 `python3-gi` 的通道。
+          #
+          # ⚠ **必须写绝对路径 `/usr/bin/python3`。** `actions/setup-python` 把它自己的
+          # 解释器放在 `PATH` 最前面, 所以那个 `python3` 不是系统这个 —— 拿它建的 venv
+          # 一样看不到 `/usr/lib/python3/dist-packages`。v0.17.3 那次就栽在这里。
+          #
           # ⚠ PyGObject 本身**不能**用 pip 装: 它只有 sdist, 编译要一整套开发包, 而
           # typelib 始终来自系统。
           if [ "${{ runner.os }}" = "Linux" ]; then
-            python3 -m venv --system-site-packages .venv-build
+            /usr/bin/python3 -m venv --system-site-packages .venv-build
             PY="$PWD/.venv-build/bin/python"
           else
             PY=python
@@ -139,8 +144,11 @@ jobs:
         if: runner.os == 'Linux'
         working-directory: litearm-studio
         # 先单独问一次, 让"后端不可用"以一行读得懂的原因失败, 而不是埋在 PyInstaller
-        # 参数里。这一步与下面那次构建用的是同一个解释器。
+        # 参数里。这一步与下面那次构建用的是同一个解释器 —— 顺带把版本与搜索路径打出来,
+        # 免得下次还要翻日志猜用的是哪个 python。
         run: |
+          "$PYTHON" -V
+          "$PYTHON" -c "import sys; print('sys.path:'); print('\n'.join(sys.path))"
           "$PYTHON" -c "import gi; gi.require_version('WebKit2', '4.1'); \
             from gi.repository import WebKit2; print('PyGObject and WebKit2 are visible to', '$PYTHON')"
 
