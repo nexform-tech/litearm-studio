@@ -91,6 +91,14 @@ export function useLogRecords() {
     [filtered],
   )
 
+  /**
+   * 表格里的顺序: **最新在最前**。
+   *
+   * ⚠ 反转的只是**渲染**这一份; `visible` 保持时间正序, 是导出用的 —— 导出的 JSONL
+   * 要和 daemon 自己写的文件是同一种东西, 行序跟着时间走。
+   */
+  const visibleNewestFirst = useMemo(() => [...visible].reverse(), [visible])
+
   const setLevel = useCallback((level: LogFilters['level']) => {
     setFilters((prev) => ({ ...prev, level }))
   }, [])
@@ -126,6 +134,7 @@ export function useLogRecords() {
     entries,
     samples,
     visible,
+    visibleNewestFirst,
     total: filtered.length,
     truncated: filtered.length > visible.length,
     filters,
