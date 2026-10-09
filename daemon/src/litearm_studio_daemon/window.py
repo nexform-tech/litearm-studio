@@ -83,6 +83,18 @@ def icon_file() -> Optional[str]:
     return None
 
 
+def storage_dir() -> Path:
+    """窗口自己的持久化目录 —— cookies、localStorage、IndexedDB。
+
+    ⚠ 与结构化日志共用同一个状态根 (`obs.handlers.default_log_dir()`), 于是"程序把东西
+    放哪"只有一个答案。是 state 不是 cache: 界面存的是操作员的设置, 按缓存的规矩清掉就
+    等于每次启动都恢复出厂。
+    """
+    from .obs.handlers import default_log_dir  # noqa: PLC0415 - 只在开窗时才需要
+
+    return default_log_dir() / "webview"
+
+
 def _set_desktop_identity() -> None:
     """把进程的应用名设成 `WINDOW_CLASS`, 好让桌面把窗口归到我们的启动图标下。
 
@@ -178,8 +190,31 @@ def run_window(url: str, *, on_ready: Callable[[Any], None],
         # ⚠ `icon` 是 `start()` 的参数而不是 `create_window()` 的 (6.2.1 的签名如此)。
         # GTK 与 Qt 两个后端都会用它: `gtk.py` 的 `set_icon_from_file` /
         # `set_default_icon_from_file`, `qt.py` 的 `QIcon(...)` + `setWindowIcon`。
-        webview.start(icon=icon_file())
+        #
+        # ⚠ **`private_mode` 必须显式关掉, 并给一个持久的 `storage_path`。** pywebview
+        # 的默认值是 `True`, 而它在 GTK 后端建的是 `WebKitWebContext.new_ephemeral()`
+        # —— 那意味着**界面自己存的东西一样都不留**: 速度、夹持力、主题、指标选择、
+        # 遥测保留上限, 以及遥测那份 IndexedDB, 每次启动都回到出厂值。界面的持久化是
+        # 产品行为, 不是可有可无的优化。
+        #
+        # 顺带它也把一处崩溃的温床关掉了: 存储不可用时浏览器**会抛**, 而 `localStorage`
+        # 的读取点里原本有一个没做防护 (`useGripperPanel.readStored`), 它的调用点是
+        # `useState` 的惰性初始化 —— 一抛就是整页控制台被错误边界替换。那一处已经补上
+        # 防护 (前端不该因为存储不可用而死), 这里再从源头保证它可用。
+        webview.start(icon=icon_file(), private_mode=False,
+                      storage_path=str(_ensure_storage_dir()))
     except WindowUnavailable:
         raise
     except Exception as exc:  # noqa: BLE001 - 后端起不来 (没有 GTK/Qt) 也走这条
         raise WindowUnavailable(_unavailable_message(exc)) from exc
+
+
+def _ensure_storage_dir() -> Path:
+    """把 `storage_dir()` 建出来再交给 pywebview —— 各后端不一定自己会建。"""
+    path = storage_dir()
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        # 建不出来也照样把路径给出去: 窗口该开还得开, 大不了这次不持久化。
+        log.warning("无法创建窗口存储目录 %s", path, exc_info=True)
+    return path

@@ -17,11 +17,35 @@ export const FORCE_DEFAULT_N = 20
 const SPEED_STORAGE_KEY = 'litearm.gripper.speedMmS'
 const FORCE_STORAGE_KEY = 'litearm.gripper.forceN'
 
+/**
+ * 读回上次用的速度/夹持力。
+ *
+ * ⚠ **`localStorage` 的访问必须包在 try 里。** 存储不可用时浏览器**会抛**
+ * （Safari 的隐私模式、策略禁用了存储、源不合法、以及 WebKit 在临时上下文里的某些
+ * 版本），而这个函数是经 `useState(() => readStored(...))` 调的 —— 惰性初始化里抛出的
+ * 异常会冒到错误边界，**整页控制台一起没了**。仓库里其它几处存储读取
+ * (`lib/theme.ts`、`lib/arm/metricSelection.ts`、`telemetry/retentionSettings.ts`、
+ * `solo/soloUtils.ts`) 都做了防护，这里当初漏了。
+ */
 function readStored(key: string, fallback: number, min: number, max: number): number {
-  const raw = window.localStorage.getItem(key)
-  const parsed = raw == null || raw === '' ? NaN : Number(raw)
-  if (!Number.isFinite(parsed)) return fallback
-  return Math.min(max, Math.max(min, parsed))
+  try {
+    const raw = window.localStorage.getItem(key)
+    const parsed = raw == null || raw === '' ? NaN : Number(raw)
+    if (!Number.isFinite(parsed)) return fallback
+    return Math.min(max, Math.max(min, parsed))
+  } catch {
+    return fallback
+  }
+}
+
+/** 存一个偏好。存不下就不存 —— 见 {@link readStored} 上面那段说明。 */
+function storeStored(key: string, value: number): void {
+  try {
+    window.localStorage.setItem(key, String(value))
+  } catch {
+    // 存储不可用时 `setItem` 会抛, 而这两次调用在 `useEffect` 里 —— effect 的异常
+    // 一样会冒到错误边界。一个存不下的偏好不值得赔上整个控制台。
+  }
 }
 
 export type GripperPanelVm = ReturnType<typeof useGripperPanel>
@@ -72,10 +96,10 @@ export function useGripperPanel() {
   }, [state?.positionMm, travelMm, dragging])
 
   useEffect(() => {
-    window.localStorage.setItem(SPEED_STORAGE_KEY, String(speedMmS))
+    storeStored(SPEED_STORAGE_KEY, speedMmS)
   }, [speedMmS])
   useEffect(() => {
-    window.localStorage.setItem(FORCE_STORAGE_KEY, String(forceN))
+    storeStored(FORCE_STORAGE_KEY, forceN)
   }, [forceN])
 
   const fail = useCallback(

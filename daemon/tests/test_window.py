@@ -121,6 +121,12 @@ def test_run_window_points_at_the_daemon_and_hands_back_a_handle(monkeypatch,
     assert tuple(fake.created["min_size"]) == window.WINDOW_MIN_SIZE
     # ⚠ `icon` 是 start() 的参数而不是 create_window() 的。
     assert fake.started["icon"] == str(icon)
+    # ⚠ 窗口必须**给存储**: pywebview 的默认值是 `private_mode=True`, 那会让界面自己
+    # 存的东西一样都不留 (速度、夹持力、主题、指标、遥测保留上限与那份 IndexedDB),
+    # 每次启动回到出厂值 —— 而界面的持久化是产品行为。它同时是"存储不可用"这个温床的
+    # 源头, 而存储不可用会让 `localStorage` 抛异常 (前端已另行防护)。
+    assert fake.started["private_mode"] is False
+    assert str(fake.started["storage_path"]).endswith("webview")
     assert len(handles) == 1
     handles[0].raise_window()
     assert fake.window.calls == ["restore", "show"]
