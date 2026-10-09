@@ -6,8 +6,19 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { NumberField } from '@/components/ui/number-field'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Download, RefreshCw, Save, Scale, ShieldCheck, Upload, Activity, Grip, KeyRound, Zap, HardDriveDownload } from 'lucide-react'
+import { SegmentedControl } from '@/components/SegmentedControl'
+import { Check, Compass, Download, HardDriveDownload, Info, RefreshCw, Save, Scale, ShieldCheck, TriangleAlert, Upload, Activity, Grip, KeyRound } from 'lucide-react'
 import { useSettingsState, type SettingsState } from './useSettingsState'
+import {
+  gravityFromRpy,
+  gravityMagnitude,
+  INSTALLATION_POSES,
+  installationPoseById,
+  isStandardMagnitude,
+  matchInstallationPose,
+  STANDARD_GRAVITY,
+  type InstallationPoseId,
+} from './installationPose'
 import { GripperSection } from './GripperSection'
 import { ActivationSection } from './ActivationSection'
 import { FirmwareSection } from './FirmwareSection'
@@ -88,92 +99,264 @@ function PayloadSection({ vm }: { vm: SettingsState }) {
   )
 }
 
-function GravitySection({ vm }: { vm: SettingsState }) {
+const RPY_AXES = ['roll', 'pitch', 'yaw'] as const
+const GRAVITY_AXES = ['x', 'y', 'z'] as const
+
+/** 带符号的定点显示：`+0.0000` / `-9.8100`（「设备当前」那一行照抄固件面板的写法）。 */
+function signed(v: number): string {
+  const n = Math.abs(v) < 5e-5 ? 0 : v
+  return `${n < 0 ? '-' : '+'}${Math.abs(n).toFixed(4)}`
+}
+
+/** 读回值对应的 rpy —— 命中预设才拿得到那组装角，否则只能是从零开始的草稿。 */
+function rpyForRead(read: readonly number[]): [number, number, number] {
+  const pose = matchInstallationPose(read)
+  return pose ? [...installationPoseById(pose).rpy] : [0, 0, 0]
+}
+
+/** 标签在**左边**、输入框在右边的窄字段（安装姿态那一行是并排的，不是上下）。 */
+function InlineField({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <label className="flex items-center gap-1.5">
+      <span className="font-mono text-[0.6875rem] text-muted-foreground">{label}</span>
+      {children}
+    </label>
+  )
+}
+
+/**
+ * 安装方向 —— 预设只填草稿，点「下发」才写固件（与页面上其它写入一致）。
+ *
+ * 三种值必须分开看，混在一起就会骗人：
+ *   · `vector`           —— 草稿，将要下发的那三个数；
+ *   · `vm.gravityVector` —— 固件里**现在**生效的读回值（「设备当前」那一行）；
+ *   · `rpy`              —— 安装姿态。它只在草稿上成立；向量被手改过之后
+ *                            rpy 不再描述它，标成「自定义」（反向不唯一，不做反解）。
+ *
+ * 「设备当前」读的必须是读回值而不是草稿：选了预设还没下发时，它得还能看见固件里
+ * 现在是什么装法 —— 否则操作员会以为已经改完了。
+ */
+function InstallationSection({ vm }: { vm: SettingsState }) {
   const { t } = useTranslation(['settings'])
-  const [scale, setScale] = useState<number[]>(vm.feedForward.gravityScale)
-  const [inertia, setInertia] = useState<number[]>(vm.feedForward.inertiaScale)
-  const [vector, setVector] = useState<[number, number, number]>(vm.feedForward.gravityVector)
+  const [rpy, setRpy] = useState<[number, number, number]>(() => rpyForRead(vm.gravityVector))
+  const [vector, setVector] = useState<[number, number, number]>(vm.gravityVector)
+  const [rpyCustom, setRpyCustom] = useState(() => matchInstallationPose(vm.gravityVector) === null)
 
+  // 读回值变了（刚连上、点了「读当前」、下发后的读回）就跟着走。
   useEffect(() => {
-    setScale(vm.feedForward.gravityScale)
-    setInertia(vm.feedForward.inertiaScale)
-    setVector(vm.feedForward.gravityVector)
-  }, [vm.feedForward])
+    setVector(vm.gravityVector)
+    const pose = matchInstallationPose(vm.gravityVector)
+    if (pose) setRpy([...installationPoseById(pose).rpy])
+    setRpyCustom(pose === null)
+  }, [vm.gravityVector])
 
-  const edit = (list: number[], set: (v: number[]) => void, i: number, v: number) => {
-    set(list.map((x, k) => (k === i ? v : x)))
+  const pickPose = (id: InstallationPoseId) => {
+    const pose = installationPoseById(id)
+    setRpy([...pose.rpy])
+    setVector([...pose.gravity])
+    setRpyCustom(false)
   }
 
-  // 前馈向量是**协议定长 7 通道**，不是按轴数（SDK 的 `set_ff_vec` 只收 7 个值）。
-  // 这里只画这台臂**真有的**通道，`scale` / `inertia` 本身仍是完整 7 值、保存时原样发出去。
-  const axes = vm.joints.length
+  const editRpy = (i: number, v: number) => {
+    const next = rpy.map((x, k) => (k === i ? v : x)) as [number, number, number]
+    setRpy(next)
+    setVector(gravityFromRpy(next))
+    setRpyCustom(false)
+  }
+
+  const editVector = (i: number, v: number) => {
+    setVector(vector.map((x, k) => (k === i ? v : x)) as [number, number, number])
+    setRpyCustom(true)
+  }
+
+  const poseLabel = (id: InstallationPoseId | null) =>
+    id ? t(`settings:installation.pose.${id}`) : t('settings:installation.custom')
+
+  const draftPose = matchInstallationPose(vector)
+  const devicePose = matchInstallationPose(vm.gravityVector)
+  const deviceKnown = gravityMagnitude(vm.gravityVector) > 0
+  const magnitude = gravityMagnitude(vector)
+  const magnitudeOk = isStandardMagnitude(vector)
+
+  const segmentStyles = {
+    containerStyle: {
+      display: 'flex' as const,
+      flexWrap: 'wrap' as const,
+      gap: '0.1875rem',
+      background: 'var(--line-soft)',
+      borderRadius: '0.5625rem',
+      padding: '0.1875rem',
+    },
+    itemStyle: {
+      padding: '0.3125rem 0.875rem',
+      borderRadius: '0.4375rem',
+      fontSize: '0.75rem',
+      color: 'var(--ink-subtle)',
+      fontWeight: 500,
+    },
+    activeItemStyle: {
+      background: 'var(--seg-active)',
+      color: 'var(--ink)',
+      fontWeight: 600,
+      boxShadow: '0 0.0625rem 0.125rem rgba(16,24,40,.08)',
+    },
+  }
 
   return (
-    <div className="flex flex-col gap-4">
-      <Section title={t('settings:gravity.scaleTitle')} desc={t('settings:gravity.scaleHint')}>
-        {axes === 0 ? (
-          <p className="text-xs text-muted-foreground">{t('settings:gravity.empty')}</p>
-        ) : (
-          <div className="grid grid-cols-4 gap-2 md:grid-cols-7">
-            {scale.slice(0, axes).map((v, i) => (
-              <Field key={i} label={`J${i + 1}`}>
-                <NumberField value={v} min={0} max={3} step={0.01} disabled={!vm.connected}
-                  onCommit={(nv) => edit(scale, setScale, i, nv)} />
-              </Field>
-            ))}
-          </div>
-        )}
-        {axes > 0 && axes < scale.length && (
-          <p className="text-[0.6875rem] leading-relaxed text-muted-foreground">
-            {t('settings:gravity.channelHint', { count: axes })}
-          </p>
-        )}
-        <div>
-          <Button size="sm" disabled={!vm.connected || vm.saving} onClick={() => void vm.saveGravityScale(scale)}>
-            <Save className="size-3.5" />
-            {t('settings:actions.save')}
-          </Button>
-        </div>
-      </Section>
+    <Card className="flex flex-col gap-4 rounded-[0.875rem] p-5">
+      {/* 固件里的现状，与下面的草稿分开说 —— 这两行说的是两件事。 */}
+      <p
+        className={`flex items-center gap-1.5 text-xs ${
+          deviceKnown ? 'text-[var(--info)]' : 'text-muted-foreground'
+        }`}
+      >
+        <Info className="size-3.5 flex-none" />
+        {deviceKnown
+          ? t('settings:installation.readLine', { pose: poseLabel(devicePose) })
+          : t('settings:installation.notRead')}
+      </p>
 
-      <Section title={t('settings:gravity.inertiaTitle')} desc={t('settings:gravity.scaleHint')}>
-        {axes === 0 ? (
-          <p className="text-xs text-muted-foreground">{t('settings:gravity.empty')}</p>
-        ) : (
-          <div className="grid grid-cols-4 gap-2 md:grid-cols-7">
-            {inertia.slice(0, axes).map((v, i) => (
-              <Field key={i} label={`J${i + 1}`}>
-                <NumberField value={v} min={0} max={3} step={0.01} disabled={!vm.connected}
-                  onCommit={(nv) => edit(inertia, setInertia, i, nv)} />
-              </Field>
-            ))}
-          </div>
-        )}
-        <div>
-          <Button size="sm" disabled={!vm.connected || vm.saving} onClick={() => void vm.saveInertiaScale(inertia)}>
-            <Save className="size-3.5" />
-            {t('settings:actions.save')}
-          </Button>
-        </div>
-      </Section>
+      <div className="flex flex-col gap-2">
+        <h3 className="text-[0.8125rem] font-semibold text-foreground">
+          {t('settings:installation.stepChoose')}
+        </h3>
+        <SegmentedControl
+          ariaLabel={t('settings:installation.stepChoose')}
+          items={[
+            ...INSTALLATION_POSES.map((pose) => ({
+              key: pose.id,
+              label: t(`settings:installation.pose.${pose.id}`),
+              active: draftPose === pose.id,
+              onClick: () => pickPose(pose.id),
+            })),
+            // ⚠ 「自定义」不是一个能点的预设: 直接改下面的向量就落到这里。点它什么都不做，
+            //   它只是一块如实显示"当前这组数不属于任何预设"的牌子。
+            {
+              key: 'custom',
+              label: t('settings:installation.custom'),
+              active: draftPose === null,
+              onClick: () => undefined,
+            },
+          ]}
+          {...segmentStyles}
+        />
+        <p className="text-[0.6875rem] leading-relaxed text-muted-foreground">
+          {t('settings:installation.presetHint')}
+        </p>
+      </div>
 
-      <Section title={t('settings:gravity.vectorTitle')} desc={t('settings:gravity.vectorHint')}>
-        <div className="grid grid-cols-3 gap-3 md:max-w-md">
-          {(['X', 'Y', 'Z'] as const).map((axis, i) => (
-            <Field key={axis} label={axis}>
-              <NumberField value={vector[i]} min={-1} max={1} step={0.001} disabled={!vm.connected}
-                onCommit={(nv) => setVector(vector.map((x, k) => (k === i ? nv : x)) as [number, number, number])} />
-            </Field>
+      <div className="flex flex-col gap-2 border-t border-line-soft pt-3.5">
+        <h3 className="text-[0.8125rem] font-semibold text-foreground">
+          {t('settings:installation.stepPose')}
+        </h3>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          {/* ⚠ 前缀是 `<span>` 而不是 `<label>`: 每个轴自己已经是 label, 嵌套 label 会把
+              输入框的关联关系搞乱 (点 "base_rpy" 也会跳进第一个框)。 */}
+          <span className="font-mono text-[0.6875rem] text-muted-foreground">base_rpy</span>
+          {RPY_AXES.map((axis, i) => (
+            <InlineField key={axis} label={axis}>
+              <NumberField
+                value={rpy[i]}
+                min={-Math.PI}
+                max={Math.PI}
+                step={0.0001}
+                digits={4}
+                disabled={!vm.connected}
+                onCommit={(v) => editRpy(i, v)}
+                className="h-7 w-[7rem] font-mono text-xs"
+              />
+            </InlineField>
           ))}
+          {rpyCustom ? (
+            <span className="text-[0.6875rem] text-muted-foreground">
+              {t('settings:installation.rpyCustom')}
+            </span>
+          ) : null}
         </div>
-        <div>
-          <Button size="sm" disabled={!vm.connected || vm.saving} onClick={() => void vm.saveGravityVector(vector)}>
-            <Save className="size-3.5" />
-            {t('settings:actions.save')}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <span className="font-mono text-[0.6875rem] text-muted-foreground">gravity</span>
+          {GRAVITY_AXES.map((axis, i) => (
+            <InlineField key={axis} label={axis}>
+              <NumberField
+                value={vector[i]}
+                min={-STANDARD_GRAVITY}
+                max={STANDARD_GRAVITY}
+                step={0.0001}
+                digits={4}
+                disabled={!vm.connected}
+                onCommit={(v) => editVector(i, v)}
+                className="h-7 w-[7rem] font-mono text-xs"
+              />
+            </InlineField>
+          ))}
+          <span
+            className={`flex items-center gap-1 font-mono text-xs ${
+              magnitudeOk ? 'text-emerald-700 dark:text-emerald-300' : 'text-destructive'
+            }`}
+            title={
+              magnitudeOk
+                ? t('settings:installation.magnitudeOk')
+                : t('settings:installation.magnitudeOff')
+            }
+          >
+            |g| = {magnitude.toFixed(4)}
+            {magnitudeOk ? <Check className="size-3.5" /> : <TriangleAlert className="size-3.5" />}
+          </span>
+        </div>
+        <p className="text-[0.6875rem] leading-relaxed text-muted-foreground">
+          {t('settings:installation.rpyHint')}
+        </p>
+      </div>
+
+      <div className="flex flex-col gap-2 border-t border-line-soft pt-3.5">
+        <h3 className="text-[0.8125rem] font-semibold text-foreground">
+          {t('settings:installation.stepApply')}
+        </h3>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!vm.connected || vm.loading}
+            onClick={() => void vm.readGravity()}
+          >
+            <RefreshCw className={vm.loading ? 'size-3.5 animate-spin' : 'size-3.5'} />
+            {t('settings:installation.readCurrent')}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!vm.connected || vm.saving || vm.enabled}
+            title={vm.enabled ? t('settings:installation.armedHint') : undefined}
+            onClick={() => void vm.saveGravityVector(vector)}
+          >
+            <Upload className="size-3.5" />
+            {t('settings:installation.send')}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!vm.connected || vm.saving}
+            title={t('settings:installation.persistTitle')}
+            onClick={() => void vm.saveParams()}
+          >
+            <Download className="size-3.5" />
+            {t('settings:installation.persist')}
           </Button>
         </div>
-      </Section>
-    </div>
+        {vm.enabled ? (
+          <p className="text-[0.6875rem] leading-relaxed text-amber-700 dark:text-amber-400">
+            {t('settings:installation.armedHint')}
+          </p>
+        ) : null}
+        <p className="font-mono text-[0.6875rem] text-muted-foreground">
+          {t('settings:installation.effective', {
+            vector: vm.gravityVector.map(signed).join(', '),
+            pose: poseLabel(devicePose),
+            magnitude: gravityMagnitude(vm.gravityVector).toFixed(4),
+          })}
+        </p>
+      </div>
+    </Card>
   )
 }
 
@@ -311,8 +494,17 @@ function DiagnosticsSection({ vm }: { vm: SettingsState }) {
 }
 
 /** 页签 id —— 与下面每个 `TabsTrigger value` 一一对应。 */
-const TAB_IDS = ['payload', 'gravity', 'joints', 'diagnostics', 'gripper', 'activation', 'firmware'] as const
+const TAB_IDS = ['payload', 'installation', 'joints', 'diagnostics', 'gripper', 'activation', 'firmware'] as const
 const DEFAULT_TAB = 'payload'
+
+/**
+ * 旧页签 id 的别名。
+ *
+ * ⚠ 「重力与惯量」在界面上被「安装方向」整个换掉了（`?tab=gravity` ⇒ `installation`）:
+ * 这个查询串会出现在说明书、聊天记录和书签里, 让老链接掉回「末端负载」等于告诉
+ * 操作员"这个功能没了"。
+ */
+const TAB_ALIASES: Record<string, string> = { gravity: 'installation' }
 
 /**
  * 从 URL 的 `?tab=` 取页签。
@@ -322,10 +514,9 @@ const DEFAULT_TAB = 'payload'
  * 反复出现的入口 —— 界面上「未激活」那条提示指的就是授权激活。
  */
 function initialTab(params: URLSearchParams): string {
-  const wanted = params.get('tab')
-  return wanted !== null && (TAB_IDS as readonly string[]).includes(wanted)
-    ? wanted
-    : DEFAULT_TAB
+  const wanted = params.get('tab') ?? ''
+  const resolved = TAB_ALIASES[wanted] ?? wanted
+  return (TAB_IDS as readonly string[]).includes(resolved) ? resolved : DEFAULT_TAB
 }
 
 export function SettingsPage() {
@@ -390,9 +581,9 @@ export function SettingsPage() {
               <Scale className="size-3.5" />
               {t('settings:tabs.payload')}
             </TabsTrigger>
-            <TabsTrigger value="gravity" className="gap-1.5 rounded-lg text-xs font-semibold">
-              <Zap className="size-3.5" />
-              {t('settings:tabs.gravity')}
+            <TabsTrigger value="installation" className="gap-1.5 rounded-lg text-xs font-semibold">
+              <Compass className="size-3.5" />
+              {t('settings:tabs.installation')}
             </TabsTrigger>
             <TabsTrigger value="joints" className="gap-1.5 rounded-lg text-xs font-semibold">
               <ShieldCheck className="size-3.5" />
@@ -419,8 +610,8 @@ export function SettingsPage() {
           <TabsContent value="payload" className="focus-visible:outline-none">
             <PayloadSection vm={vm} />
           </TabsContent>
-          <TabsContent value="gravity" className="focus-visible:outline-none">
-            <GravitySection vm={vm} />
+          <TabsContent value="installation" className="focus-visible:outline-none">
+            <InstallationSection vm={vm} />
           </TabsContent>
           <TabsContent value="joints" className="focus-visible:outline-none">
             <JointsSection vm={vm} />

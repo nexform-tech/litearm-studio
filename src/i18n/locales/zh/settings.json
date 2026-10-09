@@ -1,7 +1,7 @@
 {
   "header": {
     "title": "控制器参数与标定",
-    "description": "读写固件真正暴露的参数：末端负载、前馈系数、逐轴增益与软限位，以及固件自检。"
+    "description": "读写固件真正暴露的参数：末端负载、安装方向、逐轴增益与软限位，以及固件自检。"
   },
   "actions": {
     "read": "从控制器读取",
@@ -9,7 +9,7 @@
   },
   "tabs": {
     "payload": "末端负载",
-    "gravity": "重力与惯量",
+    "installation": "安装方向",
     "joints": "增益与限位",
     "diagnostics": "诊断",
     "gripper": "夹爪与总线",
@@ -26,14 +26,32 @@
     "effective": "生效值：{{mass}} kg · 质心 [{{com}}]",
     "clampHint": "固件对这些值是**静默钳幅**（质量夹到 ≥ 0，质心夹到 ±1 m）而不是拒绝，所以上面这行显示的是读回值，不是你刚下发的值。"
   },
-  "gravity": {
-    "scaleTitle": "逐轴重力系数",
-    "scaleHint": "逐轴前馈增益；1.0 是固件默认值。",
-    "inertiaTitle": "逐轴惯量系数",
-    "vectorTitle": "重力方向",
-    "vectorHint": "基座坐标系下的重力单位向量（前馈标量 item 6）。",
-    "empty": "尚未读取到关节参数 —— 前馈通道数跟随上报的轴数。",
-    "channelHint": "固件前馈向量固定为 7 通道，这台臂上报 {{count}} 轴，所以这里只画这些通道；保存仍会写入完整的 7 值。"
+  "installation": {
+    "readLine": "已读取设备当前装向（{{pose}}）",
+    "notRead": "尚未读取设备装向 —— 点「读当前」从固件读回。",
+    "stepChoose": "①选择安装方向",
+    "stepPose": "②安装姿态与向量 (m/s²)",
+    "stepApply": "③读 / 下发 / 固化",
+    "pose": {
+      "upright": "正装",
+      "inverted": "倒装",
+      "sideX": "侧装+x",
+      "sideNegX": "侧装-x",
+      "sideY": "侧装+y",
+      "sideNegY": "侧装-y"
+    },
+    "custom": "自定义",
+    "presetHint": "按钮上写的就是将下发的 base 系重力向量 —— 别去猜「侧装 +y」是哪一边。不确定就用 base_rpy 推导，或在 pyliteam 侧 set_installation/get_installation 取同一组值。",
+    "rpyHint": "g = R(base_rpy)ᵀ·(0,0,-9.81)，与固件 kin.c 同式。改 rpy 会自动重算向量；直接改向量则 rpy 标为「自定义」（反向不唯一，不做反解）。",
+    "rpyCustom": "（自定义）",
+    "magnitudeOk": "向量量级正常：|g| = 9.81 m/s²。",
+    "magnitudeOff": "向量量级不是 9.81 m/s² —— 检查这三个数。",
+    "readCurrent": "读当前",
+    "send": "下发（须失能）",
+    "armedHint": "固件拒绝在使能状态下写重力向量 —— 请先失能（正装↔侧装 |Δg| = 13.87 m/s² = 1.41g）。",
+    "persist": "固化到 Flash",
+    "persistTitle": "把当前参数写进 flash（固件在这里同样要求失能态）",
+    "effective": "设备当前：({{vector}}) = {{pose}} |g|={{magnitude}}"
   },
   "joints": {
     "title": "逐轴增益与软限位",
@@ -169,9 +187,7 @@
     "readFailed": "读取控制器参数失败：{{message}}",
     "writeFailed": "写入参数失败：{{message}}",
     "payloadSaved": "末端负载已下发并读回",
-    "gravityScaleSaved": "重力系数已下发",
-    "inertiaScaleSaved": "惯量系数已下发",
-    "gravityVectorSaved": "重力方向已下发",
+    "gravityVectorSaved": "安装方向已下发并读回",
     "jointParamSaved": "关节增益已下发",
     "jointLimitsSaved": "关节软限位已下发",
     "paramsPersisted": "参数已持久化到 flash",

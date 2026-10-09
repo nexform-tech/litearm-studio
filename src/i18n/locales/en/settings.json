@@ -1,7 +1,7 @@
 {
   "header": {
     "title": "Controller Parameters & Calibration",
-    "description": "Read and write the parameters the firmware actually exposes: payload, feed-forward scaling, per-joint gains and soft limits, and the firmware self-test."
+    "description": "Read and write the parameters the firmware actually exposes: payload, mounting direction, per-joint gains and soft limits, and the firmware self-test."
   },
   "actions": {
     "read": "Read from controller",
@@ -9,7 +9,7 @@
   },
   "tabs": {
     "payload": "Payload",
-    "gravity": "Gravity & Inertia",
+    "installation": "Mounting",
     "joints": "Gains & Limits",
     "diagnostics": "Diagnostics",
     "gripper": "Gripper & bus",
@@ -26,14 +26,32 @@
     "effective": "Effective: {{mass}} kg · COM [{{com}}]",
     "clampHint": "The firmware silently clamps these values (mass to ≥ 0, COM to ±1 m) instead of rejecting them, so the line above shows the read-back value, not what was sent."
   },
-  "gravity": {
-    "scaleTitle": "Gravity scale per joint",
-    "scaleHint": "Feed-forward gain per joint; 1.0 is the firmware default.",
-    "inertiaTitle": "Inertia scale per joint",
-    "vectorTitle": "Gravity direction",
-    "vectorHint": "Gravity unit vector in the base frame (feed-forward scalar item 6).",
-    "empty": "No joint parameters read yet — the feed-forward channels follow the reported axis count.",
-    "channelHint": "The firmware feed-forward vector is fixed at 7 channels and this arm reports {{count}}, so only these are shown. Saving still writes all 7."
+  "installation": {
+    "readLine": "Read the device's current mounting direction ({{pose}})",
+    "notRead": "No mounting direction read yet — press Read current to read it from the firmware.",
+    "stepChoose": "①Choose the mounting direction",
+    "stepPose": "②Mounting pose and vector (m/s²)",
+    "stepApply": "③Read / send / persist",
+    "pose": {
+      "upright": "Upright",
+      "inverted": "Inverted",
+      "sideX": "Side +x",
+      "sideNegX": "Side -x",
+      "sideY": "Side +y",
+      "sideNegY": "Side -y"
+    },
+    "custom": "Custom",
+    "presetHint": "The button names the gravity vector in the base frame that gets sent — do not guess which way \"Side +y\" faces. If unsure, derive it from base_rpy, or read the same pair with set_installation/get_installation on the pyliteam side.",
+    "rpyHint": "g = R(base_rpy)ᵀ·(0,0,-9.81), the same expression as the firmware's kin.c. Editing rpy recomputes the vector; editing the vector marks rpy as \"Custom\" (the inverse is not unique, so it is not solved).",
+    "rpyCustom": "(custom)",
+    "magnitudeOk": "Magnitude is right: |g| = 9.81 m/s².",
+    "magnitudeOff": "Magnitude is not 9.81 m/s² — check these three numbers.",
+    "readCurrent": "Read current",
+    "send": "Send (arm must be disabled)",
+    "armedHint": "The firmware refuses gravity-vector writes while the drives are enabled — disable the arm first (upright↔side is |Δg| = 13.87 m/s² = 1.41 g).",
+    "persist": "Persist to flash",
+    "persistTitle": "Write the current parameters into flash (the firmware requires a disabled arm here too)",
+    "effective": "Device now: ({{vector}}) = {{pose}} |g|={{magnitude}}"
   },
   "joints": {
     "title": "Per-joint gains and soft limits",
@@ -169,9 +187,7 @@
     "readFailed": "Failed to read controller parameters: {{message}}",
     "writeFailed": "Failed to write parameters: {{message}}",
     "payloadSaved": "Payload applied and read back",
-    "gravityScaleSaved": "Gravity scale applied",
-    "inertiaScaleSaved": "Inertia scale applied",
-    "gravityVectorSaved": "Gravity direction applied",
+    "gravityVectorSaved": "Mounting direction applied and read back",
     "jointParamSaved": "Joint gains applied",
     "jointLimitsSaved": "Joint soft limits applied",
     "paramsPersisted": "Parameters persisted to flash",

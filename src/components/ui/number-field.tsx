@@ -13,6 +13,7 @@ export function NumberField({
   step,
   disabled,
   className,
+  digits,
 }: {
   value: number | undefined
   onCommit: (v: number) => void
@@ -21,9 +22,16 @@ export function NumberField({
   step?: number
   disabled?: boolean
   className?: string
+  /**
+   * 固定小数位显示（如 `digits={4}` ⇒ `1.5707963…` 显示成 `1.5708`）。
+   *
+   * ⚠ 只影响**显示**：没编辑就直接失焦时 `commit()` 原样保留旧值，所以读回/预设的
+   * 全精度数字不会被这一层舍入悄悄改掉（见 `installationPose.ts`）。
+   */
+  digits?: number
 }) {
   const [draft, setDraft] = useState<string | null>(null)
-  const shown = draft ?? (value == null ? '' : String(value))
+  const shown = draft ?? (value == null ? '' : digits == null ? String(value) : value.toFixed(digits))
 
   const commit = () => {
     const raw = draft

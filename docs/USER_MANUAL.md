@@ -34,7 +34,7 @@ STM32 firmware ──USB CDC (1d50:606f)──> CAN ──> motors
 | :--- | :--- |
 | Control | 3D pose monitoring & simulation, joint angle control, Cartesian jog & linear interpolation, mode switching, one-click homing |
 | Telemetry | Joint telemetry sampling & recording, session details, CSV export |
-| Settings | End-effector payload, gravity & inertia, gains & limits, diagnostics, gripper & bus, activation |
+| Settings | End-effector payload, mounting direction, gains & limits, diagnostics, gripper & bus, activation |
 | Activation | Fill in a registration form once, before first use, to unlock the arm |
 
 ### 1.2 Install and run
@@ -272,7 +272,7 @@ The current version has no separate "Controller Logs" page. For link health, use
 
 ## 5. System & Algorithm Settings
 
-The Settings page is organised into seven tabs: **Payload / Gravity & Inertia / Gains & Limits / Diagnostics / Gripper & Bus / Activation / Firmware update** (activation is covered in §1.4, the firmware update in §5.7).
+The Settings page is organised into seven tabs: **Payload / Mounting / Gains & Limits / Diagnostics / Gripper & Bus / Activation / Firmware update** (activation is covered in §1.4, the firmware update in §5.7).
 
 ### 5.1 Payload
 
@@ -283,12 +283,14 @@ Configure the tool/workpiece mass and centre of mass used by the firmware's grav
 
 ---
 
-### 5.2 Gravity & Inertia
+### 5.2 Mounting
 
-- **Per-joint gravity scale**: the feed-forward gain for each joint; `1.0` is the firmware default;
-- **Per-joint inertia scale**: the inertia term on the same feed-forward channels;
-- **Gravity direction**: the gravity unit vector in the base frame (feed-forward scalar item 6);
-- ⚠ The firmware's feed-forward vector is fixed at **7 channels**. When the arm reports fewer axes, the panel draws only the existing channels, but **saving still writes all 7 values**.
+How the base is mounted (upright / inverted / side ±x / ±y). The firmware has no separate mounting-pose command — it only takes the **gravity vector** in the base frame (m/s², feed-forward scalar item 6) — so this tab lets you pick the mounting and works out the vector.
+
+- **Choose the mounting direction**: six presets, each with its base_rpy and gravity vector; the button names the three numbers that will be sent;
+- **Mounting pose and vector**: `g = R(base_rpy)ᵀ·(0,0,-9.81)`, the same expression as the firmware's `kin.c`. Editing rpy recomputes the vector; editing the vector marks rpy as "Custom" (the inverse is not unique, so it is not solved). A `|g|` that drifts from 9.81 m/s² raises a warning;
+- **Read current / Send (arm must be disabled) / Persist to flash**: read the effective value back, write it to RAM, write it to flash. The firmware refuses gravity-vector writes while the drives are enabled (upright↔side is 1.41 g apart), so Send is greyed out while the arm is enabled;
+- ⚠ A preset only fills the draft; nothing reaches the firmware until you press Send. The "Device now" line reads the firmware, not the draft you are editing.
 
 ---
 
