@@ -101,6 +101,32 @@ def test_export_rejects_a_name_that_is_not_a_name(tmp_path) -> None:
     assert called == []
 
 
+def test_export_accepts_the_page_that_lives_on_this_daemon(tmp_path) -> None:
+    """页面自己那一发请求带着 Origin —— 同源就放行, 否则生产里导出全都会被 403。
+
+    (探针与脚本不带 Origin 头, 所以这条只能在这里钉住。)
+    """
+    target = tmp_path / "x.jsonl"
+    response = _client(lambda name: str(target)).post(
+        "/api/export?name=x.jsonl", content=b"data",
+        headers={"Origin": "http://127.0.0.1:8765", "Host": "127.0.0.1:8765"})
+
+    assert response.status_code == 200
+    assert response.json()["saved"] is True
+    assert target.read_bytes() == b"data"
+
+
+def test_export_accepts_the_development_origin_when_asked(tmp_path) -> None:
+    """开发期页面在 vite 的 5173 上 —— 显式放行过就要能用 (`--allow-origin`)。"""
+    response = _client(lambda name: str(tmp_path / "x.jsonl"),
+                       allow_origins=("http://localhost:5173",)).post(
+        "/api/export?name=x.jsonl", content=b"data",
+        headers={"Origin": "http://localhost:5173", "Host": "127.0.0.1:8765"})
+
+    assert response.status_code == 200
+    assert response.json()["saved"] is True
+
+
 def test_export_refuses_another_origin() -> None:
     """别的网页不该能把保存对话框弹到操作员脸上 (与 `/ws` 同一套同源判据)。"""
     response = _client(lambda name: "/tmp/x").post(
