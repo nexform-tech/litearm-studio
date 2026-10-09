@@ -319,6 +319,57 @@ litearm-studio-daemon --no-gripper
 
 ## 打包（Phase 5）
 
+**本地出包就一条命令**（需要 Docker）：
+
+```bash
+make deb        # → packaging/dist/litearm-studio_<版本>_amd64.deb
+```
+
+它做三件事：构建界面（`pnpm build`）、在**准备好的 Ubuntu 22.04 容器**里跑
+`packaging/build.py` 得到单文件可执行程序、再用 `packaging/deb.py` 打成 `.deb`。
+第一次运行会先建镜像（约 4 分钟），之后每次约 90 秒。
+
+```bash
+scripts/build-deb.sh --version 0.17.5     # 指定版本
+scripts/build-deb.sh --no-ui              # 复用已有 dist/，跳过界面构建
+make deb-image                            # 改过 packaging/deb.Dockerfile 之后重建镜像
+```
+
+⚠ **为什么必须在 Ubuntu 22.04 里构建，而不是本机。** 单文件可执行程序里冻着一个 Python
+运行时，它链接的是**构建机**的 glibc：在更新的发行版上打出来的包会要求 glibc ≥ 2.38，
+在 Ubuntu 22.04（2.35）与 24.04（2.39）上**根本起不来**；它还会把构建机的 GTK 带去配目标
+机的系统 WebKitGTK。release 工作流的 `package` job 同样在 ubuntu-22.04 上构建，本地的
+`packaging/deb.Dockerfile` 就是那个环境，容器里跑的 `packaging/deb_build.sh` 与那个 job
+逐步骤一致 —— **改了工作流就要同步改它**：本地构建与线上不一致，比没有本地构建更糟。
+
+版本号默认是 `<最新 tag>~local.<短 sha>`，例如 `0.17.5~local.1c4c370`。用 `~` 而不是
+`+`：Debian 的版本序里 `1.2.3~x` **小于** `1.2.3`，所以本地测试包之后仍能被正式版正常
+升级；写成 `+` 会排在正式版之上，装正式版就变成了降级。
+
+### 本地包与发布包是否一致
+
+换过构建镜像、动过打包脚本之后，拿发布产物当基准核一遍清单：
+
+```bash
+gh release download v0.17.5 --pattern 'litearm-studio_0.17.5_amd64.deb'
+pip install pyinstaller                     # 只有这个脚本需要它
+python scripts/compare_bundles.py litearm-studio_0.17.5_amd64.deb \
+    packaging/dist/litearm-studio_*_amd64.deb \
+    --ignore 'libapt-pkg*' --ignore 'libudev*' --ignore 'libyaml*' \
+    --ignore 'libusb-1.0*' --ignore 'ossl-modules/*' --ignore 'libxxhash*'
+```
+
+它比的是冻结产物里的清单（PyInstaller 的 TOC），分三组：**系统库**、**界面资源**、Python 层。
+前两组缺一个就判失败（界面资源的文件名里的内容哈希会先抹掉，改界面不算差异）；Python 层里多出来的
+那些（`apt_pkg`、`cryptography`、`certifi`…）是发布 runner 自带的，精简构建不需要，只列出来给你看。
+上面那六个 `--ignore` 就是当前 runner 比我们多出来的那几样。
+
+⚠ 这条检查抓到过一次真问题：用最小镜像构建时 `librsvg` 与 SVG 的 pixbuf loader 没被收进去 ——
+包能装、能启动，只有打包进去的 Adwaita 图标画不出来。`packaging/deb.Dockerfile` 现在显式装了
+`librsvg2-2` / `librsvg2-common` 就是为了它。
+
+只想在**本机**（不进容器）看打包过程，或要给 Windows 出包时，仍是直接调脚本：
+
 ```bash
 pnpm build                     # 先构建界面：打包脚本会拒绝在没有 dist/ 的情况下继续
 python packaging/build.py      # 产物：packaging/dist/litearm-studio-daemon[.exe]
