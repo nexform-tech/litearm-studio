@@ -262,7 +262,7 @@ Telemetry recording begins automatically upon connection, saving 10 Hz samples o
 
 ### 4.2 CSV Data Export
 
-Click "Export CSV" to download the full time-series telemetry data as a `.csv` file for analysis in MATLAB, Python (Pandas), or Excel.
+Click "Export CSV" to download the full time-series telemetry data as a `.csv` file for analysis in MATLAB, Python (Pandas), or Excel. A save dialog opens with `telemetry-session-<id>.csv` as the suggested name, starting in your Downloads folder; pick any location. After it is written, a message states the full path. The Logs page's **Export JSONL** works the same way.
 
 ### 4.3 Link Diagnostics
 

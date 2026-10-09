@@ -1,7 +1,9 @@
 import { ChevronDown, ChevronRight, Copy, Download, History, Pencil, RefreshCw, Trash2 } from 'lucide-react'
 import { Fragment, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { useTelemetryState } from './useTelemetryState'
+import { exportFile } from '@/lib/export'
 import { useLogRecords } from '@/lib/log/useLogRecords'
 import { recordToWire, type LogEntry } from '@/lib/log/schema'
 import { sampleContextFor } from '@/lib/log/sampleContext'
@@ -321,19 +323,17 @@ export function LogsPage() {
     setRetentionDialogOpen(false)
   }
 
-  const exportJsonl = () => {
+  const exportJsonl = async () => {
     // 导出用的是线上形状 (`recordToWire`), 于是"导出的文件"与 daemon 写的那个 JSONL
     // 是同一种东西 —— 可以直接喂给 jq / Loki, 也可以再导回来。
     const lines = logs.visible.map((entry) => JSON.stringify(recordToWire(entry))).join('\n')
     const blob = new Blob([`${lines}\n`], { type: 'application/x-ndjson;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const anchor = document.createElement('a')
-    anchor.href = url
-    anchor.download = `litearm-logs-${new Date().toISOString().replace(/[:.]/g, '-')}.jsonl`
-    document.body.appendChild(anchor)
-    anchor.click()
-    anchor.remove()
-    URL.revokeObjectURL(url)
+    const name = `litearm-logs-${new Date().toISOString().replace(/[:.]/g, '-')}.jsonl`
+    const outcome = await exportFile(blob, name)
+    // 保存成功就把路径说出来 —— 桌面版里宿主自己弹的对话框不会告诉操作员文件进了哪,
+    // 而"导出成功了但我找不到文件"与"导出没反应"一样没用。取消则什么都不说。
+    if (outcome.kind === 'saved') toast.success(t('logs:savedTo', { path: outcome.path }))
+    else if (outcome.kind === 'failed') toast.error(t('logs:exportFailed', { message: outcome.detail }))
   }
 
   const copyRecord = async (entry: LogEntry) => {
@@ -491,7 +491,7 @@ export function LogsPage() {
                   variant="outline"
                   size="sm"
                   className="h-8 gap-1.5 text-[0.78125rem] font-semibold"
-                  onClick={exportJsonl}
+                  onClick={() => void exportJsonl()}
                   disabled={logs.visible.length === 0}
                 >
                   <Download size="0.8125rem" />

@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { LogsPage } from './LogsPage'
 import '@/i18n'
 
@@ -85,6 +85,11 @@ vi.mock('@/lib/log/logDb', () => ({
     recent: () => Promise.resolve([]),
     add: () => Promise.resolve(),
   },
+}))
+
+// 导出之后那一句提示是这一页给操作员的唯一回答, 所以它要被量到, 而不是真弹出来。
+vi.mock('sonner', () => ({
+  toast: { success: vi.fn(), error: vi.fn(), dismiss: vi.fn() },
 }))
 
 function record(overrides: Record<string, unknown> = {}) {
@@ -328,5 +333,74 @@ describe('LogsPage — records tab', () => {
     render(<LogsPage />)
     expect(await screen.findByRole('tab', { name: 'Log Records' })).toBeTruthy()
     expect(screen.getByRole('tab', { name: 'Samples' })).toBeTruthy()
+  })
+})
+
+/**
+ * 导出按钮的落点 (issue #104 / #100)。
+ *
+ * 这一页曾经只是点一个 `<a download>`, 而在桌面版里那一下由 pywebview 后端各自决定落点
+ * (GTK 静默写进下载目录、WebView2 直接取消) —— 操作员看到的就是"按了没反应"。现在字节
+ * 交给本地程序 `/api/export`, 由它弹对话框、写文件、回答存到哪, 页面把答案说出来。
+ */
+describe('LogsPage — exporting', () => {
+  const saved = (path: string) => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ ok: true, saved: true, path }),
+  }) as unknown as Response
+
+  beforeEach(async () => {
+    mock.state.entries = [record()]
+    mock.state.samples = []
+    mock.state.status = {
+      seq: 1, dropped: 0, clients: 0, missed: 0, metaAt: Date.now(), buffered: 1,
+      writeErrors: 0, logDir: null, historyAvailable: true, loadingHistory: false,
+    }
+    await import('@/i18n').then((m) => m.default.changeLanguage('en'))
+    const { toast } = await import('sonner')
+    vi.mocked(toast.success).mockClear()
+    vi.mocked(toast.error).mockClear()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('hands the records to the local program and says where it put them', async () => {
+    const fetchMock = vi.fn(async () => saved('/home/operator/Downloads/litearm-logs-x.jsonl'))
+    vi.stubGlobal('fetch', fetchMock)
+    const { toast } = await import('sonner')
+    render(<LogsPage />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Export JSONL' }))
+
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith(
+        'Saved to /home/operator/Downloads/litearm-logs-x.jsonl')
+    })
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toMatch(/^\/api\/export\?name=litearm-logs-.*\.jsonl$/)
+    // 交出去的是**线上形状**的那一行行 JSONL, 与 daemon 自己写的文件是同一种东西。
+    const body = await (init.body as Blob).text()
+    const first = JSON.parse(body.split('\n')[0]) as Record<string, unknown>
+    expect(first).toMatchObject({ event: 'arm.command.failed', trace_id: expect.any(String) })
+  })
+
+  it('says the export failed instead of claiming it worked', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: false,
+      status: 500,
+      json: async () => ({ ok: false, error: 'write-failed', detail: 'No space left on device' }),
+    }) as unknown as Response))
+    const { toast } = await import('sonner')
+    render(<LogsPage />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Export JSONL' }))
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Export failed: No space left on device')
+    })
+    expect(toast.success).not.toHaveBeenCalled()
   })
 })

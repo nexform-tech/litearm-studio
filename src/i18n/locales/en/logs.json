@@ -44,6 +44,8 @@
   "copyRecord": "Copy JSON",
   "copiedRecord": "Copied",
   "exportJsonl": "Export JSONL",
+  "savedTo": "Saved to {{path}}",
+  "exportFailed": "Export failed: {{message}}",
   "exportFiltered": "Export {{count}} records",
   "clearCache": "Clear local cache",
   "clearCacheHint": "Only clears this browser's copy. The daemon's file is not touched.",

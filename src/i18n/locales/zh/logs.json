@@ -44,6 +44,8 @@
   "copyRecord": "复制 JSON",
   "copiedRecord": "已复制",
   "exportJsonl": "导出 JSONL",
+  "savedTo": "已保存到 {{path}}",
+  "exportFailed": "导出失败：{{message}}",
   "exportFiltered": "导出 {{count}} 条",
   "clearCache": "清空本地缓存",
   "clearCacheHint": "只清掉本浏览器的副本，不会动守护进程的文件。",

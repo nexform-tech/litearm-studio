@@ -80,6 +80,28 @@ origin, and the daemon's port can change between launches, which moves the origi
 and the store with it (issue #80). The file does not care which port was free
 that morning, which is why `/api/logs` reads the file rather than the cache.
 
+### Exporting what the page is showing
+
+**Logs → Export JSONL** writes the records the page currently shows (the filters
+apply) in the same JSONL shape as the file above — one wire object per line, so
+the export drops into `jq`, Loki, or back into LiteArm Studio.
+
+Where it goes is the operator's choice. The page hands the bytes to the daemon
+(`POST /api/export`); the daemon opens the native save dialog with
+`litearm-logs-<timestamp>.jsonl` offered as the name and the platform's Downloads
+directory as the starting point; then it writes the file itself and answers with
+the path, which the page shows. Cancelling writes nothing and says nothing.
+
+⚠ The page cannot do this alone. It runs inside the window host (pywebview), where
+`<a download>` neither picks a location nor reports an outcome — the platform
+backend decides: GTK writes silently into the Downloads directory, and WebView2
+cancels the download outright (issue #104). The same bridge carries the Telemetry
+page's **Export CSV**.
+
+Without a window (`--no-open`) the daemon answers `no-window` and the page falls
+back to an ordinary browser download, which is what the bench and server cases
+want.
+
 ## 3. Reading it
 
 ```bash

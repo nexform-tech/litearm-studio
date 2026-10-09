@@ -29,6 +29,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -153,38 +154,139 @@ def _unavailable_message(cause: Any) -> str:
             f"    (原始错误: {cause})")
 
 
-class WindowHandle:
-    """窗口把手 —— 目前唯一的用途是"把窗口抬到前面" (第二次启动的落点)。
+def _enable_downloads(webview: Any) -> None:
+    """把下载交给窗口宿主 —— 界面上两个导出按钮 (日志 JSONL、遥测 CSV) 的落点。
 
-    ⚠ 这些方法会被 **HTTP 线程**调用 (`POST /api/focus`), 不是 GUI 线程。pywebview
-    自己会把调用投递到 GUI 线程, 所以这里可以直接调; 抬不起来也只是没抬起来。
+    ⚠ pywebview 的 `ALLOW_DOWNLOADS` 默认 **`False`**, 而它管的不是"允不允许下载",
+    而是**宿主接不接管这次下载**。默认值下两个后端坏在不同地方 (均按源码核对 6.2.1):
+
+    * **Linux / GTK** (`platforms/gtk.py`) —— `download-started` 从不连接, 于是
+      **永远没有保存对话框**。WebKit 退回到自己的默认落点: 有 XDG 下载目录就静默写进
+      `~/Downloads`, 没有就写进 `$HOME` 根下, 再写不进去 (目录不可写) 就直接取消这次
+      下载。操作员看到的是"按了没反应", 文件却可能躺在别的地方。
+    * **Windows / WebView2** (`platforms/edgechromium.py`) —— 它的
+      `on_download_starting` 在 `False` 时**直接 `args.Cancel = True`**: 下载被取消,
+      什么都不产生。
+
+    打开之后两个后端都由宿主弹原生保存对话框 (GTK 是 `GtkFileChooserAction.SAVE`,
+    Windows 是 WinForms 的 `SaveFileDialog`), 对话框里的默认文件名取自页面给的
+    `download` 属性 —— 这正是"文件存到操作员自己选的地方"所需要的全部。
+
+    ⚠ **页面正常不走这条路**: 导出走 `POST /api/export`, 由本进程自己弹对话框、自己写
+    文件 (见 `server.create_app`)。这一条是它的兜底 —— 页面够不到接口时 (纯浏览器运行、
+    静态部署) 回退到 `<a download>`, 那时"有没有对话框"就取决于这个开关。
+
+    ⚠ 必须在 `webview.start()` **之前**设: 两个后端都是在建视图时读这个开关的
+    (GTK 在 `BrowserView.__init__` 里连接信号)。
+    """
+    webview.settings['ALLOW_DOWNLOADS'] = True
+
+
+def default_export_dir() -> Path:
+    """保存导出文件时对话框从哪个目录开始。
+
+    平台自己的"下载"目录, 依次退化到主目录与临时目录 —— **绝不返回不存在的路径**:
+
+    * `Window.create_file_dialog` 会把不存在的目录换成空串, 原生对话框于是从它自己的
+      默认位置开始 (没有错误, 只是不如人意);
+    * 更要紧的是 pywebview 的 GTK 下载处理器: 它直接把 `glib` 的 XDG 查询结果塞给
+      `GtkFileChooser.set_current_folder`, 而那个查询在**没有 `user-dirs.dirs`** 的
+      机器上返回 `None`, PyGObject 随即抛 `TypeError` —— 对话框根本弹不出来 (issue
+      #104 里"按了没反应"的一种成因)。所以这里不查 XDG, 自己按存在性挑。
+    """
+    home = Path.home()
+    for candidate in (home / "Downloads", home):
+        if candidate.is_dir():
+            return candidate
+    return Path(tempfile.gettempdir())
+
+
+def _on_ui_thread(window: Any, call: Callable[[], Any]) -> Any:
+    """在 GUI 线程上执行 `call` —— 只有 Windows 需要, GTK/Qt 不需要。
+
+    pywebview 的 GTK 与 Qt 后端自己会把对话框投递到 GUI 线程再等结果
+    (`glib.idle_add` / 信号 + 旗语), 所以从 uvicorn 的线程池里直接调是安全的。
+    **Windows 后端不编组**: `winforms.create_file_dialog` 直接
+    `dialog.ShowDialog(form)`, 而 WinForms 只允许在 UI 线程上开窗口 —— 它会抛
+    `InvalidOperationException`, 又被 pywebview 自己吞掉并返回 `None`, 表现就是
+    "操作员按了导出、什么也没发生"。这里补上这一步编组。
+
+    ⚠ 编组失败 (没有 pythonnet、拿不到后端实例) 就照旧直接调用: 那条路在 GTK/Qt 上是
+    对的, 在 Windows 上也不会比不编组更差。
+    """
+    if sys.platform != "win32":
+        return call()
+    try:
+        from System import Func, Type  # noqa: PLC0415 - pythonnet, 只有 Windows 上有
+        from webview.platforms import winforms  # noqa: PLC0415 - 只有 Windows 上有
+
+        instance = winforms.BrowserView.instances.get(window.uid)
+        if instance is None:
+            return call()
+        return instance.Invoke(Func[Type](call))
+    except Exception:  # noqa: BLE001 - 编组只是"更好", 不是"必须"
+        log.debug("无法把这次调用编组到 UI 线程, 直接调用", exc_info=True)
+        return call()
+
+
+class WindowHandle:
+    """窗口把手 —— 抬窗口 (第二次启动的落点) 与"导出存到哪"都由它做。
+
+    ⚠ 这些方法会被 **HTTP 线程**调用 (`POST /api/focus`、`POST /api/export`), 不是
+    GUI 线程。pywebview 自己会把 GTK/Qt 的调用投递到 GUI 线程, Windows 那一路由
+    `_on_ui_thread` 补上; 抬不起来、对话框开不出来也只是"没抬起来 / 没导出", 不影响
+    机械臂会话。
     """
 
-    def __init__(self, window: Any) -> None:
+    def __init__(self, window: Any, *, save_dialog: int) -> None:
         self._window = window
+        #: `webview.FileDialog.SAVE` —— 由 `run_window` 传入, 因为这个模块**不能**在
+        #: 顶层 import webview (GUI 是软依赖, 无界面运行的机器上根本没有它)。
+        self._save_dialog = save_dialog
 
     def raise_window(self) -> None:
         self._window.restore()
         self._window.show()
+
+    def ask_save_path(self, suggested_name: str) -> Optional[str]:
+        """弹原生保存对话框, 返回操作员选定的路径; 取消 (或开不出来) 返回 `None`。
+
+        对话框里预填 `suggested_name` —— 那是页面给的、我们自己的文件名
+        (见 `LogsPage` / `useTelemetryState` 的导出)。
+        """
+        def _ask() -> Optional[str]:
+            chosen = self._window.create_file_dialog(
+                self._save_dialog, str(default_export_dir()), False, suggested_name, ())
+            if not chosen:
+                return None
+            # ⚠ pywebview 在"对话框关了但没有文件名"时回的是 `(None,)` —— 它不是路径,
+            # 不能让它变成字符串 `"None"` 再被写成一个名叫 None 的文件。
+            first = chosen[0]
+            return str(first) if first else None
+
+        path = _on_ui_thread(self._window, _ask)
+        return path or None
 
 
 def run_window(url: str, *, on_ready: Callable[[Any], None],
                title: str = APP_NAME) -> None:
     """在 `url` 打开应用窗口, 并**阻塞到窗口关闭**。
 
-    `on_ready` 在 GUI 起来之前拿到 `WindowHandle`, 供 `/api/focus` 使用。
+    `on_ready` 在 GUI 起来之前拿到 `WindowHandle`, 供 `/api/focus` 与 `/api/export`
+    (导出文件的保存对话框) 使用。
 
     ⚠ **返回即代表操作员关掉了窗口** —— 这是本程序唯一的正常退出信号 (另一个是进程收到
     信号)。调用者据此收尾即可, 不需要再判断任何状态。
     """
     webview = _import_webview()
+    _enable_downloads(webview)
     _set_desktop_identity()
     window = webview.create_window(title, url=url,
                                    width=WINDOW_SIZE[0], height=WINDOW_SIZE[1],
                                    min_size=WINDOW_MIN_SIZE)
     if window is None:  # pragma: no cover - 只有后端异常时才会
         raise WindowUnavailable(_unavailable_message("pywebview 没有创建窗口"))
-    on_ready(WindowHandle(window))
+    on_ready(WindowHandle(window, save_dialog=int(webview.FileDialog.SAVE)))
     log.info("应用窗口已打开: %s", url)
     try:
         # ⚠ `icon` 是 `start()` 的参数而不是 `create_window()` 的 (6.2.1 的签名如此)。
