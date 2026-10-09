@@ -90,7 +90,7 @@ export async function exportThroughDaemon(blob: Blob, filename: string): Promise
 /**
  * 导出一次: 先请本地程序保存, 它不在 (或没有窗口) 才回退到浏览器下载。
  *
- * 取消**什么都不做** —— 操作员已经说过"不要了", 弹一条提示是打脸。失败则如实返回,
+ * 取消**什么都不做** —— 操作员已经说了不要, 再弹一条提示只会添乱。失败则如实返回,
  * 由调用方去说。
  */
 export async function exportFile(blob: Blob, filename: string): Promise<ExportOutcome> {
