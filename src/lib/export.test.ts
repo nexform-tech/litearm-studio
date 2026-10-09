@@ -91,6 +91,18 @@ describe('没有本地程序时回退到浏览器下载', () => {
     expect(await exportFile(new Blob(['a']), NAME)).toEqual({ kind: 'browser' })
     expect(createObjectURL).toHaveBeenCalledTimes(1)
   })
+
+  it('本地程序不在时开发服务器回的那一页也算"没有本地程序"', async () => {
+    // vite 代理连不上 daemon 时回的是它自己的 500 页 —— 那不是我们的形状, 不是失败。
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: false,
+      status: 500,
+      json: async () => ({}),
+    } as unknown as Response)))
+
+    expect(await exportFile(new Blob(['a']), NAME)).toEqual({ kind: 'browser' })
+    expect(createObjectURL).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('浏览器下载的时序', () => {

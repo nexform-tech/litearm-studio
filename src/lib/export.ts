@@ -75,10 +75,16 @@ export async function exportThroughDaemon(blob: Blob, filename: string): Promise
   }
   if (payload.ok === true && payload.reason === 'cancelled') return { kind: 'cancelled' }
   if (payload.ok === true && payload.reason === 'no-window') return { kind: 'browser' }
-  const detail = typeof payload.detail === 'string' && payload.detail
-    ? payload.detail
-    : typeof payload.error === 'string' ? payload.error : ''
-  return { kind: 'failed', detail }
+  if (payload.ok === false && typeof payload.error === 'string') {
+    // 本地程序明确拒绝了 (名字无效 / 太大 / 写不进去): 照实说, 不要再假装成浏览器下载。
+    const detail = typeof payload.detail === 'string' && payload.detail
+      ? payload.detail
+      : payload.error
+    return { kind: 'failed', detail }
+  }
+  // 别的形状 —— 例如开发服务器在 daemon 不在时回的那一页。这不是错误, 是"这里没有
+  // 本地程序", 与连不上时同一条路。
+  return { kind: 'browser' }
 }
 
 /**
