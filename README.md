@@ -137,8 +137,10 @@ chmod +x "litearm-studio-${version}-linux-amd64"
 [docs/INSTALL.md](docs/INSTALL.md) covers the requirements, the serial-port permission and
 first-run activation in full.
 
-Release assets are produced by the `package` job in `.github/workflows/release.yml`; to build one
-yourself run `pnpm build` and then `python packaging/build.py`.
+Release assets are produced by the `package` job in `.github/workflows/release.yml`. To build
+the Debian package yourself, run `make deb` (Docker; it pins the Ubuntu 22.04 toolchain the
+frozen runtime has to be linked against — see [daemon/README.md](daemon/README.md#打包phase-5)).
+For the bare executable instead, run `pnpm build` and then `python packaging/build.py`.
 
 The Windows executable carries the LiteArm icon from `assets/litearm.ico`. It is committed, so a
 normal build never regenerates it; rebuild it only when the brand mark changes, and keep
@@ -176,6 +178,7 @@ so an untracked icon silently falls back to PyInstaller's default executable ico
 | `pnpm test` | Unit tests (Vitest) |
 | `pnpm lint` | Static analysis (oxlint) |
 | `pnpm exec tsc -b` | TypeScript typecheck |
+| `make deb` | Installable Debian package into `packaging/dist/` (Docker, ~90 s) |
 | `python -m pytest daemon/tests -q` | Daemon unit tests (no hardware needed) |
 
 ---
