@@ -22,10 +22,12 @@
 **一个本地 Python 程序 + 现有 React 界面**：
 
 - 双击一个可执行文件（Windows / Linux 各一份），不需要用户装 Python、装驱动、克隆任何仓库。
-- 启动后以**浏览器应用模式**（`chrome/msedge --app=<url>`）打开一个**无地址栏、无标签页**的窗口；找不到 Chromium 系浏览器时降级为普通标签页。
-- 界面用的是用户自己的浏览器内核，因此不增加安装包体积。
+- 启动后由**这个进程自己**开一个**嵌入式窗口**（`pywebview`：Linux 走 GTK/Qt，Windows 走系统自带的 WebView2，macOS 走 WKWebView），界面就是现有的 React 构建产物。
+- **窗口属于这个程序，所以关掉窗口就是退出**：机械臂失能、串口释放。刷新页面不会退出（刷新发生在 webview 里，进程没动）。
 
-**明确不做 Tauri。** 理由：唯一上游是 Python 的 `litearm-python`，硬件 I/O 必须由 Python 进程持有，Tauri 的 Rust 后端无处可用——引入它等于为了一个窗口多背一套 Rust 工具链和一条打包链路。
+**明确不做 Tauri。** 理由：唯一上游是 Python 的 `litearm-python`，硬件 I/O 必须由 Python 进程持有，Tauri 的 Rust 后端无处可用——引入它等于为了一个窗口多背一套 Rust 工具链和一条打包链路。而它在 Linux 上用的还是系统 WebKitGTK，省不下那一个依赖。
+
+> 交付形态的这一版改动（2026-01）：原方案是"以浏览器应用模式打开窗口"。实测下来它有一个反直觉的失败：窗口由**用户机器上的 Chrome** 持有，关掉它跟本进程毫无关系，于是进程继续握着串口，而界面没了；第二次启动还会因为串口被占而报"打不开设备"。改成嵌入式窗口后，"一个程序"这件事在进程层面成立，第 4 条原则也就不再需要靠一句约定来兜。代价是多一个 webview 依赖（见 `daemon/pyproject.toml` 的 `ui` extra），换来的是不依赖用户装浏览器。
 
 ---
 
@@ -50,7 +52,7 @@ litearm-python  ──USB CDC (1d50:606f @921600)──>  STM32  ──CAN──
 1. **唯一上游**：硬件 I/O 只存在于 Python 侧。前端永不直接碰串口。
 2. **状态与命令分离**：固件是 100Hz 被动状态流，SDK 的 `get_state()` 直接回缓存、不发帧。因此状态推送不会被 `movej`（可能阻塞十几秒）挡住，运动过程中 3D 依然是活的。**代价**：缓存不会告诉你设备没了，所以「链路还活着吗」必须由被动状态流的到达时刻单独判定（`LINK_STALE_AFTER_S`，见 `daemon/README.md`）。
 3. **命令串行**：全部走同一个单线程执行器，避免并发指令竞争；运动互斥（`motionBusy`）也在这一层判定，前端只是显示。
-4. **安全在本地程序里**：急停、失能等降能量动作不依赖浏览器存活。关掉窗口不打断已在执行的会话。
+4. **安全在本地程序里**：急停、失能等降能量动作不依赖浏览器存活。窗口属于这个进程，关掉窗口即退出并失能（见交付形态一节）。
 
 ### 设备发现
 
@@ -170,7 +172,7 @@ mode==ZERO_G(7) 或 zero_g 会话激活    → 'zero_gravity'
 - 1.1 备份旧仓（镜像克隆，保留 teleop 源码，供将来建遥操仓使用）
 - 1.2 为同级准备 `litearm-js` 检出并构建 —— 旧传输的类型来源，Phase 3 会连同依赖一起移除
 - 1.3 只保留控制应用：删除 teleop 全部代码、路由、导航项、i18n 命名空间、旧 SDK 类型声明中的遥操类型、手册章节与截图
-- 1.4 清退 Tauri：删除 `src-tauri/`、`Dockerfile.*`、打包脚本与 Tauri 专属文档（交付形态已定为浏览器应用模式）
+- 1.4 清退 Tauri：删除 `src-tauri/`、`Dockerfile.*`、打包脚本与 Tauri 专属文档（当时的交付形态定为浏览器应用模式；2026-01 改为嵌入式窗口，见 §1）
 - 1.5 接入组织仓库规范：以远端 `main` 的规范提交为基线，保留规范版 `AGENTS.md`、`LICENSE`、`.releaserc.json`、`.markdownlint.json`、`release.yml`；占位 `ci.yml` 换成真实工具链（job 名保持 `test`）
 - 1.6 以**分支 + PR + squash 合并**落地（规范禁止直接推 `main`）
 
@@ -197,7 +199,7 @@ mode==ZERO_G(7) 或 zero_g 会话激活    → 'zero_gravity'
 - `main.tsx` 启动逻辑：向本地程序要连接状态，不再读端点
 - 重写 `src/lib/arm/errors.ts` 为 SDK 异常层级映射
 - 移除轨迹示教/回放与「控制器日志」页：相关组件、状态、i18n 命名空间与导航项
-- 启动时以浏览器应用模式打开窗口（找不到 Chromium 系则降级为标签页）
+- 启动时由本进程打开嵌入式应用窗口（见 §1「交付形态」；关掉窗口即退出）
 
 **完成判据**：`pnpm build` 通过，前端无任何指向旧 SDK 的引用。
 
@@ -215,9 +217,9 @@ mode==ZERO_G(7) 或 zero_g 会话激活    → 'zero_gravity'
 
 **交付物**：Windows / Linux 各一个可执行文件。
 
-- 把 `litearm-python`（含 `pyserial`）与界面静态资源一起打进单文件可执行程序
+- 把 webview 依赖（`daemon/pyproject.toml` 的 `ui` extra）与 `litearm-python`（含 `pyserial`）、界面静态资源一起打进单文件可执行程序
 - Linux 仍需在 Ubuntu 22.04 基准环境构建（沿用现有规范）；Windows 用 CI 的 windows runner，不再用交叉编译容器
-- 验证 pywebview 不再需要（应用模式已覆盖窗口需求）
+- ⚠ 反过来于原计划：pywebview **仍然需要**。2026-01 的交付形态改版把它请了回来——"关掉窗口就是退出"只有在窗口属于本进程时才成立（见 §1）。
 
 ---
 
@@ -263,6 +265,6 @@ mode==ZERO_G(7) 或 zero_g 会话激活    → 'zero_gravity'
 | --- | --- |
 | 固件 mode 语义未在真机核实 | 用本地程序的「运动在飞」判定 `moving`；真机到手后校准 |
 | `litearm-python` 不在 PyPI | 打包时内嵌，不从索引安装；SDK 版本被钉在打包那一刻 |
-| 浏览器应用模式依赖 Chromium 系 | 找不到时降级为普通标签页，功能不受影响 |
+| 嵌入式窗口依赖 webview | `ui` extra 一并打进单文件可执行程序；Linux 走 Qt（纯 pip）或系统 GTK，Windows/macOS 用系统自带的内核 |
 | Linux 打包需 Ubuntu 22.04 基准 | 沿用现有容器化构建规范 |
 | 旧仓历史被弃用后 teleop 源码丢失 | Phase 1 先做镜像备份，Gitee 远端亦保留 |

@@ -19,7 +19,7 @@ litearm-python  ──USB CDC (1d50:606f)──>  STM32  ──CAN──>  motor
 ```
 
 - **The daemon owns the arm.** It auto-discovers the USB CDC device (or takes `--port`), pushes normalised state at 50 Hz from the SDK's cached frames, and runs every SDK call on a single-threaded executor. Emergency stop and disable run on a separate lane so they stay reachable while a motion is in progress.
-- **The daemon also serves the UI.** It hosts the built assets and opens a Chromium `--app=` window (falling back to a normal tab). Closing the window does **not** tear down an arm session.
+- **The daemon also owns the window.** It hosts the built assets and opens an **embedded window** (`pywebview`), so there is one process and no browser to install. **Closing the window ends the program** — the arm is de-energised and the serial port released. Reloading the page does not end it.
 - **Loopback only.** Binding anything else is refused in code — exposing an interface that can drive an arm on a LAN is treated as an incident, not a setting.
 
 ---

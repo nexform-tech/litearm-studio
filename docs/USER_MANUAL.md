@@ -52,7 +52,7 @@ arm's serial port. The standalone Linux file is not executable as downloaded, an
 2.35 or newer (Ubuntu 22.04+, Debian 12+). [INSTALL.md](INSTALL.md) has the download commands, the
 checksum verification, the serial-port permission and the first-run activation in full.
 
-The program is self-contained: it needs no Python install and no browser tab opened by hand — it opens a window itself (in `--app=` mode when a Chromium-based browser is present, otherwise a normal tab). It prints the address it listens on, `http://127.0.0.1:8765/` by default; if that port is taken it picks the next free one and prints it — **use the printed address**.
+The program is self-contained: it needs no Python install and no browser — it opens its own embedded application window. That window belongs to the program, so **closing it quits the program** (the arm is de-energised and the serial port released); reloading the page does not quit. It prints the address it listens on, `http://127.0.0.1:8765/` by default; if that port is taken it picks the next free one and prints it — **use the printed address**.
 
 > [!IMPORTANT]
 > **On Linux the current user must be allowed to open the serial port** (the device node normally belongs to the `dialout` group), otherwise the UI opens but cannot reach the arm:

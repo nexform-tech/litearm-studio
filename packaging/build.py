@@ -48,6 +48,15 @@ VERSION_FILE = DAEMON_SRC / "litearm_studio_daemon" / "_build_version.py"
 #: 用完删掉。见 `activation.default_activation_url()`。
 ACTIVATION_URL_FILE = DAEMON_SRC / "litearm_studio_daemon" / "_build_activation_url.py"
 EXE_NAME = "litearm-studio-daemon"
+
+#: 窗口后端的选择。`gtk` 借系统的 WebKitGTK（产物小），`qt` 自带 Chromium（产物 ~240 MB）。
+#: 没设就自动：有 GTK 用 GTK，否则 Qt。见 `window_backend()`。
+WINDOW_BACKEND_ENV = "LITEARM_STUDIO_WINDOW_BACKEND"
+
+#: GTK 后端要显式点名的 gi 模块。`Gtk` 那个钩子会把 libgtk-3 及其传递依赖一起收进来；
+#: `WebKit2` **没有** PyInstaller 钩子，它的 typelib 与 `libwebkit2gtk` 必须由 `.deb` 的
+#: `Depends` 提供（见 `deb.control_text`）。
+GTK_MODULES = ("Gtk", "Gdk", "GdkPixbuf", "Gio", "GLib", "GObject", "Pango", "Atk")
 # Windows 可执行文件的图标。不传 `--icon` 时 PyInstaller 会用它自带的默认图标 ——
 # 发出去的程序在资源管理器/任务栏里就是那个通用图标，而不是我们的标识。
 # Linux 的 ELF 不嵌图标，这个参数在 Linux 上只是被 PyInstaller 接受后忽略。
@@ -162,6 +171,150 @@ def dfu_build_args() -> list[str]:
     return args
 
 
+def window_build_args() -> list[str]:
+    """应用窗口（`daemon/.../window.py`）的 PyInstaller 参数。
+
+    `pywebview` 是**软依赖**（`daemon[ui]` extra）：无界面运行、CI 与测试都不装它。所以
+    这里分两种情况，判据与夹爪 / pyusb 那两条同源：
+
+    * 装了就收进来 —— 冻结产物必须能开窗，否则"关掉窗口就是退出"这条行为在发布版上
+      根本不成立；
+    * 没装就**判失败**，而不是打出一个没窗口的产物。一个能启动、能连臂、一开窗就退出码 3
+      的 `.deb` 比一次构建失败难查得多。
+
+    **两个后端，体积差一个数量级**（Linux）：
+
+    * `gtk`：借系统的 WebKitGTK。产物里只有 Python 侧与 PyGObject，`libwebkit2gtk` 那
+      94 MB 留在系统上、由 `.deb` 的 `Depends` 提供（见 `deb.control_text`）。
+    * `qt`：把 Qt WebEngine（一整个 Chromium）打进产物，不依赖任何系统库，代价是 `~240 MB`。
+
+    选哪个由 `LITEARM_STUDIO_WINDOW_BACKEND` 决定，没设就自动：有 GTK 用 GTK，否则 Qt。
+    """
+    if not sdk_available("webview"):
+        raise SystemExit(
+            "找不到应用窗口的依赖 `pywebview`，发布出来的产物**打不开窗口** —— "
+            "\"关掉窗口就是退出\"这条行为也就无从谈起。请装界面依赖：\n"
+            '    pip install -e "daemon[ui]"')
+    backend = window_backend()
+    print(f"[package] 窗口后端 = {backend}")
+    if backend == "gtk":
+        return _gtk_build_args()
+    if backend == "qt":
+        return _qt_build_args()
+    if backend == "native":
+        return _native_build_args()
+    raise SystemExit(
+        "没有任何可用的窗口后端。二选一：\n"
+        "    借系统的 GTK:  apt install python3-gi gir1.2-webkit2-4.1   （产物小）\n"
+        '    自带的 Qt:     pip install -e "daemon[ui-qt]"             （产物 ~240 MB）')
+
+
+def window_backend() -> str | None:
+    """`gtk` / `qt` / `native`；一个都没有时返回 `None`。
+
+    ⚠ Linux 上 `auto` 优先 GTK 是因为体积，不是因为 GTK 更好用：`libwebkit2gtk` 有
+    94 MB，自带的 Qt 有 240 MB，而两者都要在系统里放一份 WebKit/Chromium 才能渲染。
+    Windows 与 macOS 没有这个取舍 —— 它们**自带**内核（WebView2 / WKWebView），
+    pywebview 直接用，既不用 GTK 也不用 Qt，所以那两个平台是 `native`。
+    """
+    forced = os.environ.get(WINDOW_BACKEND_ENV, "").strip().lower()
+    if forced:
+        if forced not in ("gtk", "qt", "native"):
+            raise SystemExit(
+                f"{WINDOW_BACKEND_ENV} 只接受 gtk / qt / native，实得 {forced!r}")
+        return forced
+    if not sys.platform.startswith("linux"):
+        return "native"
+    if gtk_available():
+        return "gtk"
+    if any(sdk_available(name) for name in ("PyQt6", "PySide6")):
+        return "qt"
+    return None
+
+
+def gtk_available() -> bool:
+    """这台构建机上有没有可用的 GTK + WebKit2 4.1（`gi` 是系统包，pip 装不了）。"""
+    try:
+        import gi  # noqa: PLC0415 - 只有构建 GTK 产物时才需要
+        gi.require_version("WebKit2", "4.1")
+    except Exception:  # noqa: BLE001 - 缺 gi、缺 typelib、版本不对都算"没有"
+        return False
+    return True
+
+
+def _gtk_build_args() -> list[str]:
+    """GTK 后端的参数。
+
+    ⚠ **WebKit2 没有 PyInstaller 钩子**（自带的 `hook-gi.repository.*` 里有 Gtk/Gdk/Gio…
+    但没有 WebKit2），所以它的 typelib 与 `libwebkit2gtk` 必须由 `.deb` 的 `Depends` 提供。
+    漏掉这条依赖的表现是：装完打开就报"没有可用的 webview 后端"。
+
+    ⚠ `Gtk` 那个钩子会顺带把 `libgtk-3` 及其依赖收进产物（`collect_typelib_data()` 会收
+    typelib 指向的共享库）。这是有意的：GTK 的传递依赖太多，与其在 `Depends` 里逐条列，
+    不如让 PyInstaller 收干净；真正大的是 WebKit，而它不在那条链上。
+    """
+    if not gtk_available():
+        # ⚠ 被 `LITEARM_STUDIO_WINDOW_BACKEND=gtk` 强制指定、但机器上其实没有 GTK 时，
+        # 静默继续会打出一个**开不了窗口**的产物 —— 正是这个函数要拦的那类失败。
+        raise SystemExit(
+            "选定了 GTK 窗口后端，但这台构建机上没有可用的 PyGObject / WebKit2 4.1。\n"
+            "    apt install python3-gi gir1.2-webkit2-4.1\n"
+            f"    或者去掉 {WINDOW_BACKEND_ENV}=gtk，改用自带的 Qt 后端")
+    args = ["--collect-all", "webview", "--collect-all", "gi"]
+    for name in GTK_MODULES:
+        args += ["--hidden-import", f"gi.repository.{name}"]
+    args += ["--hidden-import", "gi.repository.WebKit2"]
+    return args
+
+
+def _native_build_args() -> list[str]:
+    """Windows / macOS 的窗口参数：系统自带内核，什么都不用额外收。
+
+    pywebview 在那两个平台用 WebView2 / WKWebView，pywebview 自己的平台模块由
+    `--collect-all webview` 收干净。Windows 上还要 Python.NET（pywebview 的依赖会带进来），
+    它的加载器是动态导入的，静态分析看不见。
+    """
+    args = ["--collect-all", "webview"]
+    if sys.platform == "win32":
+        for name in ("pythonnet", "clr_loader"):
+            if sdk_available(name):
+                args += ["--collect-all", name]
+    return args
+
+
+def _qt_build_args() -> list[str]:
+    """Qt 后端的参数。
+
+    ⚠ `qtpy` 是**独立包**，不在 pywebview 的基础依赖里（只有它的 `[qt]` extra 才带）。
+    所以"装了 PyQt6"并不等于 Qt 后端能起来 —— 它第一行就是 `from qtpy import ...`。
+    少了它的表现是产物**构建成功**、一启动就报"没有可用的 webview 后端"。
+
+    ⚠ **为什么显式列 QtWebEngine**：pywebview 经 `qtpy` 选绑定（运行时的动态选择），
+    PyInstaller 的静态分析跟不到那条路；`qtpy` 自己也是运行时挑 PyQt/PySide 的。
+    """
+    if not sdk_available("qtpy"):
+        raise SystemExit(
+            "找不到 `qtpy` —— pywebview 的 Qt 后端要靠它选绑定，没有它产物开不了窗口。\n"
+            '    pip install -e "daemon[ui-qt]"')
+    args = [
+        "--collect-all", "webview",
+        # qtpy 是运行时选绑定的，静态分析看不见它到底会用哪一个。
+        "--collect-all", "qtpy",
+    ]
+    for binding in ("PyQt6", "PySide6"):
+        if sdk_available(binding):
+            print(f"[package] Qt 绑定 = {binding}")
+            hidden = ["QtWebEngineWidgets", "QtWebEngineCore", "QtWebChannel",
+                      "QtNetwork", "QtCore", "QtGui", "QtWidgets"]
+            for name in hidden:
+                args += ["--hidden-import", f"{binding}.{name}"]
+            return args
+    raise SystemExit(
+        "装了 `pywebview` 但没有任何 Qt 绑定，冻结出来的窗口会在选后端时失败。\n"
+        '    pip install -e "daemon[ui-qt]"   # 它会拉 PyQt6')
+    return args
+
+
 def main() -> int:
     if not (UI_DIST / "index.html").is_file():
         raise SystemExit(
@@ -217,6 +370,7 @@ def main() -> int:
             "--collect-all", "serial",
             *gripper_build_args(),
             *dfu_build_args(),
+            *window_build_args(),
             *activation_build_args(activation_url),
             # uvicorn 的 loop/protocol 实现是动态导入的, PyInstaller 静态分析看不见
             "--collect-submodules", "uvicorn",

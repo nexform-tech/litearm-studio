@@ -64,6 +64,7 @@ from .schema import (  # re-exported: emitters use `obs.CONNECT_STARTED`
     CONNECT_STARTED,
     CONNECT_SUCCEEDED,
     DAEMON_STARTED,
+    DAEMON_WINDOW_CLOSED,
     DEENERGIZED,
     DEENERGIZE_FAILED,
     DEENERGIZE_SKIPPED,

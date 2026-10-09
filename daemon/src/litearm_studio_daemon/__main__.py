@@ -1,7 +1,7 @@
 """命令行入口 —— `litearm-studio-daemon [--fake] [--port P] [--http-port N] …`
 
 计划 2 节「设备发现」与交付形态的落点: 一个本地程序, 双击/一条命令起, 监听本机,
-用浏览器应用模式开窗口 (找不到 Chromium 系就退回普通标签页, 见 `server._open_browser`)。
+**由本进程自己开一个应用窗口** (`window` 模块), 因此关掉窗口就是退出整个程序。
 """
 from __future__ import annotations
 
@@ -14,11 +14,12 @@ from pathlib import Path
 from typing import List, Optional
 
 from . import __version__, activation, obs
-from .instance import find_running
+from .instance import find_running, focus as focus_running
 from .obs import handlers as obs_handlers
 from .obs import schema as obs_schema
-from .server import HTTP_PORT_TRIES, _is_loopback, _open_browser, serve
+from .server import HTTP_PORT_TRIES, _is_loopback, serve
 from .session import Session
+from .window import WindowUnavailable
 
 
 def _log_level(value: str) -> str:
@@ -53,7 +54,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ui-dir", metavar="DIR", default=None,
                    help="前端静态目录 (默认找仓库的 dist/; 不存在就只提供健康检查与 /ws)")
     p.add_argument("--no-open", action="store_true",
-                   help="不自动打开浏览器窗口 (默认尝试以应用模式打开)")
+                   help="不开应用窗口, 无界面运行 (服务照常监听, 界面可用浏览器连该地址);"
+                        "默认由本进程自己开窗口, 关掉窗口即退出整个程序")
     p.add_argument("--keep-enabled", action="store_true",
                    help="退出时不失能 (默认退出前会 disable 降能量; 仅在明确知道"
                         "机械臂会由别的方式保持时才用)")
@@ -121,8 +123,13 @@ def _reuse_the_running_instance(args: argparse.Namespace,
                                 defaults: argparse.Namespace) -> Optional[int]:
     """已经有同一个构建在跑就复用它 (返回 0); 否则返回 `None`, 由调用者照常启动。
 
-    见 `instance` 模块文档: 关掉窗口不停止守护进程, 而第二次启动原本会另起一个连不上
-    机械臂的会话 (串口被上一个进程独占)。
+    见 `instance` 模块文档: 串口是独占的, 第二个进程连不上机械臂, 而操作员读到的是硬件
+    故障。这里先问一圈环回端口上有没有同一个构建, 有就把它的**窗口抬到前面**。
+
+    ⚠ 与旧版不同: 这里**不再开一个浏览器窗口指向旧实例**。现在窗口由那个实例自己拥有
+    (见 `window` 模块), 一个进程一个窗口, 所以第二次启动做的是把它抬起来 —— 这就是桌面
+    程序点两次图标的规范行为, 也避免出现"两个窗口指向同一个会话"。旧实例是无界面运行
+    的 (`--no-open`) 时没有窗口可抬, 此时如实把地址打出来让操作员自己开。
 
     ⚠ **必须在任何有副作用的构造之前调用** —— `build_gripper_session` 会真的去连 CAN。
     """
@@ -133,8 +140,13 @@ def _reuse_the_running_instance(args: argparse.Namespace,
     if url is None:
         return None
     print(f"[litearm-studio-daemon] 已有实例在运行, 复用它: {url}")
-    if not args.no_open:
-        _open_browser(url)
+    if args.no_open:
+        # 显式要求无界面 ⇒ 不碰任何窗口。地址仍然打出来, 操作员想开就自己开。
+        print(f"[litearm-studio-daemon] 界面在 {url} (--no-open: 没有开窗)")
+    elif focus_running(url):
+        print("[litearm-studio-daemon] 已把它的窗口抬到前面")
+    else:
+        print(f"[litearm-studio-daemon] 它没有窗口可抬起 (无界面运行?); 界面在 {url}")
     return 0
 
 
@@ -230,6 +242,13 @@ def main(argv: Optional[List[str]] = None) -> int:
                           http_port=args.http_port, ui_dir=args.ui_dir,
                           open_browser=not args.no_open,
                           allow_origins=args.allow_origin))
+    except WindowUnavailable as exc:
+        # ⚠ **不静默退回无界面**: 那正是"操作员以为程序关了、进程还握着串口"这个缺陷的
+        # 形状。没有界面就说清楚为什么, 并且告诉他怎么显式地无界面运行。
+        print(f"[litearm-studio-daemon] {exc}", file=sys.stderr)
+        obs.error(obs.STARTUP_REFUSED, body="没有可用的 webview 后端, 拒绝以无界面方式继续",
+                  fields={"reason": "window_unavailable"})
+        return 3
     except KeyboardInterrupt:
         return 0
     finally:

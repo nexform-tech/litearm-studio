@@ -3,15 +3,17 @@
 谁读这个文件: 改启动路径 (`__main__.main`) 的人, 以及要回答"关掉窗口再启动一次会发生
 什么"的人。
 
-问题的形状 (issue #75)。关掉窗口**不**停止守护进程 (那是 `server.py` 写明的策略: 一个
-客户端走掉不该结束机械臂会话), 而第二次启动不检查有没有实例在跑 —— 它绑下一个空闲端口
+问题的形状 (issue #75)。第二次启动不检查有没有实例在跑 —— 它绑下一个空闲端口
 (`server.pick_free_http_port`), 另起一个会话。串口是**独占**的 (`litearm` 的
 `SerialTransport` 用 `flock`), 于是新进程连不上机械臂: 窗口里是「打不开 /dev/ttyACM0」,
 而机械臂正握在上一个进程手里, 还带着使能。操作员读到的是硬件故障, 实际的读法是「程序
 已经在跑了」。
 
-这里的答案是: 启动时先问一圈环回端口上有没有**同一个构建**的守护进程, 有就把窗口指向它,
-自己不起。
+这里的答案是: 启动时先问一圈环回端口上有没有**同一个构建**的守护进程, 有就**请它把窗口
+抬到前面** (`focus`), 自己不起。
+
+⚠ 现在"窗口关掉 = 整个程序退出" (见 `window` 模块), 所以正常路径上不会有旧进程留着 ——
+这条复用是给另外两种情况兜底: 图标被连点两次, 以及升级后旧版本的进程还活着。
 
 判据只有一条, 来自不需要会话的 `/api/health`:
 
@@ -32,6 +34,9 @@ from typing import Any, Callable, Dict, Optional
 
 #: 复用判据的唯一来源。它**不需要会话**, 断线、未连接时照样答 (见 `server._health`)。
 HEALTH_PATH = "/api/health"
+
+#: 单实例的第二个动作: 请已经在跑的实例把它的窗口抬到前面 (见 `focus`)。
+FOCUS_PATH = "/api/focus"
 
 #: 单次探测的超时。环回上"没人监听"是立刻 `ECONNREFUSED`, 不花这个时间; 它只兜住
 #: "端口被一个不是 HTTP 的东西占着"这种会一直不答的情况, 所以给得很短。
@@ -87,3 +92,28 @@ def find_running(host: str, start: int, tries: int, *, version: str, fake: bool 
         if health is not None and is_same_instance(health, version=version, fake=fake):
             return f"http://{host}:{port}/"
     return None
+
+
+def focus(url: str, timeout: float = PROBE_TIMEOUT_S) -> bool:
+    """请已经在跑的那个实例把**它自己的窗口**抬到前面; 抬起来了返回 `True`。
+
+    这是第二次启动该做的事 (见 `__main__._reuse_the_running_instance`): 窗口现在由那个
+    进程自己拥有, 一个进程一个窗口, 所以这里不新开窗口, 只把它抬起来 —— 桌面程序点两次
+    图标的规范行为。
+
+    ⚠ **不抛异常**, 和 `probe` 同理: 启动路径上不能因为"对端不答话"就崩掉。对端是无界面
+    运行 (`--no-open`) 时它会如实回 `focused: false`, 这里也如实返回 `False`, 由调用者
+    把地址打给操作员。
+    """
+    request = urllib.request.Request(f"{url.rstrip('/')}{FOCUS_PATH}", method="POST",
+                                     data=b"")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as resp:
+            body = resp.read(MAX_BODY_BYTES)
+    except Exception:  # noqa: BLE001 - 理由见 docstring
+        return False
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return False
+    return isinstance(data, dict) and data.get("focused") is True

@@ -44,8 +44,11 @@ git clone https://github.com/nexform-tech/litearm-studio.git
 cd litearm-studio
 
 pip install -e ../litearm-python
-pip install -e "daemon[test]"
+pip install -e "daemon[test,ui]"
+sudo apt install python3-gi gir1.2-webkit2-4.1   # 仅 Linux：窗口的渲染内核
 ```
+
+`ui` 这个 extra 就是 `pywebview`，窗口本身。Linux 上它还需要一个渲染内核，小的那个是系统的 WebKitGTK（`python3-gi` + `gir1.2-webkit2-4.1`）。**不要**顺手换成 `daemon[ui-qt]`：它自带一个 Chromium，会把 `.deb` 从 63 MB 变成 243 MB。只有当你永远用 `--no-open` 无界面运行时才可以把窗口整个省掉；没有渲染内核时程序会直接报错退出，而不是开一个窗口。
 
 构建本地程序要托管的界面（`dist/` 已存在可跳过）：
 
@@ -68,7 +71,7 @@ litearm-studio-daemon
 litearm-studio-daemon --port /dev/ttyACM1 --http-port 9000 --no-open
 ```
 
-启动后会打印实际监听的地址（默认 `http://127.0.0.1:8765/`；被占用会自动换并打印新端口），并在有 Chromium 系浏览器时以 `--app=` 模式开窗，否则退回普通标签页。
+启动后会打印实际监听的地址（默认 `http://127.0.0.1:8765/`；被占用会自动换并打印新端口），并打开**自己的嵌入式应用窗口**——机器上不需要装任何浏览器。关掉那个窗口就是退出程序。
 
 | | |
 | --- | --- |
@@ -143,11 +146,11 @@ litearm-studio-daemon --port /dev/ttyACM1 --http-port 9000 --no-open
 
 本地程序会自动往后找空闲端口并打印，请以打印出的地址为准，不要假定是 8765。
 
-### 关掉窗口后界面没了，但机械臂还连着
+### 关掉窗口就是退出程序
 
-这是刻意设计：关窗口**不会**打断已在执行的会话。要结束会话请在界面里点 **断开** 或 **STOP**，或直接停掉本地程序进程。
+这是刻意设计：窗口属于这个程序，关掉它就会结束会话——机械臂失能、串口释放。**刷新页面不会退出**，只有关窗口才会。
 
-趁着那个本地程序还在跑、再次启动本程序，会直接开一个指向它的窗口——拿回的就是原来那条会话，而不是一个连不上机械臂的第二个程序。
+再次启动就是一个干净的会话。如果确实还有实例在跑（旧版本，或者图标被点了两次），再次启动**会把那个实例的窗口抬到前面**，而不是另起第二个程序。
 
 ### 窗口说串口打不开，可机械臂明明是连着的
 

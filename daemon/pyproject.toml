@@ -51,6 +51,23 @@ dependencies = [
 # `httpx` 只有一处用途: `fastapi.testclient.TestClient` 要它做 HTTP 传输。
 test = ["pytest>=7", "httpx"]
 
+# 应用窗口 (`window.py`)。`pywebview` 本身是纯 Python —— 真正渲染的内核要么来自系统,
+# 要么由 `ui-qt` 自带一个。
+#
+# ⚠ Linux 上"系统内核"= GTK/WebKitGTK, 而它是**系统包**, pip 装不了:
+#     apt install python3-gi gir1.2-webkit2-4.1
+# Windows 的 WebView2 与 macOS 的 WKWebView 都是系统自带的, 什么都不用装。
+ui = ["pywebview"]
+
+# 备选: 自带一个 Chromium (Qt WebEngine)。不需要 apt, 但产物与安装体积都多 ~200 MB ——
+# 只在拿不到系统 GTK 时才用它, 见 `packaging/build.py` 的后端选择。实测: 借系统 WebKitGTK
+# 的 `.deb` 是 63 MB, 自带 Qt 的是 243 MB。
+ui-qt = [
+    "QtPy; sys_platform == 'linux'",
+    "PyQt6; sys_platform == 'linux'",
+    "PyQt6-WebEngine; sys_platform == 'linux'",
+]
+
 [project.scripts]
 litearm-studio-daemon = "litearm_studio_daemon.__main__:main"
 

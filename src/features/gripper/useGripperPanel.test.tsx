@@ -207,6 +207,25 @@ describe('useGripperPanel', () => {
     expect(result.current.speedMmS).toBe(50)
   })
 
+  it('survives a localStorage that throws instead of taking the whole page down', () => {
+    // ⚠ 这三个偏好访问都在"挂载即执行"的路径上: 读是 `useState` 的惰性初始化, 写是
+    // `useEffect` —— **两处的异常都会被错误边界接住**, 于是整页控制台被"页面渲染遇到
+    // 异常"替换。真实桌面上就是这样。仓库里其它存储访问都做了防护, 只有这里漏了。
+    const spy = vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => {
+      throw new Error('SecurityError: localStorage is not available')
+    })
+    try {
+      const { result } = renderHook(() => useGripperPanel())
+
+      expect(result.current.forceN).toBe(20)
+      expect(result.current.speedMmS).toBe(50)
+    } finally {
+      // 这个文件的 afterEach 只 clearAllMocks, 不还原 spy —— 不还原的话紧随其后的
+      // beforeEach 会在 `localStorage.clear()` 上抛出。
+      spy.mockRestore()
+    }
+  })
+
   it('stays quiet when the daemon has no gripper session at all', () => {
     mocks.present.current = false
     mocks.conn.current = null

@@ -28,6 +28,8 @@ import logging
 import os
 import socket
 import sys
+import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, List, Optional
@@ -40,7 +42,7 @@ from starlette.exceptions import HTTPException
 from starlette.responses import Response
 from starlette.types import Scope
 
-from . import __version__, logread, obs
+from . import __version__, logread, obs, window
 from .errors import error_to_dict
 from .statemap import jsonable
 from .session import ENERGY_DOWN_COMMANDS, Session
@@ -69,6 +71,10 @@ GRIPPER_ZERO_TIMEOUT_S = 300.0
 #: 页面**自己发现不了**的事, 而 2s 短到"操作员还没开始困惑", 又长到不占可观的带宽
 #: (一条几十字节)。它只在有客户端时发。
 LOG_META_INTERVAL_S = 2.0
+
+#: 等 uvicorn 真的开始监听的上限 (秒)。窗口要在那之后才指得过去, 所以这条等待是必须的;
+#: 给上限是为了"端口被占/后端起不来"时如实报错, 而不是永远挂在启动路径上。
+STARTUP_TIMEOUT_S = 15.0
 
 
 @dataclass
@@ -737,11 +743,14 @@ def create_app(session: Session, *, gripper: Optional[Any] = None,
                version: str = __version__,
                ui_dir: Optional[str] = None,
                repo_dist: Optional[Path] = None,
-               allow_origins: Iterable[str] = ()) -> FastAPI:
+               allow_origins: Iterable[str] = (),
+               focus: Optional[Callable[[], bool]] = None) -> FastAPI:
     """建 FastAPI 应用 (不含绑定/启动 —— 那是 `run()` 的事)。
 
     `/api/health` 返回版本与连接状态; 给了静态目录就把它挂在 `/` 上
     (没有就跳过, 不报错)。`allow_origins` 是**额外**放行的跨源, 见 `origin_allowed`。
+    `focus` 是"把本进程的窗口抬到前面"的动作, 由 `serve` 注入 —— 无界面运行时没有窗口,
+    它返回假, `/api/focus` 如实转告调用者。
     """
     resolved = resolve_ui_dir(ui_dir, repo_dist=repo_dist)
     daemon = Daemon(session, gripper=gripper, version=version, ui_dir=resolved,
@@ -753,6 +762,16 @@ def create_app(session: Session, *, gripper: Optional[Any] = None,
 
     app.add_api_route("/api/health", lambda: JSONResponse(_health(daemon)),
                       methods=["GET"])
+
+    # ── 单实例: 第二次启动把已经在跑的窗口抬到前面 ──────────────────────────
+    #
+    # 见 `instance` 与 `__main__._reuse_the_running_instance`。关掉窗口就是退出, 所以
+    # 正常路径上不会有第二个进程; 但"图标被点了两次"和"上一个版本的进程还活着"都会走到
+    # 这里。抬不起来 (无界面运行) 就如实说 `focused: false`, 由调用者去告诉操作员。
+    @app.api_route("/api/focus", methods=["POST"])
+    async def _focus_window() -> JSONResponse:
+        return JSONResponse({"ok": True,
+                             "focused": bool(focus is not None and focus())})
 
     # ── 日志历史回读 (issue #79 第 5 点 / #80) ──────────────────────────────
     #
@@ -845,45 +864,72 @@ def _health(daemon: Daemon) -> dict:
     return out
 
 
-def _open_browser(url: str) -> None:
-    """尝试以**浏览器应用模式**开一个无地址栏窗口 (`chrome/msedge --app=<url>`)。
+def _teardown(gripper: Optional[Any], session: Session) -> None:
+    """进程退出前的收尾 —— **唯一一处**, 两条启动路径都走它。
 
-    找不到 Chromium 系浏览器时退回 `webbrowser.open` (普通标签页) —— 功能不受影响
-    (计划 7 节风险表的既定降级)。**不引新依赖**: 只查 PATH 上常见的几个可执行名,
-    找不到就降级; 任何失败都被吞掉并记日志 (开不了窗口不该让守护进程起不来)。
+    ⚠ 夹爪**总是**失能退出: `--keep-enabled` 只对臂有效 (§5.1 第 5 条) —— 一个还夹着
+    东西的夹爪不该因为"保存使能"而留在原地。
     """
-    import shutil
-    import subprocess
-    import webbrowser
-
-    for exe in ("google-chrome", "google-chrome-stable", "chromium",
-                "chromium-browser", "microsoft-edge", "microsoft-edge-stable",
-                "msedge", "brave-browser"):
-        path = shutil.which(exe)
-        if not path:
-            continue
+    if gripper is not None:
         try:
-            subprocess.Popen([path, f"--app={url}"],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            log.info("以应用模式打开窗口: %s --app=%s", exe, url)
-            return
-        except Exception:  # noqa: BLE001 - 换下一个候选
-            log.debug("应用模式打开失败: %s", exe, exc_info=True)
-    try:
-        webbrowser.open(url)
-        log.info("未找到 Chromium 系浏览器 —— 已用默认浏览器打开 %s", url)
-    except Exception:  # noqa: BLE001
-        log.warning("无法自动打开浏览器, 请手动访问 %s", url)
+            gripper.close()
+        except Exception:  # noqa: BLE001 - 收尾失败不该盖住真正的退出原因
+            log.warning("关闭夹爪会话时出错 (已忽略)", exc_info=True)
+    session.close()
+
+
+def _start_server_thread(server: Any) -> threading.Thread:
+    """在后台线程里跑 uvicorn。
+
+    ⚠ GUI 必须独占主线程 (GTK 与 Qt 的硬要求), 所以有了窗口之后, 服务只能退到后台
+    线程上。线程是 daemon: 即便它没能干净停下, 也不该把进程拖住。
+    """
+    def _target() -> None:
+        try:
+            asyncio.run(server.serve())
+        except Exception:  # noqa: BLE001 - 线程里的异常没人接, 记下来就够了
+            log.exception("HTTP 服务异常结束")
+
+    thread = threading.Thread(target=_target, name="litearm-http", daemon=True)
+    thread.start()
+    return thread
+
+
+async def _wait_until_serving(server: Any,
+                              timeout: float = STARTUP_TIMEOUT_S) -> None:
+    """等 uvicorn 真的开始监听 —— 窗口要在那之后才指得过去。"""
+    deadline = time.monotonic() + timeout
+    while not server.started:
+        if time.monotonic() > deadline:
+            raise RuntimeError(f"HTTP 服务在 {timeout:.0f}s 内没有开始监听")
+        await asyncio.sleep(0.05)
+
+
+def _stop_server(server: Any, thread: threading.Thread,
+                 timeout: float = 10.0) -> None:
+    """让 uvicorn 收尾并等它停下。窗口关掉之后走这里。"""
+    server.should_exit = True
+    thread.join(timeout)
+    if thread.is_alive():  # pragma: no cover - 只有在服务卡死时
+        log.warning("HTTP 线程在 %.0fs 内没有停下", timeout)
 
 
 async def serve(session: Session, *, gripper: Optional[Any] = None,
                 host: str = "127.0.0.1", http_port: int = 8765,
                 ui_dir: Optional[str] = None, open_browser: bool = True,
                 version: str = __version__,
-                allow_origins: Iterable[str] = ()) -> None:
-    """起 uvicorn (前台阻塞到退出)。
+                allow_origins: Iterable[str] = (),
+                window_runner: Optional[Callable[..., None]] = None) -> None:
+    """起 uvicorn, 并在需要时**拥有**应用窗口 (前台阻塞到该退出为止)。
 
     ⚠ **只监听 127.0.0.1** —— 这里强制判据, 越线直接报错退出。
+
+    ⚠ 退出只有两个来源: `open_browser` 时**窗口关闭**, 或进程收到信号 (Ctrl-C /
+    SIGTERM)。客户端 WebSocket 断开**不是**退出信号 —— 刷新页面会先断再连, 而窗口
+    与进程都没动 (见 `window` 模块)。
+
+    `window_runner` 是注入点: 单测用它替掉真正的 GUI (CI 里没有显示器, 也不装 GUI
+    依赖), 生产走 `window.run_window`。
     """
     import uvicorn
 
@@ -908,8 +954,19 @@ async def serve(session: Session, *, gripper: Optional[Any] = None,
                     body=f"端口 {http_port} 被占用, 改用 {port} (页面 origin 因此改变)",
                     fields={"requested_port": int(http_port), "port": int(port),
                             "origin_changed": True})
+
+    #: 窗口把手 —— `window_runner` 在 GUI 起来时交回来, `/api/focus` 用它把窗口抬到
+    #: 前面 (第二次启动的落点, 见 `instance`)。无界面运行时永远是空。
+    handles: List[Any] = []
+
+    def _focus() -> bool:
+        if not handles:
+            return False
+        handles[0].raise_window()
+        return True
+
     app = create_app(session, gripper=gripper, version=version, ui_dir=ui_dir,
-                     allow_origins=allow_origins)
+                     allow_origins=allow_origins, focus=_focus)
     config = uvicorn.Config(app, host=host, port=port, log_level="info",
                             ws_ping_interval=20.0, ws_ping_timeout=20.0)
     server = uvicorn.Server(config)
@@ -922,23 +979,22 @@ async def serve(session: Session, *, gripper: Optional[Any] = None,
              fields={"host": host, "port": int(port), "version": version,
                      "ui_dir": str(ui_path) if ui_path is not None else "",
                      "gripper": gripper is not None})
-    if open_browser:
-        # 等 uvicorn 真起来再开窗口; 用一个后台任务, 免得阻塞服务本身。
-        async def _later() -> None:
-            while not server.started:
-                await asyncio.sleep(0.05)
-            await asyncio.to_thread(_open_browser, url)
-
-        asyncio.create_task(_later())
     try:
-        await server.serve()
+        if not open_browser:
+            # 无界面: 阻塞在服务本身, 直到进程收到信号 —— 台架/服务端就是这么用的。
+            await server.serve()
+            return
+        runner = window_runner if window_runner is not None else window.run_window
+        thread = _start_server_thread(server)
+        try:
+            # ⚠ 等待**在 try 里面**: 服务没起来时也要把已经起的那个线程收掉, 否则它会
+            # 一直挂到进程退出。
+            await _wait_until_serving(server)
+            # ⚠ 直接在当前 (主) 线程调用, **不** `to_thread`: GTK/Qt 都要求 GUI 主循环
+            # 跑在主线程上。它阻塞到窗口关闭 —— 那一刻就是这个程序该退出的时刻。
+            runner(url, on_ready=handles.append)
+        finally:
+            _stop_server(server, thread)
+        obs.info(obs.DAEMON_WINDOW_CLOSED, body="应用窗口已关闭, 程序退出")
     finally:
-        # 客户端全断之后才走到这里 (Ctrl-C / 窗口关闭触发的退出) ⇒ 会话在这时收尾。
-        # ⚠ 夹爪**总是**失能退出: `--keep-enabled` 只对臂有效 (§5.1 第 5 条) ——
-        # 一个还夹着东西的夹爪不该因为"保存使能"而留在原地。
-        if gripper is not None:
-            try:
-                gripper.close()
-            except Exception:  # noqa: BLE001 - 收尾失败不该盖住真正的退出原因
-                log.warning("关闭夹爪会话时出错 (已忽略)", exc_info=True)
-        session.close()
+        _teardown(gripper, session)
