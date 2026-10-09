@@ -261,13 +261,25 @@ export const RobotViewport = forwardRef<RobotViewportHandle, RobotViewportProps>
     const height = container.clientHeight || 300
 
     const scene = new THREE.Scene()
-    sceneRef.current = scene
-
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100)
     camera.position.set(0.9, 0.6, 1.1)
-    cameraRef.current = camera
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
+    // ⚠ **不许把这一句的异常放出去。** `isWebGLAvailable()` 上面探的是一个**裸**
+    // context, 而这里带 `antialias`/`alpha`, 请求更严 —— "探测通过、创建失败"是真会
+    // 发生的组合 (实测在真实 Ubuntu 桌面出现过)。effect 里抛出的异常会被最近的错误边界
+    // 接住, 于是**整页控制台**被"页面渲染遇到异常"替换掉: 操作员只因为一个他根本没用到的
+    // 3D 面板, 就失去了机械臂的全部控制。这里退回与"没有 WebGL"完全相同的那条降级路径。
+    let renderer: THREE.WebGLRenderer
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
+    } catch (error) {
+      console.error('WebGL renderer creation failed:', error)
+      setWebglError('无法创建 WebGL 渲染上下文，无法显示机械臂模型。请检查显卡驱动或使用支持 WebGL 的浏览器。')
+      return
+    }
+
+    sceneRef.current = scene
+    cameraRef.current = camera
     renderer.setSize(width, height, false)
     // 全屏展开时画布很大，像素比封顶 2，避免 Retina 3x 全尺寸渲染拖慢帧率。
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
