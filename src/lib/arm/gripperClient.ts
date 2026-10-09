@@ -128,6 +128,13 @@ export type BrowseListing = {
   parent: string | null
   /** 条目数命中上限（daemon 侧截断），界面应告知操作员。 */
   truncated: boolean
+  /**
+   * 这个目录里**没有列出来**的普通文件数（非 `*.json`、断链等）。
+   *
+   * ⚠ 没有它，"这里没有你要的文件"与"这里什么都没有"在界面上长得一模一样 —— 而
+   * 选择器只显示目录与 `*.json` 这件事本身是看不见的 (issue #103)。
+   */
+  skippedFiles: number
   entries: BrowseEntry[]
 }
 

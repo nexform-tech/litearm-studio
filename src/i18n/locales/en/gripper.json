@@ -135,6 +135,7 @@
     "browseTitle": "Pick a calibration file (control machine)",
     "browseDesc": "This lists directories and *.json calibrations on the machine running the local program — the browser cannot open its filesystem, so the local program lists it. Picking one fills the path box below; the import flow is unchanged.",
     "browseEmpty": "No sub-folders or *.json files in this folder",
+    "browseSkipped": "{{count}} other file(s) here are not listed — this picker shows folders and *.json only. If your calibration is one of them, type its full path in the box on the settings page.",
     "browseTruncated": "Too many entries — only the first part is shown; open a more specific folder",
     "home": "Home",
     "allowFactory": "Allow the factory calibration (risk accepted)",

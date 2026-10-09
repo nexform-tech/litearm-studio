@@ -45,6 +45,44 @@ export function GripperBrowserDialog({
     onOpenChange(false)
   }
 
+  /**
+   * 这一层里**列不出来**的东西 (issue #103)。
+   *
+   * 选择器只显示子目录与 `*.json` —— 这是有意的，但它在界面上看不见。于是"我的标定
+   * 就在这个目录里"与"这个目录什么都没有"长得一模一样，操作员只能得出后一个结论。
+   * 把数出来的条数说出来，并指一下旁边的输入框，那条出路才存在。
+   */
+  const hiddenHint = vm.skippedFiles > 0 ? (
+    <p data-testid="gripper-browse-skipped" className="text-[0.6875rem] text-warn">
+      {t('gripper:settings.browseSkipped', { count: vm.skippedFiles })}
+    </p>
+  ) : null
+
+  /** 能画出来的行。⚠ 与 `hiddenHint` 同理: 一条都画不出来时必须说话, 不能留白框。 */
+  const rows = vm.entries.map((entry) =>
+    entry.type === 'dir' ? (
+      <li key={entry.path}>
+        <button
+          type="button"
+          data-testid="gripper-browse-dir"
+          disabled={!entry.readable}
+          onClick={() => vm.navigate(entry.path)}
+          className="flex w-full items-center gap-2 rounded-lg border border-line px-3 py-2 text-left transition-colors hover:bg-muted/60 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <Folder className="size-4 flex-none text-muted-foreground" />
+          <span className="truncate text-[0.75rem]">{entry.name}</span>
+          {entry.symlink ? (
+            <span className="flex-none text-[0.625rem] text-muted-foreground">↗</span>
+          ) : null}
+        </button>
+      </li>
+    ) : hasCandidate(entry) ? (
+      <li key={entry.path}>
+        <CalibrationRow row={entry} onSelect={pick} />
+      </li>
+    ) : null,
+  )
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -92,36 +130,20 @@ export function GripperBrowserDialog({
           <p data-testid="gripper-browse-error" className="text-xs text-destructive">
             {vm.error}
           </p>
-        ) : vm.entries.length === 0 ? (
-          <p className="text-xs text-muted-foreground">{t('gripper:settings.browseEmpty')}</p>
+        ) : rows.every((row) => row === null) ? (
+          // ⚠ 判据是"一行都画不出来", 不是"daemon 没给条目" —— 两者都会留下一个空框,
+          // 而空框不解释任何事。
+          <div className="flex flex-col gap-2">
+            <p className="text-xs text-muted-foreground">{t('gripper:settings.browseEmpty')}</p>
+            {hiddenHint}
+          </div>
         ) : (
           <ul data-testid="gripper-browse-entries" className="flex flex-col gap-2">
             {vm.truncated ? (
               <li className="text-[0.6875rem] text-warn">{t('gripper:settings.browseTruncated')}</li>
             ) : null}
-            {vm.entries.map((entry) =>
-              entry.type === 'dir' ? (
-                <li key={entry.path}>
-                  <button
-                    type="button"
-                    data-testid="gripper-browse-dir"
-                    disabled={!entry.readable}
-                    onClick={() => vm.navigate(entry.path)}
-                    className="flex w-full items-center gap-2 rounded-lg border border-line px-3 py-2 text-left transition-colors hover:bg-muted/60 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <Folder className="size-4 flex-none text-muted-foreground" />
-                    <span className="truncate text-[0.75rem]">{entry.name}</span>
-                    {entry.symlink ? (
-                      <span className="flex-none text-[0.625rem] text-muted-foreground">↗</span>
-                    ) : null}
-                  </button>
-                </li>
-              ) : hasCandidate(entry) ? (
-                <li key={entry.path}>
-                  <CalibrationRow row={entry} onSelect={pick} />
-                </li>
-              ) : null,
-            )}
+            {rows}
+            {hiddenHint ? <li>{hiddenHint}</li> : null}
           </ul>
         )}
 

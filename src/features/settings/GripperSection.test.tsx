@@ -208,4 +208,39 @@ describe('GripperSection', () => {
     const err = await screen.findByTestId('gripper-browse-error')
     expect(err.textContent).toMatch(/Cannot open that folder|打不开这个目录/)
   })
+
+  /**
+   * issue #103: 报的是"选择器打开是空的，什么文件、什么目录都没有"。
+   *
+   * 选择器只列子目录与 `*.json`（有意的），但这件事在界面上看不见 —— 于是"这里没有你要
+   * 的文件"与"这里什么都没有"长得一模一样。这两条钉住：无论哪种情况，那一块都必须说话。
+   */
+  it('says how many files it is not listing, instead of leaving the box empty', async () => {
+    mocks.listDir.mockResolvedValue({
+      path: '/home/u/Downloads', parent: '/home/u', truncated: false, skippedFiles: 2,
+      entries: [],
+    })
+    render(<GripperSection />)
+    await waitFor(() => expect(mocks.listCalibrations).toHaveBeenCalled())
+    fireEvent.click(screen.getByTestId('gripper-import-browse'))
+
+    const hint = await screen.findByTestId('gripper-browse-skipped')
+    expect(hint.textContent).toMatch(/2 other file|还有 2 个文件/)
+    // 空目录的说明也在，且**没有**渲染出一个空的条目列表。
+    expect(screen.queryByTestId('gripper-browse-entries')).toBeNull()
+  })
+
+  it('never renders an empty list when nothing in it can be drawn', async () => {
+    // 一个没有 `valid` 结论的文件行画不出来 —— 过去它会被静默丢掉，留下一块白框。
+    mocks.listDir.mockResolvedValue({
+      path: '/home/u', parent: '/', truncated: false, skippedFiles: 0,
+      entries: [{ name: 'mystery.json', path: '/home/u/mystery.json', type: 'file', readable: true }],
+    })
+    render(<GripperSection />)
+    await waitFor(() => expect(mocks.listCalibrations).toHaveBeenCalled())
+    fireEvent.click(screen.getByTestId('gripper-import-browse'))
+
+    await screen.findByText(/No sub-folders or \*\.json files|没有子目录或 \*\.json/)
+    expect(screen.queryByTestId('gripper-browse-entries')).toBeNull()
+  })
 })

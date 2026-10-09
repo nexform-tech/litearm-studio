@@ -33,6 +33,8 @@ export function useGripperBrowse(open: boolean, initialPath?: string) {
   const [parent, setParent] = useState<string | null>(null)
   const [entries, setEntries] = useState<BrowseEntry[]>([])
   const [truncated, setTruncated] = useState(false)
+  /** 这一层里没列出来的普通文件数 —— 见 `BrowseListing.skippedFiles`。 */
+  const [skippedFiles, setSkippedFiles] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -50,11 +52,13 @@ export function useGripperBrowse(open: boolean, initialPath?: string) {
       setParent(listing.parent)
       setEntries(listing.entries)
       setTruncated(listing.truncated)
+      setSkippedFiles(Number(listing.skippedFiles) || 0)
     } catch (err) {
       if (id !== reqId.current) return
       setError(formatArmError(err) || String(err))
       setEntries([])
       setTruncated(false)
+      setSkippedFiles(0)
     } finally {
       if (id === reqId.current) setLoading(false)
     }
@@ -84,6 +88,7 @@ export function useGripperBrowse(open: boolean, initialPath?: string) {
     parent,
     entries,
     truncated,
+    skippedFiles,
     loading,
     error,
     navigate: (path: string) => void navigate(path),
