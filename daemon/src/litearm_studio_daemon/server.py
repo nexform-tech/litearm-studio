@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, List, Optional
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException
@@ -75,6 +75,11 @@ LOG_META_INTERVAL_S = 2.0
 #: 等 uvicorn 真的开始监听的上限 (秒)。窗口要在那之后才指得过去, 所以这条等待是必须的;
 #: 给上限是为了"端口被占/后端起不来"时如实报错, 而不是永远挂在启动路径上。
 STARTUP_TIMEOUT_S = 15.0
+
+#: `POST /api/export` 收得下的上限 (字节)。导出的 JSONL / CSV 是几个 MB 的量级, 遥测
+#: 大会话到几十 MB; 128 MB 留足余量, 同时让"某个页面把整个内存灌进来"有一个明确的
+#: 拒绝点 —— 这份字节在写盘前是要整个待在内存里的。
+MAX_EXPORT_BYTES = 128 * 1024 * 1024
 
 
 @dataclass
@@ -739,18 +744,56 @@ class _SpaStaticFiles(StaticFiles):
             return await super().get_response("index.html", scope)
 
 
+def export_filename(suggested: str) -> str:
+    """把页面给的**建议**文件名收成一个安全的纯文件名; 收不出来就返回空串。
+
+    ⚠ 存到哪由操作员在对话框里定, 这个名字只进对话框的预填框 —— 但它仍然要过一遍:
+    页面是本地 HTTP 上的一个客户端, 一个带路径分隔符或 `..` 的名字不该有机会参与
+    路径拼接 (`/api/export` 的判据是 400, 不是"照单全收")。
+    """
+    name = Path(suggested.replace("\\", "/")).name.strip()
+    if name in ("", ".", ".."):
+        return ""
+    # 控制字符会让对话框与文件系统各自理解出不同的名字。
+    name = "".join(ch for ch in name if ch.isprintable())
+    return name[:120]
+
+
+def _export_saver(handles: List[Any], *, window: bool
+                  ) -> Optional[Callable[[str], Optional[str]]]:
+    """`/api/export` 的落点询问; 没有窗口的进程返回 `None` (接口回 `no-window`)。
+
+    ⚠ **"没有窗口" 与 "操作员按了取消" 是两种回答, 不能都用一个恒返回 `None` 的闭包
+    表示。** 无界面运行 (`--no-open`)、或者在纯浏览器里用这个 daemon 时, 页面收到
+    `no-window` 才会回退到浏览器下载; 收到 `cancelled` 就什么都不做 —— 而那正是
+    "按了导出没反应" 的另一种写法。
+    """
+    if not window:
+        return None
+
+    def _save_path(name: str) -> Optional[str]:
+        if not handles:            # 窗口还没建好, 或已经关掉了
+            return None
+        return handles[0].ask_save_path(name)
+
+    return _save_path
+
+
 def create_app(session: Session, *, gripper: Optional[Any] = None,
                version: str = __version__,
                ui_dir: Optional[str] = None,
                repo_dist: Optional[Path] = None,
                allow_origins: Iterable[str] = (),
-               focus: Optional[Callable[[], bool]] = None) -> FastAPI:
+               focus: Optional[Callable[[], bool]] = None,
+               save_path: Optional[Callable[[str], Optional[str]]] = None) -> FastAPI:
     """建 FastAPI 应用 (不含绑定/启动 —— 那是 `run()` 的事)。
 
     `/api/health` 返回版本与连接状态; 给了静态目录就把它挂在 `/` 上
     (没有就跳过, 不报错)。`allow_origins` 是**额外**放行的跨源, 见 `origin_allowed`。
     `focus` 是"把本进程的窗口抬到前面"的动作, 由 `serve` 注入 —— 无界面运行时没有窗口,
     它返回假, `/api/focus` 如实转告调用者。
+    `save_path` 是"弹保存对话框并回答操作员选了哪里"的动作 (`WindowHandle.ask_save_path`),
+    同样由 `serve` 注入; 无界面运行时它是 `None`, `/api/export` 如实回 `no-window`。
     """
     resolved = resolve_ui_dir(ui_dir, repo_dist=repo_dist)
     daemon = Daemon(session, gripper=gripper, version=version, ui_dir=resolved,
@@ -772,6 +815,47 @@ def create_app(session: Session, *, gripper: Optional[Any] = None,
     async def _focus_window() -> JSONResponse:
         return JSONResponse({"ok": True,
                              "focused": bool(focus is not None and focus())})
+
+    # ── 导出落点: 页面把字节交回来, 由**本进程**弹对话框并写文件 (#104 / #100) ──
+    #
+    # 为什么不让页面自己"下载": 页面跑在 webview 里, 够不到宿主窗口, 能做的只有
+    # `Blob` + `<a download>` —— 而这一下在 pywebview 宿主里的落点由后端各自决定
+    # (GTK 静默写进下载目录、WebView2 直接取消), 页面既选不了地方, 也问不到结果。
+    # 保存对话框与写文件都放在持有窗口的这一侧, 于是"存到哪"和"存没存成"都有了答案。
+    #
+    # 同源判据与 `/ws` 同一套 (`origin_allowed`): 别的网页不该能把我们的保存对话框
+    # 弹到操作员脸上。写文件是**同步**的磁盘 I/O, 与 `focus` 一样丢进线程池, 不占事件
+    # 循环; 对话框本身可能开着很久, 那期间 WebSocket 与其它接口照常工作。
+    @app.api_route("/api/export", methods=["POST"])
+    async def _export(request: Request, name: str = "") -> JSONResponse:
+        origin = request.headers.get("origin")
+        if origin is not None and not origin_allowed(
+                origin, request.headers.get("host", ""), allow_origins):
+            return JSONResponse({"ok": False, "error": "cross-origin"}, status_code=403)
+        filename = export_filename(name)
+        if not filename:
+            return JSONResponse({"ok": False, "error": "bad-name"}, status_code=400)
+        if save_path is None:
+            # 无界面运行 (`--no-open`): 没有窗口可以弹对话框。页面据此回退到浏览器
+            # 自己的下载 —— 那是台架/服务端场景下唯一能用的落点。
+            return JSONResponse({"ok": True, "saved": False, "reason": "no-window"})
+        # 先看声明再读体: 一份声称 2 GB 的请求不该先把我们自己的内存吃掉再拒绝。
+        declared = request.headers.get("content-length", "")
+        if declared.isdigit() and int(declared) > MAX_EXPORT_BYTES:
+            return JSONResponse({"ok": False, "error": "too-large"}, status_code=413)
+        data = await request.body()
+        if len(data) > MAX_EXPORT_BYTES:
+            return JSONResponse({"ok": False, "error": "too-large"}, status_code=413)
+        chosen = await asyncio.to_thread(save_path, filename)
+        if not chosen:
+            return JSONResponse({"ok": True, "saved": False, "reason": "cancelled"})
+        try:
+            await asyncio.to_thread(Path(chosen).write_bytes, data)
+        except OSError as exc:
+            # 磁盘满 / 没有写权限: 如实回错误, 页面照实说 —— 不假装存好了。
+            return JSONResponse({"ok": False, "error": "write-failed",
+                                 "detail": str(exc)})
+        return JSONResponse({"ok": True, "saved": True, "path": str(chosen)})
 
     # ── 日志历史回读 (issue #79 第 5 点 / #80) ──────────────────────────────
     #
@@ -955,8 +1039,8 @@ async def serve(session: Session, *, gripper: Optional[Any] = None,
                     fields={"requested_port": int(http_port), "port": int(port),
                             "origin_changed": True})
 
-    #: 窗口把手 —— `window_runner` 在 GUI 起来时交回来, `/api/focus` 用它把窗口抬到
-    #: 前面 (第二次启动的落点, 见 `instance`)。无界面运行时永远是空。
+    #: 窗口把手 —— `window_runner` 在 GUI 起来时交回来, `/api/focus` 与 `/api/export`
+    #: 用它抬窗口、弹保存对话框 (见 `instance`)。无界面运行时永远是空。
     handles: List[Any] = []
 
     def _focus() -> bool:
@@ -964,9 +1048,9 @@ async def serve(session: Session, *, gripper: Optional[Any] = None,
             return False
         handles[0].raise_window()
         return True
-
     app = create_app(session, gripper=gripper, version=version, ui_dir=ui_dir,
-                     allow_origins=allow_origins, focus=_focus)
+                     allow_origins=allow_origins, focus=_focus,
+                     save_path=_export_saver(handles, window=open_browser))
     config = uvicorn.Config(app, host=host, port=port, log_level="info",
                             ws_ping_interval=20.0, ws_ping_timeout=20.0)
     server = uvicorn.Server(config)

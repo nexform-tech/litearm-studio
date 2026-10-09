@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { useArmConnection } from '@/lib/arm/useArmConnection'
+import { exportFile } from '@/lib/export'
 import { telemetryDb, type TelemetrySample, type TelemetrySession } from './telemetryDb'
 import { telemetryRecorder } from './telemetryRecorder'
 import { telemetryCsvHeader, telemetryCsvRow } from './csv'
@@ -12,6 +15,7 @@ const AUTO_REFRESH_MS = 3000
 const EXPORT_PAGE_SIZE = 5000
 
 export function useTelemetryState() {
+  const { t } = useTranslation(['logs'])
   const { status: armStatus, conn } = useArmConnection()
   const [sessions, setSessions] = useState<TelemetrySession[]>([])
   const [selectedId, setSelectedId] = useState<number | null>(null)
@@ -198,20 +202,17 @@ export function useTelemetryState() {
         if (page.length < EXPORT_PAGE_SIZE) break
       }
       const blob = new Blob(parts, { type: 'text/csv;charset=utf-8' })
-      const url = URL.createObjectURL(blob)
-      const anchor = document.createElement('a')
-      anchor.href = url
-      anchor.download = `telemetry-session-${id}.csv`
-      document.body.appendChild(anchor)
-      anchor.click()
-      anchor.remove()
-      URL.revokeObjectURL(url)
+      const outcome = await exportFile(blob, `telemetry-session-${id}.csv`)
+      // 与日志页同一套说法: 存好了就说清路径 (桌面版的保存对话框不会替我们说),
+      // 失败照实说, 取消则什么都不说。
+      if (outcome.kind === 'saved') toast.success(t('logs:savedTo', { path: outcome.path }))
+      else if (outcome.kind === 'failed') toast.error(t('logs:exportFailed', { message: outcome.detail }))
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setExporting(null)
     }
-  }, [])
+  }, [t])
 
   const connected = armStatus === 'connected'
 

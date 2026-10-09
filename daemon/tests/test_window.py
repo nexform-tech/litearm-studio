@@ -19,6 +19,8 @@ import sys
 import types
 import urllib.error
 import urllib.request
+from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -30,10 +32,17 @@ from litearm_studio_daemon.session import Session
 # ------------------------------------------------------------------ 假件
 
 class _FakeWindow:
-    """pywebview 的 `Window`: 只记下被调了哪些方法。"""
+    """pywebview 的 `Window`: 只记下被调了哪些方法, 以及对话框拿到了什么参数。"""
 
-    def __init__(self) -> None:
+    def __init__(self, chosen: str | None = None, raw_result: Any = None) -> None:
         self.calls: list[str] = []
+        #: 每次 `create_file_dialog` 的入参。
+        self.dialogs: list[dict] = []
+        #: 对话框"返回"的路径; `None` = 操作员点了取消。
+        self.chosen = chosen
+        #: 直接给定对话框的返回值 —— 用来造 pywebview 那些别扭的形状 (`(None,)`)。
+        self.raw_result = raw_result
+        self.uid = "probe-window"
 
     def restore(self) -> None:
         self.calls.append("restore")
@@ -41,13 +50,28 @@ class _FakeWindow:
     def show(self) -> None:
         self.calls.append("show")
 
+    def create_file_dialog(self, dialog_type, directory, allow_multiple, save_filename,
+                           file_types):
+        self.dialogs.append({"dialog_type": dialog_type, "directory": directory,
+                             "allow_multiple": allow_multiple,
+                             "save_filename": save_filename,
+                             "file_types": file_types})
+        if self.raw_result is not None:
+            return self.raw_result
+        return None if self.chosen is None else (self.chosen,)
+
 
 class _FakeWebview:
-    """足够真的 pywebview —— `run_window` 只用这两个入口。"""
+    """足够真的 pywebview —— `run_window` 只用这几个入口。"""
+
+    #: 真 pywebview 里 `FileDialog` 是 `IntEnum`, 只有 `SAVE` 用得上。
+    FileDialog = types.SimpleNamespace(SAVE=30)
 
     def __init__(self) -> None:
         self.created: dict = {}
         self.started: dict = {}
+        #: 与真的 `webview.settings` 一样是**可变**的开关表 (已有的键可以改)。
+        self.settings = {"ALLOW_DOWNLOADS": False}
         self.window = _FakeWindow()
 
     def create_window(self, title, **kwargs):
@@ -55,7 +79,9 @@ class _FakeWebview:
         return self.window
 
     def start(self, **kwargs):
-        self.started = kwargs
+        # 两个后端都是在 `start()` 建视图时读 `ALLOW_DOWNLOADS` 的, 所以"设没设"要在
+        # 这一刻量 —— start 之后再设等于没设。
+        self.started = {**kwargs, "allow_downloads": self.settings["ALLOW_DOWNLOADS"]}
 
 
 class _Handle:
@@ -130,6 +156,121 @@ def test_run_window_points_at_the_daemon_and_hands_back_a_handle(monkeypatch,
     assert len(handles) == 1
     handles[0].raise_window()
     assert fake.window.calls == ["restore", "show"]
+
+
+# ------------------------------------------------------------------ 导出存到哪
+
+def test_run_window_hands_downloads_to_the_host(monkeypatch) -> None:
+    """⚠ 窗口宿主**必须**接管下载, 否则导出按钮按下去什么都不会发生。
+
+    pywebview 的 `ALLOW_DOWNLOADS` 默认 `False`, 而它管的不是"允不允许下载", 是
+    **宿主接不接管**: 默认值下 GTK 永远不弹保存对话框 (WebKit 自己默默写进下载目录,
+    写不进去就取消), Windows 的 WebView2 直接被 `args.Cancel = True` 取消。issue #104
+    报的"按了导出没反应"就是这半边。
+
+    量的是 `start()` **那一刻**的值 —— 后端在建视图时读它。
+    """
+    fake = _FakeWebview()
+    monkeypatch.setitem(sys.modules, "webview", fake)
+    monkeypatch.setenv("LITEARM_STUDIO_ICON", "")
+
+    handles: list = []
+    window.run_window("http://127.0.0.1:8765/", on_ready=handles.append)
+
+    assert fake.started["allow_downloads"] is True
+
+
+def test_ask_save_path_offers_our_filename_in_a_directory_that_exists(monkeypatch,
+                                                                     tmp_path) -> None:
+    """保存对话框要预填**我们**的文件名, 并且从一个真实存在的目录开始。
+
+    ⚠ 目录只在磁盘上存在时才能交给对话框: pywebview 会把不存在的目录换成空串, 而
+    GTK 那一路更糟 —— 它把 `None` 直接塞给 `GtkFileChooser.set_current_folder`, 抛
+    `TypeError`, 对话框根本弹不出来 (没有 `user-dirs.dirs` 的机器就是这样)。
+    """
+    monkeypatch.setattr(window.Path, "home", classmethod(lambda cls: tmp_path))
+    (tmp_path / "Downloads").mkdir()
+    handle = window.WindowHandle(_FakeWindow(chosen=str(tmp_path / "picked.jsonl")),
+                                 save_dialog=30)
+
+    chosen = handle.ask_save_path("litearm-logs-2026.jsonl")
+
+    assert chosen == str(tmp_path / "picked.jsonl")
+    dialog = handle._window.dialogs[-1]
+    assert dialog["dialog_type"] == 30  # FileDialog.SAVE
+    assert dialog["save_filename"] == "litearm-logs-2026.jsonl"
+    assert dialog["allow_multiple"] is False
+    assert Path(dialog["directory"]).is_dir()
+
+
+def test_ask_save_path_says_nothing_when_the_operator_cancels() -> None:
+    """取消 = `None`。上面那层据此一个字都不说 —— 不假装存过, 也不报错。"""
+    handle = window.WindowHandle(_FakeWindow(chosen=None), save_dialog=30)
+    assert handle.ask_save_path("x.jsonl") is None
+
+
+def test_ask_save_path_rejects_a_dialog_result_without_a_name() -> None:
+    """对话框"确认了但没有文件名"时 pywebview 回 `(None,)` —— 它不是路径。
+
+    放过去就会变成字符串 `"None"`, 然后被写成一个名叫 `None` 的文件。
+    """
+    handle = window.WindowHandle(_FakeWindow(raw_result=(None,)), save_dialog=30)
+    assert handle.ask_save_path("x.jsonl") is None
+
+
+def test_default_export_dir_never_returns_a_missing_path(monkeypatch, tmp_path) -> None:
+    """下载目录 → 主目录 → 临时目录, 逐个按"存在"挑; 一个都不存在才轮到临时目录。"""
+    monkeypatch.setattr(window.Path, "home", classmethod(lambda cls: tmp_path))
+    assert window.default_export_dir() == tmp_path
+
+    (tmp_path / "Downloads").mkdir()
+    assert window.default_export_dir() == tmp_path / "Downloads"
+
+
+def test_windows_dialogs_are_marshalled_to_the_ui_thread(monkeypatch) -> None:
+    """⚠ Windows 上必须换到 UI 线程: winforms 的对话框只能在 UI 线程开。
+
+    不换的表现不是报错而是"没有反应" —— pywebview 把跨线程异常吞掉并返回 `None`,
+    上面那层只能理解成"操作员取消了"。
+    """
+    invoked: list = []
+
+    class _Form:
+        def Invoke(self, delegate):
+            invoked.append(True)
+            return delegate()
+
+    instance = _Form()
+    winforms = types.ModuleType("webview.platforms.winforms")
+    winforms.BrowserView = types.SimpleNamespace(instances={"probe-window": instance})
+    platforms = types.ModuleType("webview.platforms")
+    system = types.ModuleType("System")
+    system.Type = object
+
+    class _Func:
+        def __getitem__(self, item):
+            return lambda function: function
+
+    system.Func = _Func()
+    monkeypatch.setattr(window.sys, "platform", "win32")
+    monkeypatch.setitem(sys.modules, "System", system)
+    monkeypatch.setitem(sys.modules, "webview.platforms", platforms)
+    monkeypatch.setitem(sys.modules, "webview.platforms.winforms", winforms)
+
+    handle = window.WindowHandle(_FakeWindow(chosen="/tmp/x.jsonl"), save_dialog=30)
+
+    assert handle.ask_save_path("x.jsonl") == "/tmp/x.jsonl"
+    assert invoked == [True]
+
+
+def test_a_failed_marshalling_falls_back_to_a_direct_call(monkeypatch) -> None:
+    """编组只是"更好": 拿不到后端实例时照旧直接调, 不比不编组更差。"""
+    monkeypatch.setattr(window.sys, "platform", "win32")
+    for name in ("System", "webview.platforms", "webview.platforms.winforms"):
+        monkeypatch.setitem(sys.modules, name, None)
+
+    handle = window.WindowHandle(_FakeWindow(chosen="/tmp/y.jsonl"), save_dialog=30)
+    assert handle.ask_save_path("y.jsonl") == "/tmp/y.jsonl"
 
 
 def test_icon_file_prefers_an_explicit_override(monkeypatch, tmp_path) -> None:
