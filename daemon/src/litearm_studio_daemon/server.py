@@ -63,10 +63,6 @@ DEV_ORIGINS = frozenset({"http://localhost:5173", "http://127.0.0.1:5173"})
 #: (`move_timeout` 默认 15s), `enable` 的重试上界约 3.3s。
 COMMAND_TIMEOUT_S = 60.0
 
-#: `gripper.zero` 的等待上限 (秒) —— 它按定义要跑几十秒 (顶两次机械限位),
-#: 所以不能套用 60s 那条兜底。客户端同样不能给它设 60s 超时 (§4.2)。
-GRIPPER_ZERO_TIMEOUT_S = 300.0
-
 #: 多久广播一次日志流的位置 (`log_meta`: 序号 + 丢帧数)。取 2s 的理由: 丢帧与断流都是
 #: 页面**自己发现不了**的事, 而 2s 短到"操作员还没开始困惑", 又长到不占可观的带宽
 #: (一条几十字节)。它只在有客户端时发。
@@ -80,7 +76,6 @@ STARTUP_TIMEOUT_S = 15.0
 #: 大会话到几十 MB; 128 MB 留足余量, 同时让"某个页面把整个内存灌进来"有一个明确的
 #: 拒绝点 —— 这份字节在写盘前是要整个待在内存里的。
 MAX_EXPORT_BYTES = 128 * 1024 * 1024
-
 
 @dataclass
 class _Client:
@@ -667,9 +662,9 @@ class Daemon:
                                    trace_id: Optional[str] = None) -> None:
         """`gripper.*` → `GripperSession.execute` → `res` 帧。
 
-        ⚠ 与臂那条路的区别是**超时**: 夹爪命令不阻塞 (它们入队就返回), 唯一例外的
-        `gripper.zero` 要顶两次机械限位, 几十秒是正常的 —— 所以它有自己的上限,
-        而客户端也被要求不要给它设 60s 超时 (§4.2)。
+        ⚠ 与臂那条路的区别是**超时**: 夹爪命令不阻塞 (它们入队就返回), 少数几条
+        (`gripper.write_zero` 等) 会在命令线程上等 tick 回结果, 但都在秒级;
+        其余一律套 :data:`COMMAND_TIMEOUT_S` 那条兜底。
         """
         if self.gripper is None:
             await self._send_direct(ws, client, {
@@ -679,8 +674,7 @@ class Daemon:
                         "method": method},
             })
             return
-        timeout = (GRIPPER_ZERO_TIMEOUT_S if method == "gripper.zero"
-                   else COMMAND_TIMEOUT_S)
+        timeout = COMMAND_TIMEOUT_S
         try:
             value = await asyncio.wait_for(
                 asyncio.to_thread(self.gripper.execute, method, params),

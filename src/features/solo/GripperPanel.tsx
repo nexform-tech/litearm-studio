@@ -86,8 +86,13 @@ export function GripperPanel() {
   )
 
   const statusTone = vm.connected ? 'success' : vm.status === 'error' ? 'destructive' : 'outline'
-  const gateKey = (vm.gate ?? 'BLOCKED') as 'READY' | 'TEMPLATE' | 'FACTORY' | 'BLOCKED'
   const source = vm.conn?.source ?? null
+  // 闸门只有在一份标定**真正解析出来之后**才是已知的（`source` 非空）。连接之前 daemon
+  // 也会推一帧 `gripper_conn`，但里面 `source` 是 null、`gate` 是占位的 `BLOCKED`
+  // （reason 明说"后端尚未报告标定信息"）。把这份占位当已知，会让一个正常的空闲面板
+  // 自称"没有可用标定"。
+  const gateKnown = source != null
+  const gateKey = (vm.gate ?? 'BLOCKED') as 'READY' | 'TEMPLATE' | 'FACTORY' | 'BLOCKED'
   const warning = source ? WARNING_KEYS[source] : undefined
   const busyText = vm.busy.busy ? vm.busy.what || t('gripper:busy.label') : ''
   const probing = vm.calib != null && vm.calib.phase !== 'done' && vm.calib.phase !== 'failed'
@@ -129,16 +134,18 @@ export function GripperPanel() {
                     : t('common:disconnected')
               : t('common:statusOffline')}
           </Badge>
-          <Badge
-            id="gripper-gate"
-            data-testid="gripper-gate"
-            variant={gateKey === 'READY' ? 'success' : gateKey === 'BLOCKED' ? 'destructive' : 'outline'}
-            className={`h-auto rounded-full px-2 py-0.5 text-[0.625rem] font-semibold ${
-              gateKey === 'READY' ? '' : 'border-warn-line bg-warn-soft text-warn'
-            }`}
-          >
-            {t(`gripper:gate.${gateKey}`)}
-          </Badge>
+          {gateKnown ? (
+            <Badge
+              id="gripper-gate"
+              data-testid="gripper-gate"
+              variant={gateKey === 'READY' ? 'success' : gateKey === 'BLOCKED' ? 'destructive' : 'outline'}
+              className={`h-auto rounded-full px-2 py-0.5 text-[0.625rem] font-semibold ${
+                gateKey === 'READY' ? '' : 'border-warn-line bg-warn-soft text-warn'
+              }`}
+            >
+              {t(`gripper:gate.${gateKey}`)}
+            </Badge>
+          ) : null}
         </div>
       </div>
 
@@ -615,11 +622,13 @@ export function GripperPanel() {
             </div>
           ) : null}
 
-          {gateKey === 'READY' ? null : (
+          {/* 只有在**已知**且不是 READY 时才解释闸门 —— 连接之前没有任何标定信息可讲，
+              那段字留给 `gripper-disabled-reason` 的"未连接"就够了，这里多说反而像故障。 */}
+          {gateKnown && gateKey !== 'READY' ? (
             <div className="text-xs leading-relaxed text-muted-foreground">
               {t(`gripper:gate.${gateKey}_why`)}
             </div>
-          )}
+          ) : null}
         </div>
       </div>
     </Card>

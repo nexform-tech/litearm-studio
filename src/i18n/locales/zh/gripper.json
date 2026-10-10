@@ -25,7 +25,7 @@
     "none": "尚未解析",
     "templateWarning": "这是 SDK 自带的标称模板：它只声明装配方向与标称几何（120 mm 规格），从未在本机实测 —— 毫米读数仅供对方向。",
     "factoryWarning": "正在使用 SDK 内置的出厂数据：若与本机夹爪不是同一台，所有 mm 与力的读数都会是错的。",
-    "missingWarning": "没有任何可用的标定文件：运动指令会被拒绝，请先运行零位标定或在设置页声明装配方向。",
+    "missingWarning": "没有任何可用的标定文件：运动指令会被拒绝，请在设置页导入一份实测标定，或声明装配方向。",
     "file": "文件",
     "closed": "闭合角",
     "open": "张开角",
@@ -37,7 +37,7 @@
     "FACTORY": "出厂标定（待确认）",
     "BLOCKED": "已阻断",
     "READY_why": "标定描述的就是本机夹爪，全部动作可用。",
-    "TEMPLATE_why": "只声明了方向：允许张开/闭合/零重力，毫米目标会被拒绝（模板几何是 120 mm 规格的）。运行零位标定后即可恢复。",
+    "TEMPLATE_why": "只声明了方向：允许张开/闭合/零重力，毫米目标会被拒绝（模板几何是 120 mm 规格的）。导入一份本机实测标定后即可恢复。",
     "FACTORY_why": "用的是 SDK 内置的出厂数据：在本机实测之前，毫米读数可能整体偏移。确认风险后可在设置页允许。",
     "BLOCKED_why": "没有可用标定，运动已被拒绝。"
   },
@@ -93,37 +93,27 @@
     "fault": "正在清除故障…",
     "probe": "正在标定…"
   },
-  "zero": {
-    "title": "零位标定（实测）",
-    "desc": "夹爪会分别顶住两个机械限位，记录角度并自动保存。过程中随时可以急停。",
-    "travel": "实测行程 (mm)",
-    "start": "开始标定",
-    "running": "标定中",
-    "phase": {
-      "open": "寻找张开限位",
-      "close": "寻找闭合限位",
-      "done": "已完成",
-      "failed": "未完成"
-    },
-    "needsEnabled": "标定需要先使能（张开/闭合按钮也要使能）",
-    "done": "标定完成：闭合 {{closed}} rad / 张开 {{open}} rad（{{scale}} mm/rad）"
+  "writeZero": {
+    "title": "写入零位",
+    "desc": "把夹爪当前位置记为电机零位（写 0xFE）。只改偏移、不改量程，已有的行程换算保持有效。",
+    "button": "写入零位",
+    "running": "写入中…",
+    "needsEnabled": "写入零位需要先使能，并已收到状态帧",
+    "current": "当前位置：{{pos}}",
+    "done": "已写入零位：写入前 {{before}} rad → 回读 {{after}} rad",
+    "warning": "⚠ 这会写进电机 flash 且不可逆：只有确认夹爪正处在想当零点的位置时才点。"
   },
   "settings": {
     "title": "夹爪与总线",
-    "description": "配置这一路 CAN 接口上的 LiteGrip：通道、CAN ID、装配方向、标定文件与实测行程。",
+    "description": "配置这一路 CAN 接口上的 LiteGrip：通道、CAN ID、行程与标定文件。",
     "channel": "CAN 接口",
     "canId": "电机 CAN ID",
     "mstId": "主站 CAN ID",
     "mstAuto": "自动",
-    "mount": "装配方向",
     "apply": "应用并重连",
     "applying": "应用中…",
     "needsDisconnect": "改通道或 ID 之前请先断开夹爪",
-    "calibrations": "可用标定",
-    "calibrationsDesc": "按解析顺序列出这个通道能用到的每一份标定及其来源。",
-    "refresh": "重新扫描",
     "inUse": "生效中",
-    "selected": "已声明",
     "invalid": "不可用",
     "valid": "可用",
     "problems": "问题",
@@ -135,11 +125,9 @@
     "browseUnavailable": "打不开文件选择器：没有正在运行的本地程序窗口，请手动填写完整路径。",
     "allowFactory": "允许出厂标定（已确认风险）",
     "allowFactoryDesc": "出厂数据不属于本机夹爪时，所有毫米读数都会偏移；只有确认过才勾选。",
-    "travel": "实测行程 (mm)",
-    "travelDesc": "每通道记录：它是界面上每一个毫米的分子，必须在重启后仍然存在。",
-    "noTravel": "行程必须为正",
+    "travel": "行程 (mm)",
+    "travelDesc": "每通道记录：它是 mm/rad 换算的分母，必须在重启后仍然存在。",
     "applied": "已应用并重连",
-    "declareMount": "按此方向载入模板",
     "effectiveMount": "设备实际按{{mount}}在跑"
   }
 }

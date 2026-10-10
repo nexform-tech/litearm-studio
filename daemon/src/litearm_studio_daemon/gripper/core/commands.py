@@ -380,6 +380,22 @@ class CancelCalibration(Command):
         return "取消标定"
 
 
+@dataclass(frozen=True)
+class WriteZero(Command):
+    """Make the current encoder angle the motor's zero (CAN 0xFE).
+
+    Unlike the guided probe, this moves nothing and measures nothing: the jaws
+    stay where they are and only change which angle is called zero.  It is a
+    command rather than a direct backend call because the backend pins itself to
+    the tick thread — the write and its read-back both have to happen there.
+    """
+
+    source: str = "write_zero"
+
+    def describe(self) -> str:
+        return "写入零位"
+
+
 # ── housekeeping ────────────────────────────────────────────────────────────
 @dataclass(frozen=True)
 class Heartbeat(Command):
@@ -437,6 +453,7 @@ AnyCommand = Union[
     RecordOpenLimit,
     RecordCloseLimit,
     CancelCalibration,
+    WriteZero,
     Heartbeat,
     Inject,
     Shutdown,

@@ -162,22 +162,101 @@ def list_templates() -> list[str]:
     return list(TEMPLATE_NAMES)
 
 
-def factory_path() -> Path:
-    """The SDK's bundled, read-only factory calibration (gripper.py:33).
+def packaged_factory_path() -> Path:
+    """This console's own bundled default calibration.
 
-    Resolved through ``litegrip.__file__`` so it is correct inside a PyInstaller
-    bundle (``sys._MEIPASS``), which is why the build must collect the package
-    data.
+    Ships next to this module (``gripper/factory_calibration.json``), so it is
+    found however the daemon is run — from the source tree, from an installed
+    wheel, or from a PyInstaller bundle (``sys._MEIPASS``).  Keeping it here
+    rather than leaning on ``litegrip``'s copy is the point: the SDK's file
+    describes whichever unit *it* shipped and changes with the pinned SDK
+    version, while this one is the default the console commits to — used for
+    every channel until a measured calibration is imported.
+    """
+    return Path(__file__).resolve().parent / "factory_calibration.json"
+
+
+def factory_path() -> Path:
+    """The default calibration file, in the order the launcher and the SDK allow.
+
+    * ``LITEGRIP_FACTORY_CALIB`` wins first, and stays first for two reasons: the
+      Debian package sets it to a path under ``/usr/lib`` that is stable across
+      launches (the one-file bundle unpacks to a fresh temporary directory each
+      time), which is what lets the settings page name one file; and the test
+      suite points it at a nonexistent path to *disable* the default.
+    * Next is the console's own packaged copy (:func:`packaged_factory_path`),
+      which is what a source checkout or an installed wheel uses.
+    * Last is whatever ``litegrip`` ships itself, reachable only when the
+      console's copy is missing.
     """
     env = os.environ.get("LITEGRIP_FACTORY_CALIB")
     if env:
         return Path(env).expanduser()
+    packaged = packaged_factory_path()
+    if packaged.is_file():
+        return packaged
     try:
         import litegrip
 
         return Path(litegrip.__file__).resolve().parent / "factory_calibration.json"
     except Exception:  # pragma: no cover - only without the SDK installed
-        return Path(__file__).resolve().parent / "factory_calibration.json"
+        return packaged
+
+
+def is_bundled_factory(path: str | os.PathLike[str] | None) -> bool:
+    """Whether ``path`` *is* the console's bundled default calibration.
+
+    The console ships ``factory_calibration.json`` (inside this package, and via
+    the deb).  It is normally chosen automatically (row 5), but an operator
+    can also browse to and import it, which pins it as row 1 — and that file is
+    not an ordinary row-1 file: its own ``channel`` field hard-codes ``can0`` (a
+    per-channel cross-check would refuse it on any other interface), and it is a
+    default rather than a measurement.  Recognising it lets row 1 special-case
+    both.
+    """
+    if not path:
+        return False
+    try:
+        return Path(path).expanduser().resolve() == factory_path().resolve()
+    except OSError:  # pragma: no cover - unresolvable path
+        return False
+
+
+#: Warning attached to the bundled default, so the operator can see on the
+#: calibration page that the numbers are the shipped ones, not a measurement.
+BUNDLED_FACTORY_WARNING = (
+    "正在使用随程序打包的默认标定（factory_calibration.json）："
+    "若与本机夹爪不是同一台，所有 mm 与力的读数都会是错的"
+)
+
+
+def bundled_default(channel: str | None, mount: str | None,
+                    travel_mm: float) -> CalibrationInfo | None:
+    """The packaged ``factory_calibration.json`` as the *default* calibration.
+
+    Returns the file as a :class:`CalibrationInfo` when it exists and its
+    recorded orientation fits the declared ``mount``; ``None`` when it cannot
+    serve one (a missing file, an unreadable one, or a ``reverse`` declaration
+    the normal-oriented shipped file does not describe — the caller then falls
+    through to the named template, which carries the right direction).
+
+    Adopted as a *user* calibration, not ``factory`` provenance: it is the
+    console's own default rather than data pulled off some other machine, so the
+    gate lets motion through immediately and the operator does not have to
+    acknowledge a file they never chose.  The warning says where the numbers
+    came from.  It is only reached after every *measured* source (rows 1–4) has
+    been tried, so it never displaces a real measurement.
+    """
+    fact = factory_path()
+    if not fact.is_file():
+        return None
+    info = inspect_file(fact, travel_mm, provenance=PROVENANCE_USER,
+                        channel=channel)
+    if info.limits is None:
+        return None
+    if info.limits.reversed_mount != (mount == "reverse"):
+        return None
+    return _with_warning(info, BUNDLED_FACTORY_WARNING)
 
 
 def sdk_root() -> Path | None:
@@ -630,8 +709,8 @@ def resolve(
     2      ``~/.litegrip/<channel>_calibration.json``          measured
     3      ``LITEGRIP_CALIB``                                 measured, flagged
     4      ``~/.litegrip/litegrip_calibration.json``          measured, legacy
-    5      SDK template named by ``mount``                    template
-    6      SDK bundled ``factory_calibration.json``           factory
+    5      bundled ``factory_calibration.json`` (mount-aware)  measured (default)
+    6      SDK template named by ``mount``                    template
     7      nothing                                            missing
     =====  ===============================================  ================
 
@@ -669,6 +748,20 @@ def resolve(
                 max_stroke_mm=stroke,
             )
         name = template_for_path(target)
+        if name is None and is_bundled_factory(target):
+            # The console's own default file, pinned *explicitly* — the operator
+            # browsed to and imported the shipped ``factory_calibration.json``.
+            # Two things make it not-an-ordinary-row-1 file: its ``channel`` field
+            # hard-codes can0 (the cross-check would refuse it on every other
+            # interface), and it is a shipped default rather than a measurement,
+            # so it is adopted and flagged instead of cross-checked.  (Chosen
+            # *automatically* it would instead arrive via :func:`bundled_default`
+            # at row 5.)
+            return _with_warning(
+                inspect_file(target, stroke, provenance=PROVENANCE_USER,
+                             channel=channel),
+                BUNDLED_FACTORY_WARNING,
+            )
         info = inspect_file(
             target, stroke,
             provenance=PROVENANCE_TEMPLATE if name else PROVENANCE_USER,
@@ -711,26 +804,25 @@ def resolve(
                   f"{own}，两台夹爪共用一份时通道是唯一身份键）")
         return _channel_checked(info, channel, stroke)
 
-    # 5 — a named template, when the operator has declared a mount.
+    # 5 — the console's packaged default (``factory_calibration.json``), when it
+    # fits the declared mount.  It sits here, *below* the measured sources, so a
+    # real file for this channel always wins; and *above* the named template, so
+    # a fresh install drives on the shipped numbers rather than the nominal
+    # 120 mm template.  A mount the shipped file cannot describe (reverse) falls
+    # through to that template below.
+    bundled = bundled_default(channel, mount, stroke)
+    if bundled is not None:
+        return bundled
+
+    # 6 — a named template, when the operator has declared a mount.
     if mount in TEMPLATE_NAMES:
         return resolve(channel, mount=mount, travel_mm=stroke, template=mount)
-
-    # 6 — the SDK's bundled factory file.
-    fact = factory_path()
-    if fact.is_file():
-        info = inspect_file(fact, stroke, provenance=PROVENANCE_FACTORY,
-                            channel=channel)
-        return _with_warning(
-            info,
-            "未找到任何实测标定，正在使用 SDK 内置的出厂数据："
-            "若与本机夹爪不是同一台，所有 mm 与力的读数都会是错的",
-        )
 
     # 7 — nothing.
     return CalibrationInfo(
         provenance=PROVENANCE_MISSING, limits=None, path=None, channel=channel,
         problems=(
-            f"未找到任何标定文件（已尝试 {own} 与 {fact}）",
+            f"未找到任何标定文件（已尝试 {own} 与 {factory_path()}）",
             "请先运行 zero() 实测，或声明装配方向以载入标称模板",
         ),
         max_stroke_mm=stroke,
@@ -767,56 +859,8 @@ def _channel_checked(info: CalibrationInfo, channel: str,
     return info
 
 
-def list_candidates(
-    channel: str = "can0",
-    *,
-    pinned: str | None = None,
-    mount: str | None = None,
-    travel_mm: float = constants.DEFAULT_TRAVEL_MM,
-    env: Mapping[str, str] | None = None,
-) -> list[dict[str, Any]]:
-    """Every calibration the operator could choose, whether or not it exists.
-
-    Backs ``gripper.list_calibrations``: the settings page shows the whole list
-    with its provenance and validity, so "which file is in effect" is answered
-    by looking at all of them rather than by trusting the one that happened to
-    load.
-    """
-    environment = os.environ if env is None else env
-    stroke = float(travel_mm)
-    out: list[dict[str, Any]] = []
-
-    def add(path: Path, provenance: str, template: str | None = None,
-            note: str | None = None) -> None:
-        if not path.is_file():
-            return
-        info = inspect_file(path, stroke, provenance=provenance, template=template,
-                            channel=channel)
-        if note:
-            info = _with_warning(info, note)
-        out.append(candidate_dict(info, channel))
-
-    if pinned:
-        add(Path(pinned).expanduser(),
-            PROVENANCE_TEMPLATE if template_for_path(pinned) else PROVENANCE_USER)
-    add(Path.home() / ".litegrip" / f"{channel}_calibration.json", PROVENANCE_USER)
-    override = environment.get(CALIB_ENV)
-    if override:
-        add(Path(override).expanduser(), PROVENANCE_USER,
-            note=f"来自环境变量 {CALIB_ENV}")
-    add(legacy_user_path(), PROVENANCE_USER, note="旧版单文件位置")
-    for name in TEMPLATE_NAMES:
-        add(template_path(name), PROVENANCE_TEMPLATE, template=name)
-    add(factory_path(), PROVENANCE_FACTORY)
-    if mount in TEMPLATE_NAMES:
-        for item in out:
-            if item["template"] == mount:
-                item["selected"] = True
-    return out
-
-
 def candidate_dict(info: CalibrationInfo, channel: str) -> dict[str, Any]:
-    """One row of ``gripper.list_calibrations``.
+    """One ``*.json`` row of ``gripper.list_dir`` (the file picker).
 
     ``inUse`` is deliberately absent here: which candidate is *in effect* is the
     session's answer (it knows what the backend applied), not the resolver's.

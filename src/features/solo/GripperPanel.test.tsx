@@ -214,6 +214,37 @@ describe('GripperPanel', () => {
     expect(screen.getByTestId('gripper-disabled-reason').textContent).toBeTruthy()
   })
 
+  it('does not cry "no calibration" before the gripper is even connected', () => {
+    // daemon 在**没连上**时也会推一帧 `gripper_conn`: source 为 null、gate 是占位的
+    // `BLOCKED`（reason 是"后端尚未报告标定信息"）。把这份占位渲染成
+    // "已阻断 / 没有可用标定"，会让一个完全正常的空闲面板看着像坏了。
+    mocks.present.current = true
+    mocks.status.current = 'disconnected'
+    mocks.conn.current = {
+      status: 'disconnected',
+      channel: 'can0',
+      canId: 8,
+      mount: 'normal',
+      declaredMount: 'normal',
+      template: null,
+      source: null,
+      path: null,
+      travelMm: 85,
+      closedRad: null,
+      openRad: null,
+      fileRadToMm: null,
+      error: null,
+      gate: 'BLOCKED',
+      gateReason: '后端尚未报告标定信息；运动已禁止',
+    }
+    mocks.state.current = null
+    render(<GripperPanel />)
+    expect(screen.queryByTestId('gripper-gate')).toBeNull()
+    expect(screen.queryByText(/No usable calibration|没有可用标定/)).toBeNull()
+    // "未连接" 仍然由禁用原因说清楚，不是把这个提示也一并吞掉。
+    expect(screen.getByTestId('gripper-disabled-reason').textContent).toMatch(/Disconnected|未连接/)
+  })
+
   it('keeps the stop reachable while a move is running, and offers reset once latched', () => {
     connected({ state: { state: 'moving', positionMm: 30 } })
     const { rerender } = render(<GripperPanel />)

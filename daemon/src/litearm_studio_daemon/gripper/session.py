@@ -81,21 +81,20 @@ GRIPPER_COMMANDS: Dict[str, str] = {
     "gripper.reset_stop": "复位急停 → null",
     "gripper.set_motion": "改速度/夹持力 → 生效中的设置",
     "gripper.load_template": "声明装配方向 (normal|reverse), 按名载入模板 → {mount, source}",
-    "gripper.list_calibrations": "列出本通道可用的标定及其来源/校验 → [ … ]",
     "gripper.list_dir": "列出某目录下的子目录与 *.json 标定并逐个校验 → {path, parent, entries}",
     "gripper.import_calibration": "载入指定标定文件并记住它 → {path, source}",
-    "gripper.zero": "引导式实测 (travelMm) → {closedRad, openRad, radToMm}",
+    "gripper.write_zero": "把当前角度写为零位 (0xFE) → {ok, beforeRad, afterRad}",
     "gripper.set_allow_factory": "确认/撤销「允许出厂标定」(持久化) → {allowFactory}",
 }
 
-#: Commands that need a connected session.  ``gripper.list_calibrations`` and
-#: ``gripper.list_dir`` are deliberately absent: listing files is a filesystem
-#: question, and the settings page asks it before it connects.
+#: Commands that need a connected session.  ``gripper.list_dir`` is deliberately
+#: absent: listing files is a filesystem question, and the settings page asks it
+#: before it connects.
 _NEEDS_CONNECTION = frozenset({
     "gripper.enable", "gripper.disable", "gripper.clear_fault",
     "gripper.open", "gripper.close", "gripper.grasp", "gripper.move_to",
     "gripper.release", "gripper.reset_stop", "gripper.set_motion",
-    "gripper.load_template", "gripper.import_calibration", "gripper.zero",
+    "gripper.load_template", "gripper.import_calibration", "gripper.write_zero",
 })
 
 #: Commands the stop latch refuses.  Exactly the ones that move the jaws: 失能,
@@ -272,6 +271,12 @@ class GripperSession:
         self._loop_live = True
 
     def _make_backend(self, config: ChannelConfig) -> Any:
+        # The pinned file is whatever the operator imported; the packaged default
+        # (factory_calibration.json) is *not* synthesized here.  It is chosen by
+        # ``calibration.resolve`` (row 5) only when no measured file for this
+        # channel exists, so a real measurement or an explicit import still
+        # outranks it — and a declared reverse mount, which the normal-oriented
+        # packaged file cannot serve, still falls through to its template.
         if self._fake:
             from .backend.sim import SimBackend
 
@@ -947,43 +952,14 @@ class GripperSession:
             f"模板 {mount} 未在 {constants.CALIBRATION_LOAD_TIMEOUT_S:.0f}s 内生效")
         return {"mount": mount, "source": info.wire_source}
 
-    def _cmd_list_calibrations(self, p: dict) -> List[dict]:
-        """Every calibration this channel could use, with provenance and validity.
-
-        A filesystem question, answered without a connection: the settings page
-        asks it before it connects, which is when the operator is deciding which
-        file to use.
-        """
-        del p
-        config = self.config
-        items = calibration.list_candidates(
-            config.channel,
-            pinned=config.calibration_path,
-            mount=config.mount,
-            travel_mm=config.travel_mm,
-        )
-        # Which row is *in effect* is the session's answer, not the resolver's —
-        # and the active file is not always one of the candidates.  The simulator
-        # saves to a path of its own so that it can never overwrite the bench
-        # unit's calibration, and a page that listed only the candidates would
-        # show "nothing measured" right after a successful zero().
-        active = self.loop.info
-        active_path = getattr(active, "path", None) if active is not None else None
-        for item in items:
-            item["inUse"] = active_path is not None and item["path"] == active_path
-        if active_path and not any(item["path"] == active_path for item in items):
-            items.insert(0, {**calibration.candidate_dict(active, config.channel),
-                             "inUse": True})
-        return items
-
     def _cmd_list_dir(self, p: dict) -> dict:
         """One directory of the **control machine**, for the file picker.
 
-        Also a filesystem question, and likewise answered without a connection
-        (see ``_NEEDS_CONNECTION``).  The listing itself lives in ``browse.py``;
-        this only feeds it the two things the session knows —— this channel's
-        travel and channel, which is what a ``*.json`` row is validated against
-        —— and marks the file currently in effect.
+        A filesystem question, and therefore answered without a connection (see
+        ``_NEEDS_CONNECTION``).  The listing itself lives in ``browse.py``; this
+        only feeds it the two things the session knows —— this channel's travel
+        and channel, which is what a ``*.json`` row is validated against —— and
+        marks the file currently in effect.
         """
         from .browse import list_dir
 
@@ -992,8 +968,7 @@ class GripperSession:
             raise ValueError("path 需为字符串")
         config = self.config
         result = list_dir(path, travel_mm=config.travel_mm, channel=config.channel)
-        # Same reasoning as ``_cmd_list_calibrations``: "which row is in effect"
-        # is the session's answer, not the lister's.
+        # "Which row is in effect" is the session's answer, not the lister's.
         active = self.loop.info
         active_path = getattr(active, "path", None) if active is not None else None
         if active_path:
@@ -1028,75 +1003,53 @@ class GripperSession:
             raise GripperCalibrationError("；".join(info.problems) or "标定不可用")
         return {"path": str(target), "source": info.wire_source}
 
-    def _cmd_zero(self, p: dict) -> dict:
-        """Measure both travel limits, save the result, and answer with it.
+    def _cmd_write_zero(self, p: dict) -> dict:
+        """Make the current encoder angle the motor's zero (CAN 0xFE).
 
-        The only long-blocking gripper command: the probe runs on the tick (one
-        step per tick, so an E-stop interrupts it), while this thread waits for
-        it to finish and answers with the calibration that came out.  The client
-        must not subject it to the ordinary 60 s command timeout (§4.2).
+        Blocks only while the tick performs the write and reads the angle back —
+        a fraction of a second on real hardware, bounded by
+        :data:`WRITE_ZERO_TIMEOUT_S`.  The write itself runs on the tick (the
+        backend is pinned there); this thread only waits for the outcome.
         """
-        travel = _required_float(p, "travelMm")
-        _check_range(travel, constants.STROKE_MIN_MM, constants.STROKE_MAX_MM,
-                     "travelMm")
+        del p
         loop = self.loop
         if loop.estopped:
             raise GripperEstoppedError("急停已触发; 请先排除原因并按复位急停")
         if not loop.connected:
             raise GripperNotConnectedError("夹爪未连接")
-        if loop.probe is not None:
-            raise GripperBusyError("已有标定正在进行")
         if not loop.enabled:
-            # The probe drives into the stops and steers by the encoder, so it
-            # needs a motor that answers.  Said here rather than left to the
-            # tick, because a probe refused on the tick looks like nothing.
-            raise ValueError("标定需要电机使能；请先使能再运行零位标定")
+            # The motor has to be re-enabled and read back after the frame, so it
+            # needs a drive that answers.  Said here rather than left to the tick,
+            # because a refusal on the tick looks like nothing to the caller.
+            raise ValueError("写入零位需要电机使能；请先使能")
         if loop.measured_rad() is None:
-            # Enabled, but no status frame has been counted since this
-            # energisation: the SDK still serves its ``0.0`` rad placeholder, and
-            # a probe seeded from that would drive to a pose the jaws have never
-            # been in.  Refused here rather than on the tick, so the operator gets
-            # a structured reason instead of a five-second wait and a generic
-            # "could not start".
+            # The read-back that tells the operator the write took needs a live
+            # angle: with no frame it would be a lie.  Refused here so the answer
+            # is structured rather than a generic timeout.
             raise GripperCalibrationError(
-                "还没有读到位置：请先使能，并等到夹爪上报状态帧之后再开始标定")
+                "还没有读到位置：请先使能，并等到夹爪上报状态帧之后再写入零位")
 
-        # The travel is the numerator of every millimetre the calibration will
-        # produce, so it is recorded before the probe uses it.
-        self._persist(travel_mm=travel)
-        loop.submit(cmd.SetTravelMm(travel))
-        # ⚠ Wait for *this* probe's terminal outcome, not for the probe object to
-        # disappear.  Every abort path (the heartbeat watchdog, an E-stop, a
-        # disconnect) clears ``probe`` and leaves ``info`` at the previous
-        # calibration, so a waiter that stopped at "no probe is running" answered
-        # with a calibration it had not measured and labelled it ``measured``.
-        before = loop.probe_seq
-        loop.submit(cmd.StartGuidedCalibration(
-            reversed_mount=(self.config.mount == "reverse")))
-        if not self._wait_until(lambda: self.loop.probe_seq > before, 5.0):
-            raise GripperCalibrationError("标定未能开始（检查使能、急停与连接状态）")
-        generation = loop.probe_seq
-        if not self._wait_until(
-                lambda: self._probe_finished(generation),
-                constants.ZERO_PROBE_TIMEOUT_S):
-            self.loop.submit(cmd.CancelCalibration())
+        # ⚠ Wait for *this* attempt's outcome, not merely for the counter to
+        # move: the tick records an outcome for every attempt, including the ones
+        # it refuses before touching the motor, so an id is the only thing that
+        # tells "this write finished" from "the previous one is still the last
+        # thing that happened".
+        before = loop.write_zero_seq
+        loop.submit(cmd.WriteZero())
+        if not self._wait_until(lambda: self.loop.write_zero_seq > before, 5.0):
             raise GripperCalibrationError(
-                f"标定超过 {constants.ZERO_PROBE_TIMEOUT_S:.0f}s 未结束，已取消")
-        outcome = loop.probe_outcome
+                "写入零位未能开始（检查使能、急停与连接状态）")
+        generation = loop.write_zero_seq
+        if not self._wait_until(
+                lambda: self._write_zero_finished(generation),
+                constants.WRITE_ZERO_TIMEOUT_S):
+            raise GripperCalibrationError(
+                f"写入零位超过 {constants.WRITE_ZERO_TIMEOUT_S:.0f}s 未结束")
+        outcome = loop.write_zero_outcome
         if outcome is None or not outcome[1]:
             reason = outcome[2] if outcome is not None else ""
-            raise GripperCalibrationError(reason or "标定未产生可用的结果")
-        info = self.loop.info
-        if info is None or info.limits is None:
-            reason = "；".join(info.problems) if info is not None else "没有标定结果"
-            raise GripperCalibrationError(reason or "标定未产生可用的结果")
-        return {
-            "closedRad": info.limits.closed_rad,
-            "openRad": info.limits.open_rad,
-            "radToMm": info.limits.rad_to_mm,
-            "source": info.wire_source,
-            "warnings": list(info.warnings),
-        }
+            raise GripperCalibrationError(reason or "写入零位未成功")
+        return {"ok": True, "beforeRad": outcome[3], "afterRad": outcome[4]}
 
     def _cmd_set_allow_factory(self, p: dict) -> dict:
         """Persist the operator's acknowledgement of the factory calibration.
@@ -1136,6 +1089,16 @@ class GripperSession:
         the result.
         """
         outcome = self.loop.probe_outcome
+        return outcome is not None and outcome[0] == generation
+
+    def _write_zero_finished(self, generation: int) -> bool:
+        """True once *that* write-zero attempt (``generation``) has an outcome.
+
+        Mirrors :meth:`_probe_finished`: the tick records an outcome for every
+        attempt, including the ones it refuses before touching the motor, so the
+        id — not merely "an outcome exists" — is what says *this* write is done.
+        """
+        outcome = self.loop.write_zero_outcome
         return outcome is not None and outcome[0] == generation
 
     def _await_calibration(self, predicate: Callable[[Any], bool],

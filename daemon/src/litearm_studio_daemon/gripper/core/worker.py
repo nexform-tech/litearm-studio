@@ -81,7 +81,7 @@ from ..calibration import (
 )
 from ..telemetry import Telemetry, TelemetryFrame
 from ..units import force_from_torque, frame_mismatch, rad_per_s_to_mm
-from ..backend import MoveAborted
+from ..backend import BackendError, MoveAborted, Unsupported
 from . import commands as cmd
 from .calibration_fsm import GuidedCalibFSM, TwoPointCalibFSM
 from .commands import AnyCommand
@@ -361,10 +361,20 @@ class WorkerLoop:
         #: tell "this probe finished" from "this probe was aborted and the
         #: previous calibration is still in force" — and every abort path
         #: (watchdog, E-stop, disconnect) leaves ``_info`` at that previous
-        #: calibration.  ``_cmd_zero`` waits on the id, so an aborted probe can
-        #: no longer be answered with the calibration it never measured.
+        #: calibration.  Waiting on the id is what keeps an aborted probe from
+        #: being answered with the calibration it never measured.
+        #:
+        #: Dormant since 零位写入 replaced the guided probe on the settings page:
+        #: nothing submits ``StartGuidedCalibration`` any more, but the probe and
+        #: this handshake are kept for a future wizard rather than deleted here.
         self._probe_seq = 0
         self._probe_outcome: tuple[int, bool, str] | None = None
+        #: Same generation/outcome handshake as the probe, for the write-zero
+        #: command.  It has no ``_probe`` object to watch — it is a single call —
+        #: so the waiter is told apart by the id alone, and the outcome carries the
+        #: read-backs as ``(id, ok, reason, before_rad, after_rad)``.
+        self._write_zero_seq = 0
+        self._write_zero_outcome: tuple[int, bool, str, float, float] | None = None
         self._tele = Telemetry()
         self._last_frame = _idle_frame(self)
         #: True while a plain open/close is being driven by the backend's own
@@ -1166,6 +1176,8 @@ class WorkerLoop:
             self._record_manual_limit(isinstance(command, cmd.RecordOpenLimit))
         elif isinstance(command, cmd.CancelCalibration):
             self._cancel_probe()
+        elif isinstance(command, cmd.WriteZero):
+            self._write_zero()
 
         # ── housekeeping ────────────────────────────────────────────────────
         elif isinstance(command, cmd.Heartbeat):
@@ -1616,6 +1628,89 @@ class WorkerLoop:
             self._log("info", f"已记录{wanted}极限，下一控制周期取得角度读数")
         else:
             self._log("warn", f"当前步骤不在记录{wanted}极限，已忽略这次按键")
+
+    def _write_zero(self) -> None:
+        """Write the encoder zero (CAN 0xFE) and re-evaluate the gate.
+
+        Unlike the guided probe this measures nothing and drives nothing: the
+        jaws stay where they are and only the angle the encoder calls zero
+        changes.  It still owns the axis for its duration — the FSM must not be
+        sending position frames at the same time — and it still re-reads the gate
+        afterwards, because 0xFE moves the offset every calibration in force was
+        taken against, so the numbers may no longer describe this hardware.
+        """
+        # Open this attempt's generation before any refusal, so the waiter is
+        # answered for the id it watched rather than with the previous write's
+        # result (same reasoning as the probe handshake).
+        self._write_zero_seq += 1
+        self._write_zero_outcome = None
+
+        if self._probe is not None and self._probe.is_active:
+            self._finish_write_zero(False, "标定进行中，无法写入零位")
+            return
+        # Same order as the probe: the E-stop latches *and* disables, so naming
+        # the enable first would hide the cause the operator has to act on.
+        if self._estop.is_set():
+            self._finish_write_zero(False, "急停中，无法写入零位")
+            return
+        if not self._connected:
+            self._finish_write_zero(False, "请先连接")
+            return
+        if not self._enabled:
+            self._finish_write_zero(False, "写入零位需要电机使能；请先使能")
+            return
+        if self._measured_rad() is None:
+            # The write itself is angle-agnostic, but the read-back that tells the
+            # operator whether it took is not: with no frame the check would be a
+            # lie.  Refused here so the answer is structured rather than a timeout.
+            self._finish_write_zero(
+                False, "还没有读到位置，无法写入零位；请先使能并等状态帧到达")
+            return
+
+        # The write owns the axis: the FSM must not be holding a position at the
+        # same time, or the two would send frames alternately.
+        self._motion.idle()
+        try:
+            result = self.backend.write_zero()
+        except Unsupported as exc:
+            self._finish_write_zero(False, f"此设备不支持写入零位：{exc}")
+            return
+        except BackendError as exc:
+            self._finish_write_zero(False, f"写入零位失败：{exc}")
+            self._alert("error", f"写入零位失败：{exc}", kind=KIND_CALIBRATION)
+            return
+
+        ok = bool(result.ok)
+        reason = "" if ok else (
+            f"回读 {result.after_rad:+.6f} rad 未回到 0：0xFE 可能未被电机接受")
+        self._finish_write_zero(ok, reason, result.before_rad, result.after_rad)
+        if ok:
+            self._alert(
+                "info",
+                f"已写入零位：{result.before_rad:+.6f} → {result.after_rad:+.6f} rad",
+            )
+        else:
+            self._alert("warn", reason, kind=KIND_CALIBRATION)
+
+        # 0xFE moved the encoder zero, so every absolute angle in force may no
+        # longer agree with the hardware: re-reading re-evaluates the gate and,
+        # where it can, re-anchors the axis at the pose the jaws are already in.
+        self._refresh_calibration()
+        if self._enabled and self._gate not in GATE_POSE:
+            # A gate that shut over the new zero: still hold the measured angle,
+            # or an enabled motor with no frame to act on is free to drift.
+            self._hold_measured("写入零位后已在当前位置驻留（按实测角度）")
+
+    def _finish_write_zero(self, ok: bool, reason: str,
+                           before_rad: float = 0.0, after_rad: float = 0.0) -> None:
+        """Record the current generation's outcome for a waiting session thread.
+
+        Every exit path of :meth:`_write_zero` lands here — including the
+        pre-flight refusals — so the waiter always sees an answer for the id it
+        watched and never mistakes the previous write's result for this one.
+        """
+        self._write_zero_outcome = (
+            self._write_zero_seq, ok, reason, before_rad, after_rad)
 
     def _start_probe(self, *, guided: bool, reversed_mount: bool = False) -> None:
         # The E-stop is checked first because it is the reason that explains the
@@ -2081,6 +2176,21 @@ class WorkerLoop:
         every way a probe can end without leaving a saved calibration.
         """
         return self._probe_outcome
+
+    @property
+    def write_zero_seq(self) -> int:
+        """Id of the write-zero attempt in flight (0 before the first)."""
+        return self._write_zero_seq
+
+    @property
+    def write_zero_outcome(self) -> tuple[int, bool, str, float, float] | None:
+        """``(id, ok, reason, before_rad, after_rad)`` of the last write-zero.
+
+        ``None`` while one is running or before the first; ``ok`` is false for
+        every attempt that never reached the motor, and the two angles are the
+        read-backs that let the operator see whether 0xFE took.
+        """
+        return self._write_zero_outcome
 
     @property
     def stopping(self) -> bool:

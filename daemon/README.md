@@ -62,7 +62,7 @@ litearm-studio-daemon --no-open   # 无界面运行；界面用浏览器连它�
   （import 需要 `fcntl` / `PF_CAN`）。要真机驱动夹爪就必须装它：
 
 ```bash
-git clone --branch v0.4.0 https://github.com/nexform-tech/litegrip-python.git
+git clone --branch v0.14.0 https://github.com/nexform-tech/litegrip-python.git
 pip install ./litegrip-python
 ```
 
@@ -332,9 +332,9 @@ python packaging/build.py      # 产物：packaging/dist/litearm-studio-daemon[.
 - **夹爪 SDK 按平台收**：Linux 上必须装 `litegrip`（`pip install ../litegrip-python`），
   脚本会 `--collect-all litegrip` 把三份 JSON 与 `py.typed` 一起收进去；缺了它会**直接
   判失败**——一个"忘了装 SDK"的 Linux 产物会静默地没有夹爪。Windows 上不装、也不收：
-  那个平台没有 `PF_CAN`，夹爪是**缺席**的（不是禁用）。版本钉在 `v0.4.0`
-  （见 `.github/workflows/release.yml`），也就是"按名字载入标定模板 + 每通道标定文件"
-  的那个版本。
+  那个平台没有 `PF_CAN`，夹爪是**缺席**的（不是禁用）。版本钉在 `v0.14.0`
+  （见 `.github/workflows/release.yml`），即含 `LiteGrip.write_zero()`（"写零位"，CAN
+  `0xFE`）的首个 release；"按名字载入标定模板 + 每通道标定文件"始于 `v0.4.0`。
 - **版本单一来源**：`LITEARM_STUDIO_VERSION`（CI 传 git tag）> `git describe --tags` >
   `0.0.0+dev`，写进构建时生成的 `_build_version.py`（不入库）。于是 `hello` 帧报的版本
   就是发出去的那个 tag，而不是 `pyproject.toml` 里的占位符。

@@ -18,11 +18,10 @@ though —— the daemon's own ``~/.litegrip`` and ``~/.config/litearm-studio`` 
 dot-directories, and hiding them would hide exactly the files the operator came
 for.
 
-Every ``*.json`` entry carries the same fields as a ``gripper.list_calibrations``
-row (:func:`~litearm_studio_daemon.gripper.calibration.candidate_dict`), so the
-picker can render a file the same way the settings page already renders a
-candidate —— and so an operator sees *before* importing that a file is invalid
-and why.
+Every ``*.json`` entry carries the fields of
+:func:`~litearm_studio_daemon.gripper.calibration.candidate_dict`, so the picker
+can render a file with the same row markup the browser dialog uses —— and so an
+operator sees *before* importing that a file is invalid and why.
 
 Pure layer: no Qt, no SDK, no session.  The filesystem root is injectable
 (``home=``) so the whole thing can be tested against a ``tmp_path`` tree, the
@@ -156,8 +155,7 @@ def list_dir(
 
     Every ``*.json`` entry carries the ``candidate_dict`` fields plus
     ``name/path/type/readable/symlink/size/mtime``.  ``inUse`` is **not** here:
-    which candidate is in effect is the session's answer, exactly as it is for
-    ``gripper.list_calibrations``.
+    which candidate is in effect is the session's answer, not the lister's.
 
     Raises :class:`~litearm_studio_daemon.errors.GripperBrowseError` when the
     path does not exist, is not a directory, or cannot be read.

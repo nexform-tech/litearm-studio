@@ -15,11 +15,10 @@ const mocks = vi.hoisted(() => {
     connect: vi.fn(),
     disconnect: vi.fn(),
     listChannels: vi.fn(),
-    listCalibrations: vi.fn(),
     loadTemplate: vi.fn(),
     importCalibration: vi.fn(),
     setAllowFactory: vi.fn(),
-    zero: vi.fn(),
+    writeZero: vi.fn(),
     pickFile: vi.fn(),
   }
 })
@@ -33,11 +32,10 @@ vi.mock('@/lib/arm/gripperClient', () => ({
     connect: mocks.connect,
     disconnect: mocks.disconnect,
     listChannels: mocks.listChannels,
-    listCalibrations: mocks.listCalibrations,
     loadTemplate: mocks.loadTemplate,
     importCalibration: mocks.importCalibration,
     setAllowFactory: mocks.setAllowFactory,
-    zero: mocks.zero,
+    writeZero: mocks.writeZero,
   },
 }))
 
@@ -101,51 +99,38 @@ describe('GripperSection', () => {
     mocks.calib.current = null
     vi.clearAllMocks()
     mocks.listChannels.mockResolvedValue(['can0'])
-    mocks.listCalibrations.mockResolvedValue([CANDIDATE])
-    mocks.zero.mockResolvedValue({ closedRad: 1.7, openRad: -0.06, radToMm: 46.7, source: 'measured', warnings: [] })
+    mocks.writeZero.mockResolvedValue({ ok: true, beforeRad: 1.7, afterRad: 0.0001 })
     mocks.pickFile.mockResolvedValue({ kind: 'cancelled' })
   })
 
-  it('lists the calibrations with their provenance and the one in effect', async () => {
+  it('writes the encoder zero from the current position', async () => {
     render(<GripperSection />)
-    await waitFor(() => expect(screen.getByTestId('gripper-calibrations')).toBeTruthy())
-    const list = screen.getByTestId('gripper-calibrations')
-    expect(list.textContent).toMatch(/Measured|实测/)
-    expect(list.textContent).toMatch(/In effect|生效中/)
-    expect(list.textContent).toContain('/home/u/.litegrip/can0_calibration.json')
-  })
-
-  it('runs zero with the travel field', async () => {
-    render(<GripperSection />)
-    await waitFor(() => expect(mocks.listCalibrations).toHaveBeenCalled())
+    await waitFor(() => expect(mocks.listChannels).toHaveBeenCalled())
     await waitFor(() =>
-      expect((screen.getByTestId('gripper-zero') as HTMLButtonElement).disabled).toBe(false),
+      expect((screen.getByTestId('gripper-write-zero') as HTMLButtonElement).disabled).toBe(false),
     )
-    fireEvent.click(screen.getByTestId('gripper-zero'))
-    await waitFor(() => expect(mocks.zero).toHaveBeenCalledWith(85))
+    fireEvent.click(screen.getByTestId('gripper-write-zero'))
+    await waitFor(() => expect(mocks.writeZero).toHaveBeenCalled())
   })
 
-  it('disables zero until the drive is enabled', async () => {
+  it('disables write-zero until the drive is enabled', async () => {
     mocks.state.current = { enabled: false, state: 'disabled', gate: 'READY', positionMm: null }
     render(<GripperSection />)
-    await waitFor(() => expect(mocks.listCalibrations).toHaveBeenCalled())
-    expect((screen.getByTestId('gripper-zero') as HTMLButtonElement).disabled).toBe(true)
+    await waitFor(() => expect(mocks.listChannels).toHaveBeenCalled())
+    expect((screen.getByTestId('gripper-write-zero') as HTMLButtonElement).disabled).toBe(true)
   })
 
-  it('defaults the mounting direction to normal, with no undeclared option', async () => {
-    // daemon 侧不再有"未声明"这一态（参考硬件是正装）：没有记录时表单必须给正装，
-    // 而不是一个空值。
-    mocks.conn.current = { ...mocks.conn.current, mount: null, declaredMount: null }
+  it('no longer offers a mounting-direction selector', async () => {
+    // 装配方向固定为正装（参考硬件就是正装）：设置页不再让操作员选。
     render(<GripperSection />)
-    await waitFor(() => expect(mocks.listCalibrations).toHaveBeenCalled())
-    expect(screen.getByTestId('gripper-mount').textContent).toMatch(/Normal|正向/)
-    expect(screen.queryByText(/Not declared|未声明/)).toBeNull()
+    await waitFor(() => expect(mocks.listChannels).toHaveBeenCalled())
+    expect(screen.queryByTestId('gripper-mount')).toBeNull()
   })
 
   it('persists the factory acknowledgement through the toggle', async () => {
     mocks.setAllowFactory.mockResolvedValue({ allowFactory: true })
     render(<GripperSection />)
-    await waitFor(() => expect(mocks.listCalibrations).toHaveBeenCalled())
+    await waitFor(() => expect(mocks.listChannels).toHaveBeenCalled())
     fireEvent.click(screen.getByTestId('gripper-allow-factory'))
     await waitFor(() => expect(mocks.setAllowFactory).toHaveBeenCalledWith(true))
   })
@@ -153,7 +138,7 @@ describe('GripperSection', () => {
   it('imports a calibration from a typed path', async () => {
     mocks.importCalibration.mockResolvedValue({ path: '/tmp/my.json', source: 'measured' })
     render(<GripperSection />)
-    await waitFor(() => expect(mocks.listCalibrations).toHaveBeenCalled())
+    await waitFor(() => expect(mocks.listChannels).toHaveBeenCalled())
     fireEvent.change(screen.getByTestId('gripper-import-path'), { target: { value: '/tmp/my.json' } })
     fireEvent.click(screen.getByTestId('gripper-import'))
     await waitFor(() => expect(mocks.importCalibration).toHaveBeenCalledWith('/tmp/my.json'))
@@ -164,7 +149,7 @@ describe('GripperSection', () => {
   it('fills the path box from the file the native dialog returned', async () => {
     mocks.pickFile.mockResolvedValue({ kind: 'picked', path: CANDIDATE.path })
     render(<GripperSection />)
-    await waitFor(() => expect(mocks.listCalibrations).toHaveBeenCalled())
+    await waitFor(() => expect(mocks.listChannels).toHaveBeenCalled())
 
     fireEvent.click(screen.getByTestId('gripper-import-browse'))
 
@@ -177,7 +162,7 @@ describe('GripperSection', () => {
   it('browses without a connection but still gates import on it', async () => {
     mocks.conn.current = null             // 断开：选文件免连接，导入不然
     render(<GripperSection />)
-    await waitFor(() => expect(mocks.listCalibrations).toHaveBeenCalled())
+    await waitFor(() => expect(mocks.listChannels).toHaveBeenCalled())
     expect((screen.getByTestId('gripper-import-browse') as HTMLButtonElement).disabled).toBe(false)
     fireEvent.change(screen.getByTestId('gripper-import-path'), { target: { value: '/tmp/a.json' } })
     expect((screen.getByTestId('gripper-import') as HTMLButtonElement).disabled).toBe(true)
@@ -187,7 +172,7 @@ describe('GripperSection', () => {
     mocks.pickFile.mockResolvedValue({ kind: 'unavailable' })
     const { toast } = await import('sonner')
     render(<GripperSection />)
-    await waitFor(() => expect(mocks.listCalibrations).toHaveBeenCalled())
+    await waitFor(() => expect(mocks.listChannels).toHaveBeenCalled())
 
     fireEvent.click(screen.getByTestId('gripper-import-browse'))
 

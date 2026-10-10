@@ -43,7 +43,7 @@ describe('i18n Internationalization', () => {
     expect(i18n.t('gripper:source.template')).toBe('标称模板（从未实测）')
     expect(i18n.t('gripper:gate.TEMPLATE')).toBe('标称模板')
     expect(i18n.t('gripper:state.grasping')).toBe('夹持中')
-    expect(i18n.t('gripper:zero.start')).toBe('开始标定')
+    expect(i18n.t('gripper:writeZero.button')).toBe('写入零位')
     expect(i18n.t('gripper:settings.allowFactory')).toBe('允许出厂标定（已确认风险）')
     expect(i18n.t('common:errors.gripperCalibration')).toContain('标定')
     // 授权激活：未激活的机器一开机就会撞上的那条错误，以及它的入口。
@@ -89,7 +89,7 @@ describe('i18n Internationalization', () => {
     expect(i18n.t('gripper:source.template')).toBe('Nominal template (never measured)')
     expect(i18n.t('gripper:gate.BLOCKED')).toBe('Blocked')
     expect(i18n.t('gripper:state.grasping')).toBe('Grasping')
-    expect(i18n.t('gripper:zero.start')).toBe('Start calibration')
+    expect(i18n.t('gripper:writeZero.button')).toBe('Write zero')
     expect(i18n.t('gripper:settings.allowFactory')).toContain('factory')
     expect(i18n.t('common:errors.gripperNotConnected')).toContain('not connected')
     expect(i18n.t('settings:tabs.activation')).toBe('Activation')
