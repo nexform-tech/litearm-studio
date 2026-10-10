@@ -1,0 +1,6 @@
+[submodule "sdk/litearm-python"]
+	path = sdk/litearm-python
+	url = https://github.com/nexform-tech/litearm-python.git
+[submodule "sdk/litegrip-python"]
+	path = sdk/litegrip-python
+	url = https://github.com/nexform-tech/litegrip-python.git

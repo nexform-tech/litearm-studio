@@ -64,17 +64,15 @@ Trajectory teaching/playback, dexterous-hand panels and per-joint impedance or h
 
 - **Node.js** `v20.0.0`+ and **pnpm** (`corepack enable` or `npm install -g pnpm`)
 - **Python** 3.10+ for the local daemon
-- `litearm-python` — not on PyPI, so clone it and install from the checkout:
-
-```bash
-git clone https://github.com/nexform-tech/litearm-python.git
-```
+- **The two SDKs** (`litearm-python`, `litegrip-python`) — not on PyPI: they ship as git
+  submodules under `sdk/`, pinned by tag. `make sdk` fetches and installs them; there is
+  nothing to clone by hand.
 
 ### 2. Run the whole application
 
 ```bash
 cd litearm-studio
-pip install -e ../litearm-python
+make sdk                           # fetch the pinned SDK submodules and install them
 pip install -e "daemon[test]"     # installs fastapi/uvicorn and the `litearm-studio-daemon` entry point
 pnpm install && pnpm build         # build the UI the daemon will serve
 
@@ -88,6 +86,10 @@ litearm-studio-daemon --fake       # offline: full session on the SDK's fake tra
 The fake device is licensed by default, so the activation panel shows a state and no form.
 Add `--fake-unactivated` to walk the whole unlicensed path: the signup form, the activation
 consent document, and the `ERR{0x10,0x08}` refusal when you press Enable.
+
+To move to a newer SDK: check the tag out inside `sdk/<repo>` and commit the updated
+submodule pointer. `.gitmodules` plus that pointer is the only place the two versions live,
+and every build path — dev, CI, `.deb`, Windows — follows it.
 
 The console prints the URL it bound to (default `http://127.0.0.1:8765/`, auto-incrementing if busy) and opens a window.
 
