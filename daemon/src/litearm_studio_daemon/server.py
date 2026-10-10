@@ -208,6 +208,28 @@ def _bundled_ui_dir() -> Optional[Path]:
     return p if p.is_dir() else None
 
 
+def _window_entry_url(url: str, ui_path: Optional[Path]) -> str:
+    """给窗口的入口 URL 挂一个随前端构建变化的查询串。
+
+    ⚠ **不挂的话, 窗口会一直渲染上一版界面。** 窗口用持久化的 webview 存储
+    (`private_mode=False` + `storage_path`, 见 `window.run_window`) —— 那是为了留住
+    操作员的设置 (localStorage/IndexedDB), 可 WebKit 顺手把整包前端也缓存到了磁盘。
+    于是**重建或升级之后**, 磁盘上明明是新文件, 窗口却连一条静态请求都不发 (实测访问
+    日志里只剩 `/api/logs` 这类不可缓存的接口), 界面停在旧版。
+
+    入口文档是唯一一个 URL 不随内容变化的缓存文件 (各 chunk 都带内容哈希), 所以把它的 URL
+    键在入口文件的 mtime 上就够: 构建没变 → 同一个 URL → 照常命中缓存; 构建变了 → 新 URL
+    → 重新取, 而它引用的 chunk 名也随内容变了, 于是整包都换成新的。
+    """
+    if ui_path is None:
+        return url
+    try:
+        token = (ui_path / "index.html").stat().st_mtime_ns
+    except OSError:
+        return url
+    return f"{url}?v={token}"
+
+
 class Daemon:
     """会话 + 客户端集合 —— 一个进程一个实例 (`create_app` 把它封进 FastAPI)。
 
@@ -1104,6 +1126,9 @@ async def serve(session: Session, *, gripper: Optional[Any] = None,
     # `resolve_ui_dir` 是纯函数 (只看磁盘), 所以再算一次比把路径从 `create_app`
     # 里传出来更省事, 也不会与它给出的答案不一致。
     ui_path = resolve_ui_dir(ui_dir)
+    # ⚠ 窗口用这份带构建指纹的 URL, 对外打印/复用的仍是干净的 `url` —— 见
+    # `_window_entry_url`: WebKit 的持久缓存会让窗口一直渲染上一版前端。
+    entry_url = _window_entry_url(url, ui_path)
     obs.info(obs.DAEMON_STARTED, body=f"守护进程开始监听 {url}",
              fields={"host": host, "port": int(port), "version": version,
                      "ui_dir": str(ui_path) if ui_path is not None else "",
@@ -1121,7 +1146,7 @@ async def serve(session: Session, *, gripper: Optional[Any] = None,
             await _wait_until_serving(server)
             # ⚠ 直接在当前 (主) 线程调用, **不** `to_thread`: GTK/Qt 都要求 GUI 主循环
             # 跑在主线程上。它阻塞到窗口关闭 —— 那一刻就是这个程序该退出的时刻。
-            runner(url, on_ready=handles.append)
+            runner(entry_url, on_ready=handles.append)
         finally:
             _stop_server(server, thread)
         obs.info(obs.DAEMON_WINDOW_CLOSED, body="应用窗口已关闭, 程序退出")

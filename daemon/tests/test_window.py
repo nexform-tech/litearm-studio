@@ -398,6 +398,50 @@ def _unconnected_session(monkeypatch) -> tuple[Session, list]:
     return session, closed
 
 
+def test_the_window_entry_url_carries_a_build_token(tmp_path: Path) -> None:
+    """入口 URL 键在入口文件的 mtime 上 —— 否则 WebKit 的持久缓存让窗口渲染上一版界面。
+
+    见 `server._window_entry_url`: 窗口的 webview 存储是持久化的 (操作员的设置要留住),
+    WebKit 顺手把整包前端也缓存了; 入口 URL 不变的话, 重建之后窗口仍发不出静态请求。
+    """
+    from litearm_studio_daemon.server import _window_entry_url
+
+    ui = tmp_path / "dist"
+    ui.mkdir()
+    index = ui / "index.html"
+    index.write_text("<!doctype html>")
+
+    url = _window_entry_url("http://127.0.0.1:8765/", ui)
+    assert url == f"http://127.0.0.1:8765/?v={index.stat().st_mtime_ns}"
+    # 同一个文件 → 同一个 URL → 缓存照常命中 (别每次都当成新构建)。
+    assert _window_entry_url("http://127.0.0.1:8765/", ui) == url
+
+
+def test_the_window_entry_url_is_plain_without_an_entry(tmp_path: Path) -> None:
+    """没有前端目录 (还没构建) 时原样返回, 不凭空多一个查询串。"""
+    from litearm_studio_daemon.server import _window_entry_url
+
+    assert _window_entry_url("http://127.0.0.1:8765/", None) == "http://127.0.0.1:8765/"
+    empty = tmp_path / "dist"
+    empty.mkdir()
+    assert _window_entry_url("http://127.0.0.1:8765/", empty) == "http://127.0.0.1:8765/"
+
+
+def test_serve_hands_the_window_a_cache_busted_url(monkeypatch, tmp_path: Path) -> None:
+    """端到端: `serve` 交给窗口的 URL 带构建指纹 (走 `window_runner` 注入点)。"""
+    ui = tmp_path / "dist"
+    ui.mkdir()
+    (ui / "index.html").write_text("<!doctype html>")
+    session, _ = _unconnected_session(monkeypatch)
+    seen: dict = {}
+
+    def fake_window(url: str, *, on_ready) -> None:
+        seen["url"] = url
+
+    asyncio.run(serve(session, http_port=0, ui_dir=str(ui), window_runner=fake_window))
+    assert "?v=" in seen["url"]
+
+
 def test_closing_the_window_stops_the_server_and_tears_the_session_down(
         monkeypatch) -> None:
     """本文件的核心断言。
