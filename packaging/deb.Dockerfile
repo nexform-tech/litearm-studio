@@ -55,24 +55,18 @@ RUN apt-get update -qq \
         librsvg2-common \
  && rm -rf /var/lib/apt/lists/*
 
-# The gripper SDK lives in its own repository (not on PyPI) and is pinned to the same tag
-# the release workflow pins, so a local package matches a released one.
-RUN git clone -q https://github.com/nexform-tech/litegrip-python /sdk/litegrip-python \
- && git -C /sdk/litegrip-python checkout -q v0.4.0
-
 # The build venv comes from the **system** python: `python3-gi` is installed for that
 # interpreter, and `--system-site-packages` is the channel that makes it visible here.
 # A venv made by a pip-installed python would not see `/usr/lib/python3/dist-packages`.
+#
+# ⚠ The SDKs are **not** baked in. They are git submodules of the repository being
+# packaged (`sdk/`), and `deb_build.sh` installs them from the tree copy — so this image
+# pins no SDK version, and a locally built `.deb` carries exactly the tag the checkout
+# pins. Only their dependencies are baked here, so that step needs no network: `pyserial`
+# is the whole of litearm-python's dependency list, and litegrip has none.
 RUN /usr/bin/python3 -m venv --system-site-packages /venv \
  && /venv/bin/python -m pip install -q --upgrade pip \
- && /venv/bin/python -m pip install -q /sdk/litegrip-python
-
-# Bake the arm SDK's *dependencies* (pyserial and friends) by installing it once from its
-# repository, then throwing the checkout away: the real build installs the host's checkout
-# editable, and with the dependencies already present that step needs no network.
-RUN git clone -q https://github.com/nexform-tech/litearm-python /sdk/litearm-python \
- && /venv/bin/python -m pip install -q /sdk/litearm-python \
- && rm -rf /sdk/litearm-python
+ && /venv/bin/python -m pip install -q pyserial
 
 # The daemon's own dependencies: `dependencies` + the `test` and `ui` extras of
 # daemon/pyproject.toml, plus PyInstaller. Keep this in step with that file — a missing one

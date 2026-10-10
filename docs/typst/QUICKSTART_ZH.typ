@@ -434,7 +434,7 @@ chmod +x "litearm-studio-${version}-linux-amd64"
 
 #heading(level: 3, numbering: none)[Q2：启动时报找不到 `litearm` 模块？]
 
-- `litearm-python` 不在 PyPI 上，需从检出目录安装：`pip install -e ../litearm-python`。
+- `litearm-python` 不在 PyPI 上，它是本仓的 submodule：跑 `make sdk`（或 `git submodule update --init --recursive && pip install ./sdk/litearm-python`）。
 - *机械臂供电异常时*：检查 24V 开关电源指示灯是否正常亮起，测量端子输入电压是否在 24V \~ 48V 正常区间。
 
 #heading(level: 3, numbering: none)[Q3：3D 视口显示黑屏或提示 WebGL 初始化失败？]
@@ -462,9 +462,9 @@ chmod +x "litearm-studio-${version}-linux-amd64"
 
 开发者可自由获取 LiteArm 原生支持的多语言 SDK 开源项目：
 
-- *Python SDK*：#link("https://github.com/nexform-robotics/litearm-python-sdk")[https://github.com/nexform-robotics/litearm-python-sdk]
-- *ROS / ROS2 驱动包*：#link("https://github.com/nexform-robotics/litearm-ros2")[https://github.com/nexform-robotics/litearm-ros2]
-- *URDF / 机械臂仿真模型库*：#link("https://github.com/nexform-robotics/litearm-description")[https://github.com/nexform-robotics/litearm-description]
+- *Python SDK*：#link("https://github.com/nexform-tech/litearm-python")[https://github.com/nexform-tech/litearm-python]
+- *ROS / ROS2 驱动包*：#link("https://github.com/nexform-tech/litearm-ros2")[https://github.com/nexform-tech/litearm-ros2]
+- *URDF / 机械臂仿真模型库*：#link("https://github.com/nexform-tech/litearm-urdf")[https://github.com/nexform-tech/litearm-urdf]
 
 == 官方联系方式
 

@@ -29,13 +29,17 @@ litearm-python ──USB CDC (1d50:606f)──> STM32 ──CAN──> 电机
 - `fastapi` / `uvicorn`（随本包安装）
 - `pyusb` + `libusb-package`（随本包安装）—— 固件升级的 USB 烧录引擎。
   **Windows 上另外需要 ST 的 WinUSB 驱动**（这是系统驱动，不是 Python 包，见「固件升级」一节）。
-- **`litearm`（litearm-python）不在 PyPI 上**，必须先克隆并安装它：
+- **两个 SDK 都不在 PyPI 上**（`litearm` / `litegrip`），它们以 git submodule 的形式
+  随本仓（`sdk/`，版本由 tag 钉住），在仓库根目录一条命令取回并安装：
 
 ```bash
-git clone https://github.com/nexform-tech/litearm-python.git
-pip install -e ../litearm-python
-pip install -e "daemon[test]"     # 在仓库根目录执行
+make sdk                          # = git submodule update --init --recursive
+                                  #   + pip install ./sdk/litearm-python ./sdk/litegrip-python
+pip install -e "daemon[test]"
 ```
+
+  `litegrip` 只在 Linux 上有意义（import 需要 `fcntl` / `PF_CAN`），别处装了也 import
+  不了；`make sdk` 在别的平台装它是无害的，运行期照样按"没有夹爪"处理。
 
 - **应用窗口要 `pywebview`**（在 `ui` extra 里，不是默认依赖：无界面运行、CI 与测试都不需要
   一个 GUI 栈）。`pywebview` 是纯 Python，真正渲染的内核要么来自系统，要么自带一个：
@@ -58,17 +62,10 @@ litearm-studio-daemon --no-open   # 无界面运行；界面用浏览器连它�
 
   没有可用后端时报错退出码 3，并且**不会**静默退回无界面 —— 见 `window.WindowUnavailable`。
 
-- **`litegrip`（litegrip-python）同样不在 PyPI 上，而且只在 Linux 上有意义**
-  （import 需要 `fcntl` / `PF_CAN`）。要真机驱动夹爪就必须装它：
-
-```bash
-git clone --branch v0.14.0 https://github.com/nexform-tech/litegrip-python.git
-pip install ./litegrip-python
-```
-
-  Linux 上没装它守护进程**照常启动**，只是不提供夹爪（与 Windows 上的"缺席"同一条路）；
-  打包脚本则相反 —— Linux 构建缺它直接判失败，见「打包」一节。想显式关掉夹爪用
-  `--no-gripper`；用 `--fake` 可以在任何平台跑纯 Python 的仿真后端。
+  以上两个都装好之后，Linux 上没有夹爪硬件也不影响启动：守护进程**照常启动**，只是
+  不提供夹爪（与 Windows 上的"缺席"同一条路）；打包脚本则相反 —— Linux 构建缺它直接
+  判失败，见「打包」一节。想显式关掉夹爪用 `--no-gripper`；用 `--fake` 可以在任何
+  平台跑纯 Python 的仿真后端。
 
 ## 运行
 
@@ -380,12 +377,13 @@ python packaging/build.py      # 产物：packaging/dist/litearm-studio-daemon[.
 - **把界面打进包**：`dist/` 以 `--add-data` 放到 `_MEIPASS/dist`，`server.resolve_ui_dir()`
   认识这个冻结路径，所以打包后不需要手工传 `--ui-dir`。
 - **把 SDK 打进包**：`litearm` 不在 PyPI 上，连同 `pyserial` 一起内嵌。
-- **夹爪 SDK 按平台收**：Linux 上必须装 `litegrip`（`pip install ../litegrip-python`），
-  脚本会 `--collect-all litegrip` 把三份 JSON 与 `py.typed` 一起收进去；缺了它会**直接
-  判失败**——一个"忘了装 SDK"的 Linux 产物会静默地没有夹爪。Windows 上不装、也不收：
-  那个平台没有 `PF_CAN`，夹爪是**缺席**的（不是禁用）。版本钉在 `v0.14.0`
-  （见 `.github/workflows/release.yml`），即含 `LiteGrip.write_zero()`（"写零位"，CAN
-  `0xFE`）的首个 release；"按名字载入标定模板 + 每通道标定文件"始于 `v0.4.0`。
+- **夹爪 SDK 按平台收**：Linux 上必须装 `litegrip`（`make sdk` 会装它），脚本会
+  `--collect-all litegrip` 把三份 JSON 与 `py.typed` 一起收进去；缺了它会**直接判
+  失败**——一个"忘了装 SDK"的 Linux 产物会静默地没有夹爪。Windows 上不装、也不收：
+  那个平台没有 `PF_CAN`，夹爪是**缺席**的（不是禁用）。版本钉在 `.gitmodules` 指向的
+  submodule tag 上，全仓只有这一处版本来源 —— 即 `litegrip-python` v0.14.0，含
+  `LiteGrip.write_zero()`（"写零位"，CAN `0xFE`）的首个 release；"按名字载入标定模板
+  + 每通道标定文件"始于 `v0.4.0`。
 - **版本单一来源**：`LITEARM_STUDIO_VERSION`（CI 传 git tag）> `git describe --tags` >
   `0.0.0+dev`，写进构建时生成的 `_build_version.py`（不入库）。于是 `hello` 帧报的版本
   就是发出去的那个 tag，而不是 `pyproject.toml` 里的占位符。

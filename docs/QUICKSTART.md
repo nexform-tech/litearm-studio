@@ -37,14 +37,14 @@ There are two routes. To run a released build, download the one-file executable 
 [INSTALL.md](INSTALL.md) — no Python, no pnpm and no checkout. The commands below build from
 source, which is what development needs.
 
-`litearm-python` is not published on PyPI, so install it from its checkout first:
+The two SDKs are not published on PyPI — they are git submodules of this repository under
+`sdk/`, pinned by tag — so clone with the submodules and install them in one step:
 
 ```bash
-git clone https://github.com/nexform-tech/litearm-python.git
-git clone https://github.com/nexform-tech/litearm-studio.git
+git clone --recurse-submodules https://github.com/nexform-tech/litearm-studio.git
 cd litearm-studio
 
-pip install -e ../litearm-python
+make sdk                           # fetch + install the pinned SDK submodules
 pip install -e "daemon[test,ui]"
 sudo apt install python3-gi gir1.2-webkit2-4.1   # Linux only: the window's renderer
 ```
@@ -130,7 +130,8 @@ Open the **Telemetry** page: a session is created automatically when the arm con
 
 ### The daemon starts but reports no module named `litearm`
 
-`litearm-python` is not on PyPI. Install it from the checkout: `pip install -e ../litearm-python`.
+`litearm-python` is not on PyPI — it ships as a submodule of this repository. Run `make sdk`
+(or `git submodule update --init --recursive && pip install ./sdk/litearm-python`).
 
 ### No device found / “未发现 STM32 CDC 设备”
 

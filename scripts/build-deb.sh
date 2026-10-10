@@ -19,8 +19,6 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE="${LITEARM_DEB_BUILDER_IMAGE:-litearm-studio-deb-builder:22.04}"
 DOCKERFILE="$ROOT/packaging/deb.Dockerfile"
-#: The arm SDK is not on PyPI; the release job checks it out next to the repository.
-SDK_DIR="${LITEARM_PYTHON_SDK:-$(dirname "$ROOT")/litearm-python}"
 VERSION="${LITEARM_STUDIO_VERSION:-}"
 BUILD_UI=1
 REBUILD_IMAGE=0
@@ -41,12 +39,10 @@ if ! command -v docker >/dev/null 2>&1; then
     echo "      the frozen runtime must be linked against (see packaging/deb.Dockerfile)." >&2
     exit 2
 fi
-if [ ! -d "$SDK_DIR" ]; then
-    echo "[deb] no litearm-python checkout at $SDK_DIR" >&2
-    echo "      it is not on PyPI: clone nexform-tech/litearm-python next to this repo," >&2
-    echo "      or point LITEARM_PYTHON_SDK at an existing checkout." >&2
-    exit 2
-fi
+# The two SDKs are git submodules of this repository (sdk/), pinned by tag — the same
+# source every other build path uses (`make sdk`, CI, the Windows build). Materialize
+# them here so a fresh clone can go straight to `make deb`.
+git -C "$ROOT" submodule update --init --recursive sdk/litearm-python sdk/litegrip-python
 
 if [ -z "$VERSION" ]; then
     # ⚠ `~local.<sha>` and not `+local.<sha>`: Debian sorts `1.2.3~x` BELOW `1.2.3`, so the
@@ -78,7 +74,6 @@ docker run --rm \
     -v "$ROOT":/src:ro \
     -v "$ROOT/packaging/deb_build.sh":/deb_build.sh:ro \
     -v "$ROOT/packaging/dist":/out \
-    -v "$SDK_DIR":/sdk-litearm:ro \
     -e "VERSION=$VERSION" \
     "$IMAGE" bash /deb_build.sh
 

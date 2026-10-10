@@ -15,7 +15,9 @@ python packaging/build.py
   而不是 manifest 里的 `0.0.0+semantic-release` 占位符。
 * **把界面打进包**：`dist/` 以 `--add-data` 放到 `_MEIPASS/dist`，
   `server.resolve_ui_dir()` 认识这个冻结路径（免手工 `--ui-dir`）。
-* **把 SDK 打进包**：`litearm` 不在 PyPI 上，必须随包内嵌（含 `pyserial`）。
+* **把 SDK 打进包**：两个 SDK 都不在 PyPI 上，来源**只有一个** —— 本仓的 git
+  submodule（`sdk/`，tag 即版本），开发 venv / CI / `.deb` 容器 / Windows 构建都
+  从它装（`make sdk`）。`litearm` 连同 `pyserial` 一起内嵌。
 * **夹爪 SDK 按平台收**：`litegrip` 需要 `fcntl` / `PF_CAN`，Windows 上装了也
   import 不了 —— 那里的构建**不收它**，产物里夹爪是缺席的（D10）。Linux 上缺它
   则**直接判失败**：一个"忘了装 SDK"的 Linux 产物会静默地没有夹爪，而那是发布物
@@ -120,6 +122,24 @@ def sdk_available(name: str) -> bool:
         return False
 
 
+def arm_build_args() -> list[str]:
+    """机械臂 SDK（`litearm` 与它带来的 `pyserial`）的 PyInstaller 参数。
+
+    ⚠ 缺了要**判失败**，理由与下面那三条一样，只是后果更早发生：`litearm` 是靠
+    submodule 装进来的（不在 PyPI 上），一个没装它的构建照样"成功" —— PyInstaller
+    把解析不到的 `import litearm` 当 WARNING 放行，于是产物能启动、一连臂就
+    ModuleNotFoundError。那是发布物里最不该有的一种缺陷：只有插上真机才暴露。
+    """
+    missing = [n for n in ("litearm", "serial") if not sdk_available(n)]
+    if missing:
+        raise SystemExit(
+            f"找不到 SDK {', '.join(missing)} —— 发布出来的产物**连不上机械臂**。"
+            "它随本仓的 submodule 一起来（`sdk/litearm-python`）：\n"
+            "    make sdk        # 或 git submodule update --init --recursive")
+    print("[package] 收集机械臂 SDK litearm（含 pyserial）")
+    return ["--collect-all", "litearm", "--collect-all", "serial"]
+
+
 def gripper_build_args() -> list[str]:
     """夹爪 SDK 的 PyInstaller 参数, 或一句"为什么没有它"。
 
@@ -133,10 +153,9 @@ def gripper_build_args() -> list[str]:
     if not sdk_available("litegrip"):
         raise SystemExit(
             "找不到夹爪 SDK `litegrip`，但这是 Linux 构建 —— 发布出来的 Linux 产物"
-            "会**没有夹爪**。请先克隆并安装它（仓库 nexform-tech/litegrip-python，"
-            "钉住的版本见 release.yml）：\n"
-            "    git clone https://github.com/nexform-tech/litegrip-python.git\n"
-            "    pip install ./litegrip-python")
+            "会**没有夹爪**。它随本仓的 submodule 一起来（`sdk/litegrip-python`，"
+            "版本由 .gitmodules 钉住）：\n"
+            "    make sdk        # 或 git submodule update --init --recursive")
     print("[package] 收集夹爪 SDK litegrip（含模板与出厂标定）")
     return ["--collect-all", "litegrip"]
 
@@ -369,9 +388,8 @@ def main() -> int:
             # PyInstaller 静态分析看不见。少了它, 冻结产物在**没有设 LITEGRIP_FACTORY_CALIB**
             # 时会静默退回 litegrip 自带的那份（数字随 SDK 版本变), 而不是控制台自己钉的那份。
             "--collect-data", "litearm_studio_daemon",
-            # SDK 不在 PyPI 上, 连数据文件一起收进来
-            "--collect-all", "litearm",
-            "--collect-all", "serial",
+            # SDK 不在 PyPI 上, 连数据文件一起收进来（缺了判失败, 见 arm_build_args）
+            *arm_build_args(),
             *gripper_build_args(),
             *dfu_build_args(),
             *window_build_args(),

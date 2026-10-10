@@ -29,6 +29,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: litearm-studio
+          # 两个 SDK 是本仓的 submodule（sdk/），tag 即版本 —— 一次检出全部到位。
+          submodules: recursive
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -68,30 +70,12 @@ jobs:
         with:
           python-version: '3.12'
 
-      # litearm-python 不在 PyPI 上, 只能从它自己的仓库检出后装。
-      - name: Checkout LiteArm Python SDK
-        uses: actions/checkout@v4
-        with:
-          repository: nexform-tech/litearm-python
-          path: litearm-python
-
-      # 夹爪 SDK 同样不在 PyPI 上, 而且只在 Linux 上能用 (需要 PF_CAN)。版本钉在
-      # v0.14.0: 它是含 LiteGrip.write_zero() (CAN 0xFE, 来自 litegrip-python#32)
-      # 的首个 release, 上位机"写零位"要用; 它同时保留了"按名字载入标定模板 + 每
-      # 通道标定文件"的接口, 也就是 docs/GRIPPER_INTEGRATION.md 描述的那套。
-      - name: Checkout the LiteGrip SDK
-        uses: actions/checkout@v4
-        with:
-          repository: nexform-tech/litegrip-python
-          ref: v0.14.0
-          path: litegrip-python
-
       - name: Install the SDKs and the daemon
         working-directory: litearm-studio
         run: |
           python -m pip install --upgrade pip
-          pip install -e ../litearm-python
-          pip install ../litegrip-python
+          # 两个 SDK 都不在 PyPI 上: 从本仓的 submodule 装, 与 `make sdk` 完全一致。
+          pip install ./sdk/litearm-python ./sdk/litegrip-python
           pip install -e "daemon[test]"
 
       # The packaging tests run here too: `packaging/tests` builds a real `.deb` with
