@@ -156,6 +156,26 @@ describe('LogsPage — records tab', () => {
     expect(screen.getByText('ERROR')).toBeTruthy()
   })
 
+  it('puts the newest record first, so the live stream is readable at the top', async () => {
+    // ⚠ 实时流一直在追加。若按时间正序排, "刚发生的那条"永远在容器底部 —— 操作员每次
+    // 都得先滚到底, 而滚到底之后下一条又把它推下去。
+    const second = 1_000_000_000
+    const base = 1_778_152_382_123_456_000
+    const at = (tsNs: number) => new Date(tsNs / 1e6).toISOString()
+    mock.state.entries = [
+      record({ seq: 1, event: 'arm.command.older', tsNs: base, ts: at(base) }),
+      record({ seq: 2, event: 'arm.command.newer', tsNs: base + second, ts: at(base + second) }),
+    ]
+    mock.state.status = { ...mock.state.status, seq: 2, metaAt: Date.now(), buffered: 2 }
+    render(<LogsPage />)
+
+    const table = (await screen.findByText('arm.command.newer')).closest('table')!
+    const events = Array.from(table.querySelectorAll('tbody tr')).map(
+      (row) => row.children[2].textContent,
+    )
+    expect(events).toEqual(['arm.command.newer', 'arm.command.older'])
+  })
+
   it('shows the details, including the exception, when a row is expanded', async () => {
     mock.state.entries = [
       record({
@@ -385,6 +405,32 @@ describe('LogsPage — exporting', () => {
     const body = await (init.body as Blob).text()
     const first = JSON.parse(body.split('\n')[0]) as Record<string, unknown>
     expect(first).toMatchObject({ event: 'arm.command.failed', trace_id: expect.any(String) })
+  })
+
+  it('keeps the export in time order even though the table shows the newest first', async () => {
+    // ⚠ 表格的最新在前是**显示**选择; 导出的是数据, 行序跟着时间走 —— 否则导出的文件
+    // 与 daemon 自己写的 JSONL 顺序相反, 再喂回 jq/Loki 时得先想一下它为什么是倒的。
+    const second = 1_000_000_000
+    const base = 1_778_152_382_123_456_000
+    const at = (tsNs: number) => new Date(tsNs / 1e6).toISOString()
+    mock.state.entries = [
+      record({ seq: 1, event: 'arm.command.older', tsNs: base, ts: at(base) }),
+      record({ seq: 2, event: 'arm.command.newer', tsNs: base + second, ts: at(base + second) }),
+    ]
+    mock.state.status = { ...mock.state.status, seq: 2, buffered: 2 }
+    const fetchMock = vi.fn(async () => saved('/home/operator/Downloads/litearm-logs-x.jsonl'))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<LogsPage />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Export JSONL' }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    const lines = (await (init.body as Blob).text()).trim().split('\n')
+    expect(lines.map((line) => (JSON.parse(line) as { event: string }).event)).toEqual([
+      'arm.command.older',
+      'arm.command.newer',
+    ])
   })
 
   it('says the export failed instead of claiming it worked', async () => {

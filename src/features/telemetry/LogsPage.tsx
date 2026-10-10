@@ -555,7 +555,9 @@ export function LogsPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {logs.visible.map((entry) => {
+                    {/* ⚠ 最新在最前: 实时流一直在追加, 操作员要看的是刚发生的那条, 而不是
+                        滚到底才看得到它。 */}
+                    {logs.visibleNewestFirst.map((entry) => {
                       const key = entryKey(entry)
                       const expanded = expandedId === key
                       return (
