@@ -141,6 +141,14 @@ function InstallationSection({ vm }: { vm: SettingsState }) {
   const [rpy, setRpy] = useState<[number, number, number]>(() => rpyForRead(vm.gravityVector))
   const [vector, setVector] = useState<[number, number, number]>(vm.gravityVector)
   const [rpyCustom, setRpyCustom] = useState(() => matchInstallationPose(vm.gravityVector) === null)
+  /**
+   * 操作员**显式**选了「自定义」。
+   *
+   * ⚠ 它和 `draftPose === null`("这组数不属于任何预设")不是一回事, 两个都要: 选了侧装+x
+   * 之后, 向量本来就命中预设, 只靠匹配结果就永远回不到「自定义」——那样这块牌子就是一张
+   * 单向门。任何一条"数值有来源"的路径 (点预设 / 改 rpy / 读回) 都会把它清掉。
+   */
+  const [custom, setCustom] = useState(false)
 
   // 读回值变了（刚连上、点了「读当前」、下发后的读回）就跟着走。
   useEffect(() => {
@@ -148,6 +156,7 @@ function InstallationSection({ vm }: { vm: SettingsState }) {
     const pose = matchInstallationPose(vm.gravityVector)
     if (pose) setRpy([...installationPoseById(pose).rpy])
     setRpyCustom(pose === null)
+    setCustom(false)
   }, [vm.gravityVector])
 
   const pickPose = (id: InstallationPoseId) => {
@@ -155,6 +164,7 @@ function InstallationSection({ vm }: { vm: SettingsState }) {
     setRpy([...pose.rpy])
     setVector([...pose.gravity])
     setRpyCustom(false)
+    setCustom(false)
   }
 
   const editRpy = (i: number, v: number) => {
@@ -162,11 +172,14 @@ function InstallationSection({ vm }: { vm: SettingsState }) {
     setRpy(next)
     setVector(gravityFromRpy(next))
     setRpyCustom(false)
+    // 向量现在由 rpy 推导 ⇒ 不再算"自定义", 落到它真正对应的预设上 (可能一个都不是)。
+    setCustom(false)
   }
 
   const editVector = (i: number, v: number) => {
     setVector(vector.map((x, k) => (k === i ? v : x)) as [number, number, number])
     setRpyCustom(true)
+    setCustom(true)
   }
 
   const poseLabel = (id: InstallationPoseId | null) =>
@@ -226,16 +239,17 @@ function InstallationSection({ vm }: { vm: SettingsState }) {
             ...INSTALLATION_POSES.map((pose) => ({
               key: pose.id,
               label: t(`settings:installation.pose.${pose.id}`),
-              active: draftPose === pose.id,
+              active: !custom && draftPose === pose.id,
               onClick: () => pickPose(pose.id),
             })),
-            // ⚠ 「自定义」不是一个能点的预设: 直接改下面的向量就落到这里。点它什么都不做，
-            //   它只是一块如实显示"当前这组数不属于任何预设"的牌子。
+            // 「自定义」是能点的: 它是一个"这次不用预设"的选择, 而不是一块只能看的牌子。
+            // 选了预设之后想改回自定义, 点这里就退出预设 —— 只是**不清掉数字**, 那三个数
+            // 正好是接着改的起点。
             {
               key: 'custom',
               label: t('settings:installation.custom'),
-              active: draftPose === null,
-              onClick: () => undefined,
+              active: custom || draftPose === null,
+              onClick: () => setCustom(true),
             },
           ]}
           {...segmentStyles}

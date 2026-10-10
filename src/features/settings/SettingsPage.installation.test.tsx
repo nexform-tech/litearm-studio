@@ -108,6 +108,21 @@ describe('SettingsPage — installation direction', () => {
     await waitFor(() => expect(mocks.setGravityVector).toHaveBeenCalledWith([9.81, 0, 0]))
   })
 
+  it('goes back to custom after a preset, so the custom pill is not a one-way door', async () => {
+    // ⚠ 曾经「自定义」是个点不动的牌子 (onClick 空函数), 于是选了侧装+x 之后就再也回不去。
+    await renderInstallation()
+
+    fireEvent.click(screen.getByRole('radio', { name: '侧装+x' }))
+    expect(screen.getByRole('radio', { name: '侧装+x' }).getAttribute('aria-checked')).toBe('true')
+
+    fireEvent.click(screen.getByRole('radio', { name: '自定义' }))
+    expect(screen.getByRole('radio', { name: '自定义' }).getAttribute('aria-checked')).toBe('true')
+    expect(screen.getByRole('radio', { name: '侧装+x' }).getAttribute('aria-checked')).toBe('false')
+    // 退出预设只是不再点着那块牌子, 三个数原样留着 —— 它们正是接着改的起点。
+    expect(screen.getByDisplayValue('9.8100')).toBeDefined()
+    expect(screen.getByDisplayValue('1.5708')).toBeDefined()
+  })
+
   it('recomputes the vector when rpy is edited, and marks rpy custom when the vector is edited', async () => {
     await renderInstallation()
 
