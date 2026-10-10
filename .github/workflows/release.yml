@@ -49,6 +49,20 @@ jobs:
       contents: write # attach artifacts to the GitHub release
     env:
       VERSION: ${{ needs.release.outputs.new_tag }}
+      # ⚠ 这三个是**冻结产物的输入**, 不是某一步的私事: 这个 job 会构建两次包 —— 便携的
+      # 单文件, 以及 `.deb` 用的目录形态 —— 两次必须拿到同一份输入。放在 job 一级就是
+      # 为了让它们不可能只跟着其中一次走: 漏给第二次, `.deb` 里的版本号会退回
+      # `git describe` 的兜底 (CI 检出是 `fetch-depth: 1` + `fetch-tags: false`, 于是那是
+      # 个 commit 短哈希), 而那个号会当作诊断信息发给激活服务。
+      LITEARM_STUDIO_VERSION: ${{ needs.release.outputs.new_tag }}
+      # ⚠ 显式钉住后端, 不靠自动判据: Linux 走 GTK（见下面那次构建）, 其余平台用系统
+      # 自带的内核。写死之后, 构建机上少了谁都会**当场失败**, 而不是换一个体积
+      # 差 4 倍的后端悄悄发出去。
+      LITEARM_STUDIO_WINDOW_BACKEND: ${{ runner.os == 'Linux' && 'gtk' || 'native' }}
+      # 激活服务地址：在仓库变量里改（Settings → Secrets and variables →
+      # Actions → Variables），不必改工作流，也不必让用户设环境变量。
+      # 不设置 = 用 daemon 里的内置生产地址（见 activation.PRODUCTION_ACTIVATION_URL）。
+      LITEARM_ACTIVATION_URL: ${{ vars.LITEARM_ACTIVATION_URL }}
     steps:
       - name: Checkout Studio
         uses: actions/checkout@v4
@@ -141,16 +155,6 @@ jobs:
 
       - name: Package (one-file executable)
         working-directory: litearm-studio
-        env:
-          LITEARM_STUDIO_VERSION: ${{ needs.release.outputs.new_tag }}
-          # ⚠ 显式钉住后端, 不靠自动判据: Linux 走 GTK（见上面那步）, 其余平台用系统
-          # 自带的内核。写死之后, 构建机上少了谁都会**当场失败**, 而不是换一个体积
-          # 差 4 倍的后端悄悄发出去。
-          LITEARM_STUDIO_WINDOW_BACKEND: ${{ runner.os == 'Linux' && 'gtk' || 'native' }}
-          # 激活服务地址：在仓库变量里改（Settings → Secrets and variables →
-          # Actions → Variables），不必改工作流，也不必让用户设环境变量。
-          # 不设置 = 用 daemon 里的内置生产地址（见 activation.PRODUCTION_ACTIVATION_URL）。
-          LITEARM_ACTIVATION_URL: ${{ vars.LITEARM_ACTIVATION_URL }}
         # ⚠ `shell: bash` 是必需的: `$PYTHON` 是上面那步写进 `GITHUB_ENV` 的, 而 Windows
         # 的默认 shell 是 pwsh, 在那里它读不到。两条分支都用 bash 才不会一边悄悄跑错解释器。
         shell: bash
@@ -178,6 +182,8 @@ jobs:
         if: runner.os == 'Linux'
         working-directory: litearm-studio
         shell: bash
+        # 只多这一个开关 —— 版本、窗口后端、激活地址都在 job 一级, 两次构建拿到的是
+        # 同一份 (见那里的注释)。
         env:
           LITEARM_STUDIO_BUNDLE_MODE: onedir
         run: '"$PYTHON" packaging/build.py'
