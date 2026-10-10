@@ -18,11 +18,11 @@ const mocks = vi.hoisted(() => {
     disconnect: vi.fn(),
     listChannels: vi.fn(),
     listCalibrations: vi.fn(),
-    listDir: vi.fn(),
     loadTemplate: vi.fn(),
     importCalibration: vi.fn(),
     setAllowFactory: vi.fn(),
     zero: vi.fn(),
+    pickFile: vi.fn(),
   }
 })
 
@@ -36,14 +36,11 @@ vi.mock('@/lib/arm/gripperClient', () => ({
     disconnect: mocks.disconnect,
     listChannels: mocks.listChannels,
     listCalibrations: mocks.listCalibrations,
-    listDir: mocks.listDir,
     loadTemplate: mocks.loadTemplate,
     importCalibration: mocks.importCalibration,
     setAllowFactory: mocks.setAllowFactory,
     zero: mocks.zero,
   },
-  hasCandidate: (e: { type?: string; valid?: unknown }) =>
-    e.type === 'file' && typeof e.valid === 'boolean',
 }))
 
 vi.mock('@/lib/arm/useGripper', () => ({
@@ -58,6 +55,11 @@ vi.mock('@/lib/arm/useGripper', () => ({
   useGripperState: () => mocks.state.current,
   useGripperCalibration: () => mocks.calib.current,
   useGripperAlerts: () => undefined,
+}))
+
+// "浏览…"由**本地程序**弹原生对话框（`POST /api/pick-file`）—— 测试里把它整条换掉。
+vi.mock('@/lib/pickFile', () => ({
+  pickFileThroughDaemon: mocks.pickFile,
 }))
 
 const { useGripperSettings } = await import('./useGripperSettings')
@@ -132,6 +134,7 @@ describe('useGripperSettings', () => {
       source: 'measured',
       warnings: [],
     })
+    mocks.pickFile.mockResolvedValue({ kind: 'cancelled' })
   })
 
   afterEach(() => {
@@ -202,6 +205,34 @@ describe('useGripperSettings', () => {
       await result.current.setAllowFactory(true)
     })
     expect(mocks.setAllowFactory).toHaveBeenCalledWith(true)
+  })
+
+  it('fills the import path from the file the native dialog returned', async () => {
+    mocks.pickFile.mockResolvedValue({ kind: 'picked', path: '/tmp/picked.json' })
+    const { result } = renderHook(() => useGripperSettings())
+    await act(async () => {
+      await result.current.pickCalibration()
+    })
+    expect(mocks.pickFile).toHaveBeenCalled()
+    expect(result.current.importPath).toBe('/tmp/picked.json')
+  })
+
+  it('says so when there is no local program to open the dialog', async () => {
+    mocks.pickFile.mockResolvedValue({ kind: 'unavailable' })
+    const { result } = renderHook(() => useGripperSettings())
+    await act(async () => {
+      result.current.setImportPath('/tmp/typed.json')
+    })
+    await act(async () => {
+      await result.current.pickCalibration()
+    })
+    const { toast } = await import('sonner')
+    expect(toast.error).toHaveBeenCalledWith(
+      i18n.t('gripper:settings.browseUnavailable'),
+      expect.anything(),
+    )
+    // 弹不出对话框就不动已经填的路径。
+    expect(result.current.importPath).toBe('/tmp/typed.json')
   })
 
   it('runs zero with the travel field and rescans afterwards', async () => {

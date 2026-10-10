@@ -307,7 +307,7 @@ Configure the LiteGrip gripper on this CAN channel: **channel, CAN ID, mounting 
 - Calibration comes from one of two sources: the **nominal template** (shipped with the SDK; it only declares the mounting orientation and nominal geometry and has never been measured on this machine — so millimetre targets are refused until you run a zero calibration) or a **measured calibration**;
 - The mounting orientation must match the actual wiring; the panel says so explicitly when the declared and actual orientations disagree;
 - The per-channel **travel record** is what every millimetre reading on screen is computed from; it must survive a restart;
-- To import a measured calibration you can type its path, or press **Browse…** to open a picker over the **control machine's** filesystem (the machine running the local program, not the one in front of you). It opens in the folder of the path you typed, navigates with Up/Home, shows each `*.json`'s validation result on its row, and fills the path box when you pick one. Browsing needs no connection; importing does.
+- To import a measured calibration you can type its path, or press **Browse…**, which has the local program open a **native** open dialog over the **control machine's** filesystem (the machine running the local program, not the one in front of you). It starts in the folder of the path you typed (or the platform default folder), lists only `*.json`, and fills the path box with the absolute path you pick. Browsing needs no connection; importing does.
 
 ---
 

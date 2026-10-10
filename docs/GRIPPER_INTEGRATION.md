@@ -200,7 +200,7 @@ Rules:
   opens. It is an addition to the table above, needed by §5.3 row 6.
 - `gripper.list_calibrations` needs no connection: it is a filesystem question,
   and the settings page asks it while deciding what to load.
-- `gripper.list_dir` likewise needs no connection. It lists the **control
+- `gripper.list_dir` needs no connection. It lists the **control
   machine's** filesystem: sub-directories plus `*.json` files, directories
   first, then names case-insensitively. Without `path` (or with an empty one) it
   starts at the daemon user's home directory. Each `*.json` carries the same
@@ -208,7 +208,10 @@ Rules:
   way), plus `size`/`mtime`; the `path` it reports is exactly what
   `gripper.import_calibration` accepts, with unchanged semantics. Listing is
   capped (`truncated: true` past the limit), and a path that is not a readable
-  directory is refused with `GripperBrowseError`.
+  directory is refused with `GripperBrowseError`. The settings page no longer
+  drives this from the webview — the import picker is a native dialog raised by
+  the daemon (§6.3) — but the command is kept as a tested, connection-free
+  capability.
 
 ### 4.3 Error kinds
 
@@ -398,8 +401,8 @@ There are two surfaces, matching the retired product:
   channel it connects on.
 - **A section in the existing settings page**, for configuring it: CAN channel,
   CAN ids, mount, which calibration file is in effect, import a calibration
-  (typed path or a **Browse…** button that opens a control-machine directory
-  picker), run `zero()`, and the per-channel travel.
+  (typed path, or a **Browse…** button that asks the daemon to raise a native
+  file dialog on the control machine), run `zero()`, and the per-channel travel.
 
 The CAN channel appears on both surfaces on purpose: the operator connects and
 drives the gripper from the control page, so switching the CAN line from there
@@ -439,14 +442,18 @@ The i18n namespace is `locales/{en,zh}/gripper.json`, registered in
   charts — but they must be in the DOM and one click away, not summarised away.
 - Only one component may mount `useGripperAlerts()` at a time: each mount is an
   independent subscription, so two of them raise every alert twice.
-- The import **Browse…** dialog (`GripperBrowserDialog`) lists the **control
-  machine's** filesystem via `gripper.list_dir`, so opening it needs no
-  connection (only the eventual import does). It starts in the parent of the
-  typed path, offers Up/Home, greys out unreadable directories, shows a
-  `*.json`'s validation inline on its row, and on pick writes the absolute path
-  back into the same import field and closes. Its errors are shown inline, not
-  as a toast. Directory rows and file rows render through the same
-  `CalibrationRow` the settings list uses, so the two cannot drift apart.
+- The import **Browse…** button does not open a dialog of its own. The page
+  cannot raise a native file dialog from inside the webview, so — exactly like
+  the log **Export** button (`/api/export`) — it asks the **daemon** to open one:
+  `POST /api/pick-file`, served by `WindowHandle.ask_open_path`. The daemon
+  raises a **native** OPEN dialog listing the **control machine's** filesystem,
+  starting from the parent of the typed path (falling back to the platform
+  default dir), filtered to `*.json`, and writes the chosen absolute path back
+  into the import field. Opening it needs no connection (only the eventual
+  import does). "No local program" (`no-window`, e.g. a browser against the dev
+  server) and "operator cancelled" are distinct answers: the former surfaces as
+  a toast, the latter is silent. The retired in-page `GripperBrowserDialog`
+  (`gripper.list_dir`) path is no longer used by the UI.
 
 ### 6.4 What to reuse from the retired panels
 

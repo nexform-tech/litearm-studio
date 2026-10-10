@@ -64,8 +64,8 @@ class _FakeWindow:
 class _FakeWebview:
     """足够真的 pywebview —— `run_window` 只用这几个入口。"""
 
-    #: 真 pywebview 里 `FileDialog` 是 `IntEnum`, 只有 `SAVE` 用得上。
-    FileDialog = types.SimpleNamespace(SAVE=30)
+    #: 真 pywebview 里 `FileDialog` 是 `IntEnum`, 这里只用到 `SAVE` 与 `OPEN`。
+    FileDialog = types.SimpleNamespace(SAVE=30, OPEN=20)
 
     def __init__(self) -> None:
         self.created: dict = {}
@@ -191,7 +191,7 @@ def test_ask_save_path_offers_our_filename_in_a_directory_that_exists(monkeypatc
     monkeypatch.setattr(window.Path, "home", classmethod(lambda cls: tmp_path))
     (tmp_path / "Downloads").mkdir()
     handle = window.WindowHandle(_FakeWindow(chosen=str(tmp_path / "picked.jsonl")),
-                                 save_dialog=30)
+                                 save_dialog=30, open_dialog=20)
 
     chosen = handle.ask_save_path("litearm-logs-2026.jsonl")
 
@@ -203,9 +203,40 @@ def test_ask_save_path_offers_our_filename_in_a_directory_that_exists(monkeypatc
     assert Path(dialog["directory"]).is_dir()
 
 
+def test_ask_open_path_picks_a_json_from_the_directory_it_was_pointed_at(
+        monkeypatch, tmp_path) -> None:
+    """打开对话框 (设置页的"浏览…") 要弹 `FileDialog.OPEN`, 单文件, 加 `*.json` 过滤。
+
+    它问的是控制机上**已经存在**的一份标定 —— 页面给不出这个路径, 所以由持有窗口的
+    这一侧去问, 并从页面给的目录开始。
+    """
+    monkeypatch.setattr(window.Path, "home", classmethod(lambda cls: tmp_path))
+    (tmp_path / "Downloads").mkdir()
+    calib_dir = tmp_path / "calibrations"
+    calib_dir.mkdir()
+    handle = window.WindowHandle(_FakeWindow(chosen=str(calib_dir / "can0.json")),
+                                 save_dialog=30, open_dialog=20)
+
+    chosen = handle.ask_open_path(str(calib_dir))
+
+    assert chosen == str(calib_dir / "can0.json")
+    dialog = handle._window.dialogs[-1]
+    assert dialog["dialog_type"] == 20  # FileDialog.OPEN
+    assert dialog["allow_multiple"] is False
+    assert dialog["directory"] == str(calib_dir)
+    assert any("json" in entry for entry in dialog["file_types"])
+
+
+def test_ask_open_path_starts_from_a_directory_that_exists_when_not_pointed() -> None:
+    """没给起始目录时也要落在一个存在的位置 —— 与保存对话框同一条防线。"""
+    handle = window.WindowHandle(_FakeWindow(chosen=None), save_dialog=30, open_dialog=20)
+    assert handle.ask_open_path() is None
+    assert Path(handle._window.dialogs[-1]["directory"]).is_dir()
+
+
 def test_ask_save_path_says_nothing_when_the_operator_cancels() -> None:
     """取消 = `None`。上面那层据此一个字都不说 —— 不假装存过, 也不报错。"""
-    handle = window.WindowHandle(_FakeWindow(chosen=None), save_dialog=30)
+    handle = window.WindowHandle(_FakeWindow(chosen=None), save_dialog=30, open_dialog=20)
     assert handle.ask_save_path("x.jsonl") is None
 
 
@@ -214,7 +245,8 @@ def test_ask_save_path_rejects_a_dialog_result_without_a_name() -> None:
 
     放过去就会变成字符串 `"None"`, 然后被写成一个名叫 `None` 的文件。
     """
-    handle = window.WindowHandle(_FakeWindow(raw_result=(None,)), save_dialog=30)
+    handle = window.WindowHandle(_FakeWindow(raw_result=(None,)), save_dialog=30,
+                                 open_dialog=20)
     assert handle.ask_save_path("x.jsonl") is None
 
 
@@ -257,7 +289,8 @@ def test_windows_dialogs_are_marshalled_to_the_ui_thread(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "webview.platforms", platforms)
     monkeypatch.setitem(sys.modules, "webview.platforms.winforms", winforms)
 
-    handle = window.WindowHandle(_FakeWindow(chosen="/tmp/x.jsonl"), save_dialog=30)
+    handle = window.WindowHandle(_FakeWindow(chosen="/tmp/x.jsonl"), save_dialog=30,
+                                 open_dialog=20)
 
     assert handle.ask_save_path("x.jsonl") == "/tmp/x.jsonl"
     assert invoked == [True]
@@ -269,7 +302,8 @@ def test_a_failed_marshalling_falls_back_to_a_direct_call(monkeypatch) -> None:
     for name in ("System", "webview.platforms", "webview.platforms.winforms"):
         monkeypatch.setitem(sys.modules, name, None)
 
-    handle = window.WindowHandle(_FakeWindow(chosen="/tmp/y.jsonl"), save_dialog=30)
+    handle = window.WindowHandle(_FakeWindow(chosen="/tmp/y.jsonl"), save_dialog=30,
+                                 open_dialog=20)
     assert handle.ask_save_path("y.jsonl") == "/tmp/y.jsonl"
 
 

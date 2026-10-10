@@ -16,11 +16,11 @@ const mocks = vi.hoisted(() => {
     disconnect: vi.fn(),
     listChannels: vi.fn(),
     listCalibrations: vi.fn(),
-    listDir: vi.fn(),
     loadTemplate: vi.fn(),
     importCalibration: vi.fn(),
     setAllowFactory: vi.fn(),
     zero: vi.fn(),
+    pickFile: vi.fn(),
   }
 })
 
@@ -34,15 +34,16 @@ vi.mock('@/lib/arm/gripperClient', () => ({
     disconnect: mocks.disconnect,
     listChannels: mocks.listChannels,
     listCalibrations: mocks.listCalibrations,
-    listDir: mocks.listDir,
     loadTemplate: mocks.loadTemplate,
     importCalibration: mocks.importCalibration,
     setAllowFactory: mocks.setAllowFactory,
     zero: mocks.zero,
   },
-  // 对话框用它分流目录行/文件行 —— 整个模块被 mock，所以这个也要在这里给。
-  hasCandidate: (e: { type?: string; valid?: unknown }) =>
-    e.type === 'file' && typeof e.valid === 'boolean',
+}))
+
+// "浏览…"由**本地程序**弹原生对话框（`POST /api/pick-file`）—— 测试里把它整条换掉。
+vi.mock('@/lib/pickFile', () => ({
+  pickFileThroughDaemon: mocks.pickFile,
 }))
 
 vi.mock('@/lib/arm/useGripper', () => ({
@@ -102,6 +103,7 @@ describe('GripperSection', () => {
     mocks.listChannels.mockResolvedValue(['can0'])
     mocks.listCalibrations.mockResolvedValue([CANDIDATE])
     mocks.zero.mockResolvedValue({ closedRad: 1.7, openRad: -0.06, radToMm: 46.7, source: 'measured', warnings: [] })
+    mocks.pickFile.mockResolvedValue({ kind: 'cancelled' })
   })
 
   it('lists the calibrations with their provenance and the one in effect', async () => {
@@ -157,15 +159,23 @@ describe('GripperSection', () => {
     await waitFor(() => expect(mocks.importCalibration).toHaveBeenCalledWith('/tmp/my.json'))
   })
 
-  // ── 目录浏览（控制机文件系统） ──────────────────────────────────────────────
+  // ── 浏览（由本地程序弹原生打开对话框） ──────────────────────────────────────
 
-  const FILE_ENTRY = { ...CANDIDATE, name: 'can0_calibration.json', type: 'file', readable: true, symlink: false, size: 210, mtime: 1 }
-  const DIR_ENTRY = { name: '.litegrip', path: '/home/u/.litegrip', type: 'dir', readable: true, symlink: false }
-  const LISTING = { path: '/home/u', parent: '/home', truncated: false, entries: [DIR_ENTRY, FILE_ENTRY] }
+  it('fills the path box from the file the native dialog returned', async () => {
+    mocks.pickFile.mockResolvedValue({ kind: 'picked', path: CANDIDATE.path })
+    render(<GripperSection />)
+    await waitFor(() => expect(mocks.listCalibrations).toHaveBeenCalled())
+
+    fireEvent.click(screen.getByTestId('gripper-import-browse'))
+
+    await waitFor(() => expect(mocks.pickFile).toHaveBeenCalled())
+    expect((screen.getByTestId('gripper-import-path') as HTMLInputElement).value).toBe(CANDIDATE.path)
+    // 路径填上了、又连着，导入按钮就该亮起来。
+    expect((screen.getByTestId('gripper-import') as HTMLButtonElement).disabled).toBe(false)
+  })
 
   it('browses without a connection but still gates import on it', async () => {
-    mocks.conn.current = null             // 断开：列举免连接，导入不然
-    mocks.listDir.mockResolvedValue(LISTING)
+    mocks.conn.current = null             // 断开：选文件免连接，导入不然
     render(<GripperSection />)
     await waitFor(() => expect(mocks.listCalibrations).toHaveBeenCalled())
     expect((screen.getByTestId('gripper-import-browse') as HTMLButtonElement).disabled).toBe(false)
@@ -173,74 +183,16 @@ describe('GripperSection', () => {
     expect((screen.getByTestId('gripper-import') as HTMLButtonElement).disabled).toBe(true)
   })
 
-  it('fills the path box from a picked file and closes the dialog', async () => {
-    mocks.listDir.mockResolvedValue(LISTING)
+  it('says so when there is no local program to open the dialog', async () => {
+    mocks.pickFile.mockResolvedValue({ kind: 'unavailable' })
+    const { toast } = await import('sonner')
     render(<GripperSection />)
     await waitFor(() => expect(mocks.listCalibrations).toHaveBeenCalled())
-    fireEvent.click(screen.getByTestId('gripper-import-browse'))
-    await waitFor(() => expect(mocks.listDir).toHaveBeenCalled())
 
-    fireEvent.click(await screen.findByTestId('gripper-browse-file'))
-
-    await waitFor(() => expect(screen.queryByTestId('gripper-browse-dialog')).toBeNull())
-    expect((screen.getByTestId('gripper-import-path') as HTMLInputElement).value).toBe(CANDIDATE.path)
-    expect((screen.getByTestId('gripper-import') as HTMLButtonElement).disabled).toBe(false)
-  })
-
-  it('navigates into a directory row', async () => {
-    mocks.listDir.mockResolvedValue(LISTING)
-    render(<GripperSection />)
-    await waitFor(() => expect(mocks.listCalibrations).toHaveBeenCalled())
-    fireEvent.click(screen.getByTestId('gripper-import-browse'))
-    await waitFor(() => expect(mocks.listDir).toHaveBeenCalled())
-
-    fireEvent.click(await screen.findByTestId('gripper-browse-dir'))
-
-    await waitFor(() => expect(mocks.listDir).toHaveBeenLastCalledWith('/home/u/.litegrip'))
-  })
-
-  it('shows a browse refusal inline, mapped from its kind', async () => {
-    mocks.listDir.mockRejectedValue({ err: { kind: 'GripperBrowseError', msg: '/x 不是一个可访问的目录' } })
-    render(<GripperSection />)
-    await waitFor(() => expect(mocks.listCalibrations).toHaveBeenCalled())
     fireEvent.click(screen.getByTestId('gripper-import-browse'))
 
-    const err = await screen.findByTestId('gripper-browse-error')
-    expect(err.textContent).toMatch(/Cannot open that folder|打不开这个目录/)
-  })
-
-  /**
-   * issue #103: 报的是"选择器打开是空的，什么文件、什么目录都没有"。
-   *
-   * 选择器只列子目录与 `*.json`（有意的），但这件事在界面上看不见 —— 于是"这里没有你要
-   * 的文件"与"这里什么都没有"长得一模一样。这两条钉住：无论哪种情况，那一块都必须说话。
-   */
-  it('says how many files it is not listing, instead of leaving the box empty', async () => {
-    mocks.listDir.mockResolvedValue({
-      path: '/home/u/Downloads', parent: '/home/u', truncated: false, skippedFiles: 2,
-      entries: [],
-    })
-    render(<GripperSection />)
-    await waitFor(() => expect(mocks.listCalibrations).toHaveBeenCalled())
-    fireEvent.click(screen.getByTestId('gripper-import-browse'))
-
-    const hint = await screen.findByTestId('gripper-browse-skipped')
-    expect(hint.textContent).toMatch(/2 other file|还有 2 个文件/)
-    // 空目录的说明也在，且**没有**渲染出一个空的条目列表。
-    expect(screen.queryByTestId('gripper-browse-entries')).toBeNull()
-  })
-
-  it('never renders an empty list when nothing in it can be drawn', async () => {
-    // 一个没有 `valid` 结论的文件行画不出来 —— 过去它会被静默丢掉，留下一块白框。
-    mocks.listDir.mockResolvedValue({
-      path: '/home/u', parent: '/', truncated: false, skippedFiles: 0,
-      entries: [{ name: 'mystery.json', path: '/home/u/mystery.json', type: 'file', readable: true }],
-    })
-    render(<GripperSection />)
-    await waitFor(() => expect(mocks.listCalibrations).toHaveBeenCalled())
-    fireEvent.click(screen.getByTestId('gripper-import-browse'))
-
-    await screen.findByText(/No sub-folders or \*\.json files|没有子目录或 \*\.json/)
-    expect(screen.queryByTestId('gripper-browse-entries')).toBeNull()
+    await waitFor(() => expect(toast.error).toHaveBeenCalled())
+    // 没选到文件，路径框不动。
+    expect((screen.getByTestId('gripper-import-path') as HTMLInputElement).value).toBe('')
   })
 })

@@ -1,6 +1,5 @@
 import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
-import { cn } from '@/lib/utils'
 import type { CalibrationCandidate, CalibrationSource } from '@/lib/arm/gripperClient'
 
 const SOURCE_KEYS: Record<CalibrationSource, string> = {
@@ -11,21 +10,18 @@ const SOURCE_KEYS: Record<CalibrationSource, string> = {
 }
 
 /**
- * 一份标定候选的**展示**行 —— 设置页的清单与浏览对话框共用同一份 markup。
+ * 一份标定候选的**展示**行 —— 设置页清单里的只读一行。
  *
- * 抽出来是为了让"两处长得一样"由**构造**保证，而不是靠复制粘贴去维持：任何一处
- * 的字段/措辞改动都同时落到两处。给它 `onSelect` 就变成可点的一行（对话框里用它
- * 选文件），不给就是只读的一行（设置页的清单）。
+ * ⚠ 曾经与页内的浏览对话框共用同一份 markup；选择器改成控制机的原生对话框之后
+ * （见 `lib/pickFile.ts`），这里不再需要可点的分支。
  */
 export function CalibrationRow({
   row,
   inUse,
-  onSelect,
 }: {
   row: CalibrationCandidate
   /** 覆盖 `row.inUse`；设置页用它把 `activePath` 也算进来。 */
   inUse?: boolean
-  onSelect?: (path: string) => void
 }) {
   const { t } = useTranslation(['gripper'])
   const active = inUse ?? row.inUse ?? false
@@ -78,17 +74,5 @@ export function CalibrationRow({
 
   const className = 'flex w-full flex-col gap-1 rounded-lg border border-line px-3 py-2'
 
-  if (onSelect) {
-    return (
-      <button
-        type="button"
-        data-testid="gripper-browse-file"
-        className={cn(className, 'text-left transition-colors hover:bg-muted/60')}
-        onClick={() => onSelect(row.path)}
-      >
-        {body}
-      </button>
-    )
-  }
   return <div className={className}>{body}</div>
 }

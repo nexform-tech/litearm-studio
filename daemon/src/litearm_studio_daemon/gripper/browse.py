@@ -149,15 +149,10 @@ def list_dir(
 ) -> dict[str, Any]:
     """List one directory: sub-directories and validated ``*.json`` files.
 
-    Returns ``{"path", "parent", "truncated", "skippedFiles", "entries"}``.  ``path`` is
-    the absolute directory actually listed —— the caller navigates from *that*, so
-    ``~``, trailing slashes and relative input never drift.  ``parent`` is ``None`` at
-    the filesystem root.
-
-    ``skippedFiles`` counts what this directory holds but the picker does not list:
-    plain files that are not ``*.json``, and entries that could not be described.  It is
-    what lets the dialog say "your file may be one of these" instead of leaving the
-    operator in front of an empty box with no explanation (issue #103).
+    Returns ``{"path", "parent", "truncated", "entries"}``.  ``path`` is the
+    absolute directory actually listed —— the caller navigates from *that*, so
+    ``~``, trailing slashes and relative input never drift.  ``parent`` is
+    ``None`` at the filesystem root.
 
     Every ``*.json`` entry carries the ``candidate_dict`` fields plus
     ``name/path/type/readable/symlink/size/mtime``.  ``inUse`` is **not** here:
@@ -175,8 +170,6 @@ def list_dir(
 
     dirs: list[dict[str, Any]] = []
     files: list[dict[str, Any]] = []
-    #: 这一层里没有列出来的普通文件数 —— 见循环里那段注释 (issue #103)。
-    skipped = 0
     try:
         with os.scandir(target) as scan:
             for entry in scan:
@@ -184,7 +177,6 @@ def list_dir(
                     is_dir = entry.is_dir()          # follows symlinks
                     is_file = entry.is_file()
                 except OSError:
-                    skipped += 1                     # 断链、权限不足都算"这里有东西但没列"
                     continue
                 if is_dir:
                     dirs.append(_dir_entry(entry))
@@ -192,14 +184,8 @@ def list_dir(
                     row = _file_entry(entry, travel_mm, channel, max_inspect_bytes)
                     if row is not None:
                         files.append(row)
-                    else:
-                        skipped += 1
-                else:
-                    # Everything else —— plain files, sockets, broken symlinks —— is
-                    # not something this picker can offer, but it is still counted:
-                    # "这个选择器只显示目录与 *.json" 在界面上看不见，看不到自己那份
-                    # 标定的操作员只能得出"目录是空的"这一个结论 (issue #103)。
-                    skipped += 1
+                # Everything else —— plain files, sockets, broken symlinks —— is
+                # not something this picker can offer.
     except OSError as exc:
         raise GripperBrowseError(f"无法读取目录 {target}: {exc}") from exc
 
@@ -215,6 +201,5 @@ def list_dir(
         "path": str(target),
         "parent": None if parent == target else str(parent),
         "truncated": truncated,
-        "skippedFiles": skipped,
         "entries": entries,
     }

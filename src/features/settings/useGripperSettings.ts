@@ -5,10 +5,18 @@ import { formatArmError } from '@/lib/arm/errors'
 import { gripperClient } from '@/lib/arm/gripperClient'
 import type { CalibrationCandidate } from '@/lib/arm/gripperClient'
 import { useGripperAlerts, useGripperCalibration, useGripperConnection, useGripperState } from '@/lib/arm/useGripper'
+import { pickFileThroughDaemon } from '@/lib/pickFile'
 
 /** daemon 侧 `STROKE_MIN_MM` / `STROKE_MAX_MM`：行程的合理带。 */
 export const TRAVEL_MIN_MM = 10
 export const TRAVEL_MAX_MM = 300
+
+/** 所输路径的**上级目录** —— "浏览…"的原生对话框从哪开始; 取不到就让本地程序落回家目录。 */
+function dirOf(path: string): string | undefined {
+  const trimmed = path.trim()
+  const cut = trimmed.lastIndexOf('/')
+  return cut <= 0 ? undefined : trimmed.slice(0, cut)
+}
 
 export type GripperSettingsVm = ReturnType<typeof useGripperSettings>
 
@@ -128,6 +136,21 @@ export function useGripperSettings() {
     [fail, refresh, t],
   )
 
+  /**
+   * "浏览…" —— 请本地程序弹**原生打开对话框**选一份控制机上的标定, 把它填进输入框。
+   *
+   * 与导出 (`lib/export.ts`) 同一条路: 页面铺不开一个稳当的目录浏览器, 由持有窗口的
+   * 这一侧去问。取消**什么都不做** (操作员已经说了不要); 没有本地程序可弹对话框时如实告知。
+   */
+  const pickCalibration = useCallback(async () => {
+    const outcome = await pickFileThroughDaemon(dirOf(importPath))
+    if (outcome.kind === 'picked') {
+      setImportPath(outcome.path)
+    } else if (outcome.kind === 'unavailable') {
+      toast.error(t('gripper:settings.browseUnavailable'), { id: 'gripper-settings-error' })
+    }
+  }, [importPath, t])
+
   const importCalibration = useCallback(async () => {
     const path = importPath.trim()
     if (!path) return
@@ -209,6 +232,7 @@ export function useGripperSettings() {
     refresh,
     apply,
     useTemplate,
+    pickCalibration,
     importCalibration,
     setAllowFactory,
     zero,
