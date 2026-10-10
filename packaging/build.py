@@ -365,6 +365,10 @@ def main() -> int:
             "--paths", str(DAEMON_SRC),
             # 界面: _MEIPASS/dist （与 resolve_ui_dir 的冻结分支一致）
             "--add-data", f"{UI_DIST}{os.pathsep}dist",
+            # 夹爪默认标定（calibration.packaged_factory_path）：它是 .json, 不写 import,
+            # PyInstaller 静态分析看不见。少了它, 冻结产物在**没有设 LITEGRIP_FACTORY_CALIB**
+            # 时会静默退回 litegrip 自带的那份（数字随 SDK 版本变), 而不是控制台自己钉的那份。
+            "--collect-data", "litearm_studio_daemon",
             # SDK 不在 PyPI 上, 连数据文件一起收进来
             "--collect-all", "litearm",
             "--collect-all", "serial",

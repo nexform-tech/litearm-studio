@@ -61,6 +61,16 @@ BINARY_NAME = "litearm-studio-daemon"
 LAUNCHER = "litearm-studio"
 INSTALL_DIR = f"/usr/lib/{PACKAGE}"
 
+#: The console's own default gripper calibration, shipped inside the daemon
+#: package.  Single source of truth: the launcher exports this file's installed
+#: path as LITEGRIP_FACTORY_CALIB, and the daemon reads the same bytes from its
+#: package when that variable is unset — so there is exactly one copy to keep
+#: right, not one per artifact.
+FACTORY_CALIBRATION = (
+    ROOT / "daemon" / "src" / "litearm_studio_daemon" / "gripper"
+    / "factory_calibration.json"
+)
+
 #: The arm presents itself as a USB CDC device. `uaccess` is the point of shipping the
 #: rule: systemd-logind gives the locally logged-in user an ACL on the device node, so
 #: the operator never joins `dialout` and never logs out. `ID_MM_DEVICE_IGNORE` keeps
@@ -290,10 +300,11 @@ def payload(binary: Path) -> List[Entry]:
     entries: List[Entry] = [
         (Path(f"usr/lib/{PACKAGE}/{BINARY_NAME}"), binary, 0o755),
         # The packaged default gripper calibration the launcher points the daemon
-        # at (LITEGRIP_FACTORY_CALIB).  It is the SDK's own shipped file: a
-        # read-only datum that describes whichever unit it was taken on.
+        # at (LITEGRIP_FACTORY_CALIB).  It is the console's own committed default
+        # — the same file the daemon ships inside its package — installed where
+        # the path stays put across launches.
         (Path(f"usr/lib/{PACKAGE}/factory_calibration.json"),
-         ROOT / "packaging" / "factory_calibration.json", 0o644),
+         FACTORY_CALIBRATION, 0o644),
         (Path(f"usr/bin/{LAUNCHER}"), launcher_script().encode(), 0o755),
         (Path(f"usr/share/applications/{PACKAGE}.desktop"), desktop_entry().encode(), 0o644),
         (Path(f"usr/lib/udev/rules.d/60-{PACKAGE}.rules"), udev_rule().encode(), 0o644),

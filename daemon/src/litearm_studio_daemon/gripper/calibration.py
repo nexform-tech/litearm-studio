@@ -162,29 +162,52 @@ def list_templates() -> list[str]:
     return list(TEMPLATE_NAMES)
 
 
-def factory_path() -> Path:
-    """The SDK's bundled, read-only factory calibration (gripper.py:33).
+def packaged_factory_path() -> Path:
+    """This console's own bundled default calibration.
 
-    Resolved through ``litegrip.__file__`` so it is correct inside a PyInstaller
-    bundle (``sys._MEIPASS``), which is why the build must collect the package
-    data.
+    Ships next to this module (``gripper/factory_calibration.json``), so it is
+    found however the daemon is run — from the source tree, from an installed
+    wheel, or from a PyInstaller bundle (``sys._MEIPASS``).  Keeping it here
+    rather than leaning on ``litegrip``'s copy is the point: the SDK's file
+    describes whichever unit *it* shipped and changes with the pinned SDK
+    version, while this one is the default the console commits to — used for
+    every channel until a measured calibration is imported.
+    """
+    return Path(__file__).resolve().parent / "factory_calibration.json"
+
+
+def factory_path() -> Path:
+    """The default calibration file, in the order the launcher and the SDK allow.
+
+    * ``LITEGRIP_FACTORY_CALIB`` wins first, and stays first for two reasons: the
+      Debian package sets it to a path under ``/usr/lib`` that is stable across
+      launches (the one-file bundle unpacks to a fresh temporary directory each
+      time), which is what lets the settings page name one file; and the test
+      suite points it at a nonexistent path to *disable* the default.
+    * Next is the console's own packaged copy (:func:`packaged_factory_path`),
+      which is what a source checkout or an installed wheel uses.
+    * Last is whatever ``litegrip`` ships itself, reachable only when the
+      console's copy is missing.
     """
     env = os.environ.get("LITEGRIP_FACTORY_CALIB")
     if env:
         return Path(env).expanduser()
+    packaged = packaged_factory_path()
+    if packaged.is_file():
+        return packaged
     try:
         import litegrip
 
         return Path(litegrip.__file__).resolve().parent / "factory_calibration.json"
     except Exception:  # pragma: no cover - only without the SDK installed
-        return Path(__file__).resolve().parent / "factory_calibration.json"
+        return packaged
 
 
 def is_bundled_factory(path: str | os.PathLike[str] | None) -> bool:
     """Whether ``path`` *is* the console's bundled default calibration.
 
-    The console ships ``factory_calibration.json`` (via the deb, and inside the
-    SDK package).  It is normally chosen automatically (row 5), but an operator
+    The console ships ``factory_calibration.json`` (inside this package, and via
+    the deb).  It is normally chosen automatically (row 5), but an operator
     can also browse to and import it, which pins it as row 1 — and that file is
     not an ordinary row-1 file: its own ``channel`` field hard-codes ``can0`` (a
     per-channel cross-check would refuse it on any other interface), and it is a

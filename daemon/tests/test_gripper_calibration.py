@@ -157,6 +157,39 @@ def test_row_5_a_reverse_declaration_falls_through_to_the_template(
     assert info.limits is not None and info.limits.reversed_mount
 
 
+def test_the_default_is_the_copy_shipped_inside_the_daemon_package(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """没有环境变量时, 默认标定就是 daemon 包自带的那份 (row 5)。
+
+    这是"除非自己导入, 否则一直用这份"的落点: 源码直跑、装好的 wheel、PyInstaller
+    产物都从**包目录**取, 不是 litegrip 自带的那份 —— 后者的数字随钉住的 SDK 版本变,
+    正是不该由它决定默认值的原因。
+    """
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("LITEGRIP_FACTORY_CALIB", raising=False)
+
+    packaged = calibration.packaged_factory_path()
+    assert packaged.is_file(), packaged
+    assert calibration.factory_path() == packaged
+
+    info = calibration.resolve(CHANNEL, mount="normal", travel_mm=85.0)
+    assert info.provenance == calibration.PROVENANCE_USER
+    assert info.wire_source == "measured"
+    assert Path(info.path) == packaged
+    assert any(calibration.BUNDLED_FACTORY_WARNING in w for w in info.warnings), info.warnings
+
+
+def test_the_env_override_still_beats_the_packaged_default(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``LITEGRIP_FACTORY_CALIB`` 仍然排在最前 —— deb 的启动脚本靠它指到 /usr/lib。
+
+    同一件事也解释了上面的测试夹具为什么能用一个不存在的路径把默认"关掉"。
+    """
+    override = write(tmp_path / "override.json", VALID)
+    monkeypatch.setenv("LITEGRIP_FACTORY_CALIB", str(override))
+    assert calibration.factory_path() == override
+
+
 def test_row_7_nothing_is_missing_not_factory(home: Path) -> None:
     info = calibration.resolve(CHANNEL, travel_mm=85.0)
     assert info.provenance == calibration.PROVENANCE_MISSING

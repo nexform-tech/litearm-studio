@@ -78,4 +78,8 @@ testpaths = ["tests"]
 where = ["src"]
 
 [tool.setuptools.package-data]
-litearm_studio_daemon = ["py.typed"]
+# The bundled default gripper calibration (calibration.packaged_factory_path)
+# must ship inside the wheel too, not only in the PyInstaller/deb artifacts, or a
+# plain `pip install` would silently fall back to litegrip's own copy — whose
+# numbers track the pinned SDK version rather than this console's choice.
+litearm_studio_daemon = ["py.typed", "gripper/factory_calibration.json"]
