@@ -1,11 +1,16 @@
-"""把 daemon + SDK + 界面打成一个单文件可执行程序（计划 Phase 5）。
+"""把 daemon + SDK + 界面打成一个可执行程序（计划 Phase 5）。
 
 用法（**仓库根目录**执行，且 `pnpm build` 已经产出 `dist/`）：
 
 ```bash
 python packaging/build.py
-# 产物：packaging/dist/litearm-studio-daemon[.exe]
+# 产物：packaging/dist/litearm-studio-daemon[.exe]              （单文件，默认）
+
+LITEARM_STUDIO_BUNDLE_MODE=onedir python packaging/build.py
+# 产物：packaging/dist/litearm-studio-daemon/litearm-studio-daemon[.exe]
 ```
+
+两种形态的取舍见 `bundle_mode()`：单文件每次启动都要把整包解到临时目录，目录不用。
 
 三件事：
 
@@ -190,6 +195,73 @@ def dfu_build_args() -> list[str]:
     return args
 
 
+def uvicorn_build_args() -> list[str]:
+    """uvicorn 里那几个**运行时才选**的实现 —— 点名要的，不做整包收。
+
+    ⚠ `--collect-submodules uvicorn` 是**冗余**的，而且正是它把最大的那件死重拖进来的：
+    `pyinstaller-hooks-contrib` 的 `hook-uvicorn.py` 无条件执行
+    `collect_submodules('uvicorn')`，于是 `uvicorn.loops.uvloop` 进包、它顶上那句
+    `import uvloop` 又把 16 MB 的 uvloop 拉进来。所以删掉那个参数一点用都没有，
+    真正起作用的是下面 `slimming_args()` 里的 `--exclude-module uvloop`。
+
+    留下的是按**字符串**被引用的模块（`uvicorn/config.py` 的 `loop_factory`、
+    `http_protocol`、`ws_protocol`、`lifespan` 字段与 `LOGGING_CONFIG`），
+    静态分析看不见它们。
+    """
+    return [
+        "--hidden-import", "uvicorn.logging",
+        "--hidden-import", "uvicorn.loops.auto",
+        "--hidden-import", "uvicorn.protocols.http.auto",
+        "--hidden-import", "uvicorn.protocols.websockets.auto",
+        "--hidden-import", "uvicorn.lifespan.on",
+        # WebSocket 的实际实现（`protocols/websockets/auto.py` 的那个分支）。界面的
+        # 状态推送全靠这条路 —— 今天它已经被 uvicorn 那个钩子顺带收进来了，显式写出来
+        # 是为了钩子哪天变了也不会静默地少掉 WS。
+        "--hidden-import", "uvicorn.protocols.websockets.websockets_sansio_impl",
+    ]
+
+
+def slimming_args() -> list[str]:
+    """**明确不收**的包。每一条都是实测出来的死重，理由写在各自那一行上。
+
+    实测（本机 14 核；`LITEARM_STUDIO_WINDOW_BACKEND=native` 的 onefile，两个版本同一台
+    机器、同一份 `dist/`。GTK 变体同样含 uvloop，这四处差值按比例同样成立）：
+
+    | | 修前 | 修后 |
+    | --- | --- | --- |
+    | 可执行文件 | 28.4 MB | 21.8 MB（-23%） |
+    | 每次启动解包 | 68.9 MB / 349 项 | 48.0 MB / 337 项（-30%） |
+    | 解包 + 导入（`--help`，中位，14 次） | 749 ms | 626 ms（-17%） |
+    | 进程起到 `/api/health` 通（中位，6 次） | 1114 ms | 935 ms（-16%） |
+
+    两组样本的分布不重叠（修后最慢的 697 ms 仍快于修前的中位）；`--help` 那一行只含
+    解包与导入，去掉了服务启动的抖动，所以它是最干净的一条对照。
+
+    ⚠ 这里**不动** httptools（解包 1.1 MB）：它同样是"可选实现"，但它是一个真实的运行时
+    能力（更快的 HTTP 解析），为省 1.1 MB 换成纯 Python 的 h11 是笔不划算的买卖。
+    `--exclude-module` 只去掉真正用不到的东西，不是把可选依赖一律砍掉。
+    """
+    return [
+        # 解包 16.0 MB（占整包 23%），**单项最大**。`uvicorn.loops.auto` 只在
+        # `import uvloop` 成功时才用它；本程序的事件循环要伺候一条 50Hz 状态推送、
+        # 一个应用窗口和几十个静态资源请求，全在本机回环上 —— uvloop 带来的吞吐在这里
+        # 没有可测量的收益，代价却是每次启动都要把这 16 MB 解包到临时目录。
+        # 排掉之后 `auto` 退回 asyncio（实测：`asyncio.unix_events._UnixSelectorEventLoop`）。
+        "--exclude-module", "uvloop",
+        # 解包 1.2 MB，只有 `--reload`（开发期热重载）才 import 它 —— 冻结产物从不 reload。
+        "--exclude-module", "watchfiles",
+        # 解包 2.7 MB。整个依赖图里只有两处 `import yaml`，都在**函数体内**且我们永不执行：
+        # `uvicorn.config.Config.load()`（本程序的 Config 由关键字参数构造，从不读配置文件）
+        # 与 `starlette.schemas` 的 module-level `try`（本来就容错）。
+        "--exclude-module", "yaml",
+        # 解包 2.5 MB。依赖图里没有任何第三方包 import 它（`click/decorators.py` 提到
+        # `pkg_resources` 只是一句注释），进包的是 PyInstaller 给 `pkg_resources` 准备的
+        # 运行时钩子连带收进来的 setuptools 全家。
+        "--exclude-module", "setuptools",
+        "--exclude-module", "pkg_resources",
+    ]
+
+
 def window_build_args() -> list[str]:
     """应用窗口（`daemon/.../window.py`）的 PyInstaller 参数。
 
@@ -334,6 +406,62 @@ def _qt_build_args() -> list[str]:
     return args
 
 
+#: 交付形态。两者是同一份代码的两种摆放方式，差别只在**启动时要不要解包**：
+#:
+#: * `onefile`（默认）—— 一个可执行文件，每次启动把整包解到临时目录再跑。
+#: * `onedir` —— 一个目录，直接跑，没有解包这一步。
+MODE_ENV = "LITEARM_STUDIO_BUNDLE_MODE"
+BUNDLE_MODES = ("onefile", "onedir")
+
+
+def bundle_mode() -> str:
+    """`onefile` / `onedir`；没设就是 `onefile`。
+
+    ⚠ 默认保持 `onefile` 是**有意的**：便携下载（其他 Linux、Windows）拿到的仍然是一个
+    文件 —— 优化不该顺手改变用户拿到的东西。要用目录形态的交付（`.deb`）显式指定，
+    见 `packaging/deb_build.sh`。
+
+    实测（本机 14 核，`native` 变体，`--help` 只含解包与导入）：
+
+    | | onedir | onefile |
+    | --- | --- | --- |
+    | 启动解包 | 无 | 48.0 MB / 337 项，每次启动都是 |
+    | 解包 + 导入（`--help`，中位） | 578–700 ms | 850–1059 ms |
+    | 起到 `/api/health` 通（中位） | 734 ms | 1060 ms |
+
+    差约 **272–359 ms（-32%）**。绝对值随机器负载漂，所以两轮都是两种形态**交替**
+    测量的：差值在两轮里都成立，而单看某一轮的绝对值会被别的进程带偏。
+
+    所以目录形态是"装到系统里"该用的形态，而单文件是"下载一个文件就能跑"该用的形态 ——
+    两者服务的是不同的场景，不是一个比另一个好。
+    """
+    forced = os.environ.get(MODE_ENV, "").strip().lower()
+    if not forced:
+        return "onefile"
+    if forced not in BUNDLE_MODES:
+        raise SystemExit(f"{MODE_ENV} 只接受 {' / '.join(BUNDLE_MODES)}，实得 {forced!r}")
+    return forced
+
+
+def bundle_mode_args(mode: str) -> list[str]:
+    """交给 PyInstaller 的那一个开关。"""
+    return ["--onedir"] if mode == "onedir" else ["--onefile"]
+
+
+def bundle_output(mode: str) -> Path:
+    """这个形态的产物路径 —— `onedir` 时是目录里那个可执行文件。"""
+    name = EXE_NAME + (".exe" if os.name == "nt" else "")
+    return OUT_DIST / name if mode == "onefile" else OUT_DIST / EXE_NAME / name
+
+
+def bundle_size_mb(mode: str) -> float:
+    """产物体积。`onedir` 要把整个目录加起来 —— 只量那个可执行文件会少报一个数量级。"""
+    if mode == "onefile":
+        return bundle_output(mode).stat().st_size / 1e6
+    root = OUT_DIST / EXE_NAME
+    return sum(p.stat().st_size for p in root.rglob("*") if p.is_file()) / 1e6
+
+
 def main() -> int:
     if not (UI_DIST / "index.html").is_file():
         raise SystemExit(
@@ -352,7 +480,9 @@ def main() -> int:
     # ⚠ 先判参数形态, 再写任何构建产物: 坏参数要在**落地文件之前**就失败, 否则源码树里
     #   会留下一个只属于这次失败构建的 `_build_*` 文件 (下一条注释解释了它为什么要命)。
     activation_url = resolve_activation_url()
+    mode = bundle_mode()
     print(f"[package] version = {version}")
+    print(f"[package] 交付形态 = {mode}")
 
     VERSION_FILE.write_text(
         '"""构建时生成 —— 不要提交（见 .gitignore）。"""\n'
@@ -377,7 +507,7 @@ def main() -> int:
     try:
         args = [
             sys.executable, "-m", "PyInstaller",
-            "--noconfirm", "--clean", "--onefile",
+            "--noconfirm", "--clean", *bundle_mode_args(mode),
             "--name", EXE_NAME,
             # 可执行文件图标（Windows）；Linux 上被接受但忽略
             "--icon", str(ICON),
@@ -394,14 +524,8 @@ def main() -> int:
             *dfu_build_args(),
             *window_build_args(),
             *activation_build_args(activation_url),
-            # uvicorn 的 loop/protocol 实现是动态导入的, PyInstaller 静态分析看不见
-            "--collect-submodules", "uvicorn",
-            "--collect-submodules", "websockets",
-            "--hidden-import", "uvicorn.logging",
-            "--hidden-import", "uvicorn.loops.auto",
-            "--hidden-import", "uvicorn.protocols.http.auto",
-            "--hidden-import", "uvicorn.protocols.websockets.auto",
-            "--hidden-import", "uvicorn.lifespan.on",
+            *uvicorn_build_args(),
+            *slimming_args(),
             "--distpath", str(OUT_DIST),
             "--workpath", str(WORK),
             "--specpath", str(WORK),
@@ -410,10 +534,10 @@ def main() -> int:
         print("[package] " + " ".join(args))
         subprocess.run(args, check=True, cwd=ROOT)
 
-        produced = OUT_DIST / (EXE_NAME + (".exe" if os.name == "nt" else ""))
+        produced = bundle_output(mode)
         if not produced.is_file():
             raise SystemExit(f"打包结束但没找到产物: {produced}")
-        print(f"[package] 产物: {produced} ({produced.stat().st_size / 1e6:.1f} MB)")
+        print(f"[package] 产物: {produced} ({bundle_size_mb(mode):.1f} MB)")
     finally:
         VERSION_FILE.unlink(missing_ok=True)
         ACTIVATION_URL_FILE.unlink(missing_ok=True)

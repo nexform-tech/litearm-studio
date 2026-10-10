@@ -1,4 +1,4 @@
-"""Tests for `packaging/build.py`, the builder of the one-file executable.
+"""Tests for `packaging/build.py`, the builder of the frozen bundle.
 
 The module is loaded by path instead of imported for the same reason as `test_deb.py`:
 its directory is called `packaging`, which would shadow the PyPI package of that name.
@@ -177,3 +177,86 @@ def test_window_build_args_refuses_a_qt_binding_without_qtpy(monkeypatch):
     with pytest.raises(SystemExit) as excinfo:
         build.window_build_args()
     assert "qtpy" in str(excinfo.value)
+
+
+# ------------------------------------------------------- 冻结产物的瘦身 (包体积/启动)
+
+def _values_after(args: list[str], flag: str) -> list[str]:
+    return [args[i + 1] for i, value in enumerate(args[:-1]) if value == flag]
+
+
+def test_the_optional_implementations_we_never_use_are_excluded() -> None:
+    """钉住那几条 `--exclude-module`，每条都对应一处实测出来的死重。
+
+    `uvloop` 尤其重要，而且**不能靠删参数解决**：`_pyinstaller_hooks_contrib` 的
+    `hook-uvicorn.py` 无条件执行 `collect_submodules('uvicorn')`，于是
+    `uvicorn.loops.uvloop` 进包、它顶上那句 `import uvloop` 又把 16 MB 的 uvloop 拉进来。
+    实测：它是整包里解包体积最大的单项（16.0 MB / 69 MB）。
+    """
+    excluded = _values_after(build.slimming_args(), "--exclude-module")
+    for name in ("uvloop", "watchfiles", "yaml", "setuptools", "pkg_resources"):
+        assert name in excluded, f"{name} 不再被排除 —— 包会白白变大"
+
+
+def test_a_real_runtime_capability_is_not_sacrificed_for_size() -> None:
+    """`httptools` 同样是"可选实现"，但它**必须留着**。
+
+    排掉它 uvicorn 会退回纯 Python 的 h11（能跑），省下的只有 1.1 MB —— 拿一个真实的
+    运行时能力去换 1.1 MB 是笔坏买卖。这条把那次取舍钉住，免得下一次"瘦身"顺手砍掉它。
+    """
+    excluded = _values_after(build.slimming_args(), "--exclude-module")
+    assert "httptools" not in excluded
+
+
+def test_the_dynamically_chosen_uvicorn_implementations_are_still_imported() -> None:
+    """uvicorn 是按**字符串**选实现的（`config.py` 的 `loop_factory` / `*_protocol` /
+    `lifespan` 字段与 `LOGGING_CONFIG`），静态分析看不见 —— 漏一个就是在冻结产物里少一条
+    运行期能力。WebSocket 那条尤其要命：界面的状态推送、命令、日志全走它。
+    """
+    hidden = _values_after(build.uvicorn_build_args(), "--hidden-import")
+    for name in (
+        "uvicorn.logging",
+        "uvicorn.loops.auto",
+        "uvicorn.protocols.http.auto",
+        "uvicorn.protocols.websockets.auto",
+        "uvicorn.lifespan.on",
+        "uvicorn.protocols.websockets.websockets_sansio_impl",
+    ):
+        assert name in hidden, f"{name} 没被点名 —— 冻结产物会在运行时少掉这条路径"
+
+
+# ------------------------------------------------------ 交付形态 (单文件 / 目录)
+
+def test_the_bundle_shape_defaults_to_onefile_and_refuses_nonsense(monkeypatch) -> None:
+    """默认必须是 `onefile`。
+
+    便携下载（其他 Linux、Windows）拿到的仍然是一个文件 —— 性能优化不该顺手把用户拿到的
+    东西从"一个文件"换成"一个目录"。要目录形态的交付（`.deb`）必须显式指定。
+    """
+    monkeypatch.delenv(build.MODE_ENV, raising=False)
+    assert build.bundle_mode() == "onefile"
+    assert build.bundle_mode_args("onefile") == ["--onefile"]
+
+    monkeypatch.setenv(build.MODE_ENV, "onedir")
+    assert build.bundle_mode() == "onedir"
+    assert build.bundle_mode_args("onedir") == ["--onedir"]
+
+    monkeypatch.setenv(build.MODE_ENV, "single-file")
+    with pytest.raises(SystemExit) as excinfo:
+        build.bundle_mode()
+    assert "onefile" in str(excinfo.value)
+
+
+def test_the_directory_shape_reports_the_size_of_the_whole_tree(monkeypatch, tmp_path) -> None:
+    """目录形态的体积要连 `_internal/` 一起算。
+
+    只量那个可执行文件会少报一个数量级（实测 7.2 MB 对 48.0 MB），而"产物多大"正是
+    这份日志里给人看的那个数。
+    """
+    monkeypatch.setattr(build, "OUT_DIST", tmp_path)
+    tree = tmp_path / build.EXE_NAME
+    (tree / "_internal").mkdir(parents=True)
+    (tree / build.EXE_NAME).write_bytes(b"x" * 7000)
+    (tree / "_internal" / "libpython.so").write_bytes(b"y" * 3000)
+
+    assert build.bundle_size_mb("onedir") == pytest.approx(0.01)

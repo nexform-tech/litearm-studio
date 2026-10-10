@@ -66,7 +66,7 @@ litearm-studio --fake     # 离线模式：无需硬件的完整会话
 | 路径 | 用途 |
 | :--- | :--- |
 | `/usr/bin/litearm-studio` | 启动程序的命令 |
-| `/usr/lib/litearm-studio/litearm-studio-daemon` | 自包含的可执行程序 |
+| `/usr/lib/litearm-studio/litearm-studio-daemon` | 可执行程序；它自带的 `_internal/` 目录就在旁边，两者要一起留着 |
 | `/usr/share/applications/litearm-studio.desktop` | 应用列表入口 |
 | `/usr/share/icons/hicolor/*/apps/litearm-studio.png` | 图标 |
 | `/usr/lib/udev/rules.d/60-litearm-studio.rules` | 允许当前登录的桌面用户访问机械臂串口，无需加入 `dialout` 组 |
