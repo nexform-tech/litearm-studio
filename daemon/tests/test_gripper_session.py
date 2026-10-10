@@ -404,6 +404,11 @@ def test_connect_can_pin_a_channel_and_ids_and_persists_them(tmp_path: Path) -> 
         info = session.conn_info()
         assert info["channel"] == "can1"
         assert info["canId"] == 9
+        # 主站 ID 是设备**实际**回应所在的位, 不是记录里那个 `null`(自动) —— 记录没写
+        # mst_id 时它保持 `None`, 但线上报的是后端真在用的那个 (仿真模拟的标准 LiteGrip
+        # 是 0x18)。设置页据此显示真实值, 而不是把 `null` 渲染成 0。
+        assert info["mstId"] == 0x18
+        assert store.get("can1").mst_id is None
         assert info["mount"] == "reverse"
         # 重启后回到同一个通道 (§5.6)。
         assert store.last_channel() == "can1"

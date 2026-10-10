@@ -69,6 +69,7 @@ function connected(overrides: Record<string, unknown> = {}) {
     status: 'connected',
     channel: 'can0',
     canId: 8,
+    mstId: 24,
     mount: 'normal',
     declaredMount: 'normal',
     template: null,

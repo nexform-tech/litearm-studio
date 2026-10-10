@@ -11,6 +11,8 @@ export type GripperConnInfo = {
   status: string
   channel: string
   canId: number
+  /** 设备**实际**回应所在的主站 ID（SDK 连接时自动探测；尚未连接时为 `null`）。 */
+  mstId: number | null
   /** 设备**实际**在跑的方向（从生效的限位读回）。 */
   mount: 'normal' | 'reverse'
   /** 记录里那行声明，与 `mount` 并排显示，好让两者能对比。 */
@@ -319,6 +321,7 @@ export class GripperClient {
       status: str(msg.status, 'disconnected'),
       channel: str(msg.channel),
       canId: num(msg.canId),
+      mstId: optionalNum(msg.mstId),
       mount: mount(msg.mount),
       declaredMount: mount(msg.declaredMount),
       template: typeof msg.template === 'string' ? msg.template : null,
