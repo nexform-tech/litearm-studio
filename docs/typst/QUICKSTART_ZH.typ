@@ -464,7 +464,7 @@ chmod +x "litearm-studio-${version}-linux-amd64"
 
 - *Python SDK*：#link("https://github.com/nexform-tech/litearm-python")[https://github.com/nexform-tech/litearm-python]
 - *ROS / ROS2 驱动包*：#link("https://github.com/nexform-tech/litearm-ros2")[https://github.com/nexform-tech/litearm-ros2]
-- *URDF / 机械臂仿真模型库*：#link("https://github.com/nexform-tech/litearm-urdf")[https://github.com/nexform-tech/litearm-urdf]
+- *URDF / 机械臂仿真模型库*：#link("https://github.com/nexform-tech/litearm-description")[https://github.com/nexform-tech/litearm-description]
 
 == 官方联系方式
 
