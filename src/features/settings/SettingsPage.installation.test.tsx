@@ -8,19 +8,26 @@ import i18n from '@/i18n'
  * 预设填的是哪三个数（m/s²，不是单位向量）、rpy 与向量的关系、以及"须失能"这条门禁。
  * 换算本身的判据在 `installationPose.test.ts`，这里只看界面。
  */
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  // 弹窗的桩必须还原：漏一个 `window.confirm` 就会让后面每条用例都静默"确认"。
+  vi.restoreAllMocks()
+})
 
 const mocks = vi.hoisted(() => ({
   readPayload: vi.fn(),
   setPayload: vi.fn(),
   readGravityVector: vi.fn(),
   setGravityVector: vi.fn(),
+  getGravity: vi.fn(),
   getJointParams: vi.fn(),
   saveParams: vi.fn(),
   resetFactoryParams: vi.fn(),
   kinBench: vi.fn(),
   /** daemon 的使能位 —— 「下发（须失能）」该不该灰掉看它。 */
   enabled: false,
+  /** 状态帧到没到手：`null` = 状态未知（与"失能"是两件事）。 */
+  state: null as { q: number[]; enabled: boolean } | null,
 }))
 
 vi.mock('sonner', () => ({
@@ -33,6 +40,7 @@ vi.mock('@/lib/arm', () => ({
     setPayload: mocks.setPayload,
     readGravityVector: mocks.readGravityVector,
     setGravityVector: mocks.setGravityVector,
+    getGravity: mocks.getGravity,
     getJointParams: mocks.getJointParams,
     setJointParam: vi.fn(),
     setJointLimits: vi.fn(),
@@ -42,7 +50,7 @@ vi.mock('@/lib/arm', () => ({
   },
   formatArmError: (e: unknown) => (e instanceof Error ? e.message : String(e)),
   useArmConnection: () => ({ status: 'connected' }),
-  useArmState: () => ({ enabled: mocks.enabled }),
+  useArmState: () => mocks.state,
 }))
 
 vi.mock('./ActivationSection', () => ({ ActivationSection: () => <div /> }))
@@ -70,8 +78,10 @@ describe('SettingsPage — installation direction', () => {
     await i18n.changeLanguage('zh')
     vi.clearAllMocks()
     mocks.enabled = false
+    mocks.state = { q: [0, 0, 0, 0, 0, 0, 0], enabled: false }
     mocks.readPayload.mockResolvedValue({ mass: 1, com: [0, 0, 0] })
     mocks.readGravityVector.mockResolvedValue([0, 0, -9.81])
+    mocks.getGravity.mockResolvedValue([0, 0, 0, 0, 0, 0, 0])
     mocks.getJointParams.mockResolvedValue([])
     mocks.setGravityVector.mockResolvedValue(undefined)
     mocks.saveParams.mockResolvedValue(undefined)
@@ -156,14 +166,14 @@ describe('SettingsPage — installation direction', () => {
   })
 
   it('blocks the write while the drives are enabled, because the firmware would refuse it', async () => {
-    mocks.enabled = true
+    mocks.state = { q: [0, 0, 0, 0, 0, 0, 0], enabled: true }
     await renderInstallation()
 
-    const send = screen.getByRole('button', { name: /下发/ }) as HTMLButtonElement
-    expect(send.disabled).toBe(true)
+    expect((screen.getByRole('button', { name: /下发/ }) as HTMLButtonElement).disabled).toBe(true)
+    // 固化到 Flash 同样被拦住：固件在这里也要求失能态，而"提前替它撒谎"与"发出去
+    // 再解释拒绝"相比，前者省掉一次注定失败的往返。
+    expect((screen.getByRole('button', { name: /固化到 Flash/ }) as HTMLButtonElement).disabled).toBe(true)
     expect(screen.getByText(/请先失能/)).toBeDefined()
-    // 固化到 Flash 仍然可点 —— 固件的拒绝会原样回传，界面不替它提前撒谎。
-    expect((screen.getByRole('button', { name: /固化到 Flash/ }) as HTMLButtonElement).disabled).toBe(false)
   })
 
   it('persists the direction to flash on demand', async () => {
@@ -178,5 +188,87 @@ describe('SettingsPage — installation direction', () => {
     await renderInstallation(/尚未读取设备装向/)
 
     expect(screen.queryByText(/已读取设备当前装向/)).toBeNull()
+  })
+
+  it('blocks the write until the device direction has been read back', async () => {
+    // 读失败 ⇒ 手里那三个数只是控件默认值（[0,0,0]），下发等于把一个"装向"盲写进固件。
+    mocks.readGravityVector.mockRejectedValue(new Error('link down'))
+    render(
+      <MemoryRouter initialEntries={['/settings?tab=installation']}>
+        <SettingsPage />
+      </MemoryRouter>,
+    )
+    await screen.findByText(/尚未成功读取设备当前装向/)
+
+    expect((screen.getByRole('button', { name: /下发/ }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: /固化到 Flash/ }) as HTMLButtonElement).disabled).toBe(true)
+    // 读当前仍然可点 —— 它正是解除这道闸门的那一步。
+    await waitFor(() =>
+      expect((screen.getByRole('button', { name: /读当前/ }) as HTMLButtonElement).disabled).toBe(false),
+    )
+  })
+
+  it('treats an unknown state as unsafe, not as a disabled arm', async () => {
+    // ⚠ 「没收到状态帧」不等于「没使能」——不知道的时候下发，与已知使能时下发是同一个
+    //   物理后果（三条分量非原子，中途模长 13.87）。
+    mocks.state = null
+    await renderInstallation()
+
+    expect((screen.getByRole('button', { name: /下发/ }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: /固化到 Flash/ }) as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByText(/尚未收到状态帧/)).toBeDefined()
+  })
+
+  it('asks before sending a vector whose magnitude is not 9.81', async () => {
+    // 正装改侧装时 z 没清零 —— 看着合理的错，|g| = 13.87 = 1.41g。固件照收不误。
+    await renderInstallation()
+    const gx = screen.getByLabelText('x')
+    fireEvent.change(gx, { target: { value: '9.8100' } })
+    fireEvent.blur(gx)
+    // |g| = √2·9.81 = 13.8734（面板写"13.87"是取整的说法）。
+    await waitFor(() => expect(screen.getByText(/13\.8734/)).toBeDefined())
+
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    fireEvent.click(screen.getByRole('button', { name: /下发/ }))
+    expect(confirm).toHaveBeenCalledTimes(1)
+    expect(mocks.setGravityVector).not.toHaveBeenCalled()
+
+    // 确认之后照发 —— 闸门是"二次确认"，不是"不许发"。
+    confirm.mockReturnValue(true)
+    fireEvent.click(screen.getByRole('button', { name: /下发/ }))
+    await waitFor(() => expect(mocks.setGravityVector).toHaveBeenCalledWith([9.81, 0, -9.81]))
+  })
+
+  it('reports the post-write self-check: read-back, |g| and whether G(q) moved', async () => {
+    // ⚠ 这一条是"真的进了模型"的判据：写同值 G(q) 不该变，改动过就必须变。
+    // 基线是正装，写进去的是侧装+x ⇒ **值真的变了**，所以 G(q) 必须跟着变。
+    mocks.readGravityVector.mockResolvedValueOnce([0, 0, -9.81]).mockResolvedValue([9.81, 0, 0])
+    mocks.getGravity.mockResolvedValueOnce([0, 1, 2, 3, 4, 5, 6]) // 下发前
+    mocks.getGravity.mockResolvedValueOnce([0.4, 1, 2, 3, 4, 5, 6]) // 下发后（变了 ⇒ 符合预期）
+    await renderInstallation()
+
+    fireEvent.click(screen.getByRole('radio', { name: '侧装+x' }))
+    fireEvent.click(screen.getByRole('button', { name: /下发/ }))
+
+    await waitFor(() => expect(mocks.setGravityVector).toHaveBeenCalledWith([9.81, 0, 0]))
+    // 前后两次 G(q) 用的是**同一个** q（否则"变了没有"分不清是参数生效还是臂动了）。
+    const qs = mocks.getGravity.mock.calls.map((c) => c[0])
+    expect(qs).toHaveLength(2)
+    expect(qs[0]).toEqual(qs[1])
+    expect(
+      await screen.findByText(/下发后自检：读回差异 0\.0e\+0 ✅ · \|g\|=9\.8100 ✅ · G\(q\)：变了（符合预期）/),
+    ).toBeDefined()
+  })
+
+  it('skips the G(q) leg instead of faking it when the firmware has no 0x39', async () => {
+    mocks.getGravity.mockRejectedValue(new Error('unknown command'))
+    await renderInstallation()
+
+    fireEvent.click(screen.getByRole('button', { name: /下发/ }))
+
+    await waitFor(() => expect(mocks.setGravityVector).toHaveBeenCalled())
+    // 字节写进去了 ⇒ 回读那一段照旧能给结论；只有模型那一段如实标"跳过"。
+    expect(await screen.findByText(/G\(q\)：未取到当前姿态，跳过/)).toBeDefined()
+    expect(screen.getByText(/读回差异/)).toBeDefined()
   })
 })

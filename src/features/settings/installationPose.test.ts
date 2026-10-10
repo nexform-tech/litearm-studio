@@ -5,6 +5,7 @@ import {
   INSTALLATION_POSES,
   installationPoseById,
   isStandardMagnitude,
+  MAGNITUDE_TOLERANCE_REL,
   matchInstallationPose,
   STANDARD_GRAVITY,
   type InstallationPoseId,
@@ -104,5 +105,15 @@ describe('installationPose', () => {
     expect(isStandardMagnitude([0, 0, -1])).toBe(false)
     expect(isStandardMagnitude([0, 0, -13.87])).toBe(false)
     expect(isStandardMagnitude([0, 0, 0])).toBe(false)
+  })
+
+  it('draws the magnitude line at 1%, the same place the tool panel does', () => {
+    // ⚠ 这条线是**下发前的确认闸**的判据, 不是配色: |g| 落在带内直接发, 出带要二次确认。
+    //   带外的典型成因是"只改了一个分量"—— 正装→侧装时 z 没清零 ⇒ 13.87 = 1.41g。
+    expect(MAGNITUDE_TOLERANCE_REL).toBe(0.01)
+    // 带宽 = 9.81 × 1% = 0.0981 m/s²。
+    expect(isStandardMagnitude([0, 0, -9.90])).toBe(true)   // 偏离 0.09
+    expect(isStandardMagnitude([0, 0, -9.70])).toBe(false)  // 偏离 0.11
+    expect(isStandardMagnitude([0, 0, -13.87])).toBe(false) // 1.41×g, 典型手滑
   })
 })

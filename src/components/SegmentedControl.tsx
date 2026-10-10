@@ -10,6 +10,8 @@ export type SegItem = {
   disabled?: boolean
   /** 不可选原因的悬停提示。 */
   disabledTitle?: string
+  /** 选中与否都该有的悬停说明（如「这一项到底会写什么值」）。 */
+  title?: string
 }
 
 /**
@@ -50,7 +52,8 @@ export function SegmentedControl({
           key={it.key}
           value={it.key}
           disabled={it.disabled}
-          title={it.disabled ? it.disabledTitle : undefined}
+          // 置灰时先说**为什么不能用**；能用时那条说明照旧可以悬停看。
+          title={it.disabled ? (it.disabledTitle ?? it.title) : it.title}
           style={{
             cursor: it.disabled ? 'not-allowed' : 'pointer',
             opacity: it.disabled ? 0.45 : 1,

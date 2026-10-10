@@ -12,11 +12,12 @@ import { useSettingsState, type SettingsState } from './useSettingsState'
 import {
   gravityFromRpy,
   gravityMagnitude,
+  GRAVITY_AXIS_LIMIT,
   INSTALLATION_POSES,
   installationPoseById,
   isStandardMagnitude,
+  MAGNITUDE_TOLERANCE_REL,
   matchInstallationPose,
-  STANDARD_GRAVITY,
   type InstallationPoseId,
 } from './installationPose'
 import { GripperSection } from './GripperSection'
@@ -191,6 +192,59 @@ function InstallationSection({ vm }: { vm: SettingsState }) {
   const magnitude = gravityMagnitude(vector)
   const magnitudeOk = isStandardMagnitude(vector)
 
+  /**
+   * 下发/固化共用的闸门 —— **不合规就一帧都不发**，比"弹个确认框就放行"更严。
+   *
+   * 三条都不是洁癖：
+   * ① `!gravitySynced` —— 手里那三个数可能只是控件默认值，发下去等于把 `[0,0,0]`
+   *    当成一个装向写进固件（重力前馈随即按 0 算）；
+   * ② `!stateKnown` —— **状态没到手不等于安全**：不知道臂是不是使能时就下发，与已知
+   *    使能时下发是同一个物理后果；
+   * ③ `enabled` —— 三条分量是三次独立写，中途经过"模长 13.87、方向偏 45°"的中间态，
+   *    而重力前馈当拍阶跃。固件 1.5.3 起会拒绝，更早的固件**会默默写进去**。
+   *
+   * ⚠ 这里**不代劳失能**：失能有物理后果（臂失去保持力矩），那是操作员在控制页的决策。
+   */
+  const writeGated = !vm.connected || vm.saving || !vm.gravitySynced || !vm.stateKnown || vm.enabled
+
+  /** 量级出带（偏离 9.81 超 1%）要二次确认 —— 抓"只改了一个分量"这类看着合理的错。 */
+  const confirmMagnitude = () =>
+    magnitudeOk ||
+    window.confirm(
+      t('settings:installation.magnitudeConfirm', {
+        magnitude: magnitude.toFixed(4),
+        percent: (MAGNITUDE_TOLERANCE_REL * 100).toFixed(0),
+        vector: vector.map((v) => `${v >= 0 ? '+' : ''}${v.toFixed(2)}`).join(', '),
+      }),
+    )
+
+  const send = () => {
+    if (!confirmMagnitude()) return
+    void vm.applyGravityVector(vector)
+  }
+
+  /** 自检那一行的三段 —— 回读差异 / |g| / G(q) 前后。 */
+  const checkLine = (() => {
+    const c = vm.installationCheck
+    if (!c) return null
+    const parts = [
+      `${t('settings:installation.checkReadback')} ${c.readbackDelta.toExponential(1)} ${
+        c.readbackOk ? t('settings:installation.checkOk') : t('settings:installation.checkReadbackFail')
+      }`,
+      `${t('settings:installation.checkMagnitude')}=${c.magnitude.toFixed(4)} ${
+        c.magnitudeOk ? t('settings:installation.checkOk') : t('settings:installation.checkWarn')
+      }`,
+      c.gqChanged === null
+        ? t('settings:installation.checkGqSkipped')
+        : `${c.gqChanged
+            ? t('settings:installation.checkGqChanged')
+            : t('settings:installation.checkGqUnchanged')}${
+            c.gqOk ? t('settings:installation.checkExpected') : t('settings:installation.checkUnexpected')
+          }`,
+    ]
+    return `${t('settings:installation.checkTitle')}：${parts.join(' · ')}`
+  })()
+
   const segmentStyles = {
     containerStyle: {
       display: 'flex' as const,
@@ -240,6 +294,10 @@ function InstallationSection({ vm }: { vm: SettingsState }) {
               key: pose.id,
               label: t(`settings:installation.pose.${pose.id}`),
               active: !custom && draftPose === pose.id,
+              // 按钮上写的就是将写进固件的那三个数 —— 省得去猜「侧装 +y」是哪一边。
+              title: t('settings:installation.presetVector', {
+                vector: pose.gravity.map((v) => `${v >= 0 ? '+' : ''}${v.toFixed(2)}`).join(', '),
+              }),
               onClick: () => pickPose(pose.id),
             })),
             // 「自定义」是能点的: 它是一个"这次不用预设"的选择, 而不是一块只能看的牌子。
@@ -289,12 +347,14 @@ function InstallationSection({ vm }: { vm: SettingsState }) {
         </div>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <span className="font-mono text-[0.6875rem] text-muted-foreground">gravity</span>
+          {/* 量程取固件对 item 6 的范围（±50），**不是** ±9.81：一轴 9.81 是"正装"的
+              样子，不是输入的边界。出带的向量要走确认闸去拦，而不是被控件悄悄夹回来。 */}
           {GRAVITY_AXES.map((axis, i) => (
             <InlineField key={axis} label={axis}>
               <NumberField
                 value={vector[i]}
-                min={-STANDARD_GRAVITY}
-                max={STANDARD_GRAVITY}
+                min={-GRAVITY_AXIS_LIMIT}
+                max={GRAVITY_AXIS_LIMIT}
                 step={0.0001}
                 digits={4}
                 disabled={!vm.connected}
@@ -339,9 +399,9 @@ function InstallationSection({ vm }: { vm: SettingsState }) {
           <Button
             size="sm"
             variant="outline"
-            disabled={!vm.connected || vm.saving || vm.enabled}
+            disabled={writeGated}
             title={vm.enabled ? t('settings:installation.armedHint') : undefined}
-            onClick={() => void vm.saveGravityVector(vector)}
+            onClick={send}
           >
             <Upload className="size-3.5" />
             {t('settings:installation.send')}
@@ -349,7 +409,7 @@ function InstallationSection({ vm }: { vm: SettingsState }) {
           <Button
             size="sm"
             variant="outline"
-            disabled={!vm.connected || vm.saving}
+            disabled={writeGated}
             title={t('settings:installation.persistTitle')}
             onClick={() => void vm.saveParams()}
           >
@@ -357,10 +417,23 @@ function InstallationSection({ vm }: { vm: SettingsState }) {
             {t('settings:installation.persist')}
           </Button>
         </div>
+        {vm.connected && !vm.gravitySynced ? (
+          <p className="text-[0.6875rem] leading-relaxed text-muted-foreground">
+            {t('settings:installation.gateNotRead')}
+          </p>
+        ) : null}
+        {vm.connected && !vm.stateKnown ? (
+          <p className="text-[0.6875rem] leading-relaxed text-amber-700 dark:text-amber-400">
+            {t('settings:installation.gateStateUnknown')}
+          </p>
+        ) : null}
         {vm.enabled ? (
           <p className="text-[0.6875rem] leading-relaxed text-amber-700 dark:text-amber-400">
             {t('settings:installation.armedHint')}
           </p>
+        ) : null}
+        {checkLine ? (
+          <p className="font-mono text-[0.6875rem] leading-relaxed text-muted-foreground">{checkLine}</p>
         ) : null}
         <p className="font-mono text-[0.6875rem] text-muted-foreground">
           {t('settings:installation.effective', {

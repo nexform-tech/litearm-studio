@@ -56,8 +56,17 @@ export const INSTALLATION_POSES: readonly InstallationPose[] = [
 /** 判定"这组读回值属于哪个预设"的容差: 固件按 f32 存, 量化误差远小于它。 */
 const POSE_EPSILON = 1e-3
 
-/** `|g|` 落在 9.81 的这个带宽内就算正常 (固件 f32 + 手输舍入)。 */
-const MAGNITUDE_TOLERANCE = 0.05
+/**
+ * `|g|` 相对 9.81 的允许偏差 —— 超过它就二次确认再下发。
+ *
+ * ⚠ 1% 是**工具侧定下的口径** (见 `litearm-tool-for-stm32` 的「安装方向」页
+ * `MAG_TOL_REL`): 抓的是"只改了一个分量"这类看着合理的错 —— 正装改侧装时 z 没清零,
+ * 模长就是 13.87 = 1.41g, 而固件照收不误。两个 9.81 都容不下。
+ */
+export const MAGNITUDE_TOLERANCE_REL = 0.01
+
+/** 单轴重力的可输入上限 (m/s²) —— 固件对 item 6 的范围就是 `[-50, 50]`。 */
+export const GRAVITY_AXIS_LIMIT = 50
 
 /** 3×3 行主序矩阵。 */
 type Mat3 = [number, number, number, number, number, number, number, number, number]
@@ -120,7 +129,8 @@ export function gravityMagnitude(gravity: readonly number[] | null | undefined):
 
 /** `|g|` 是不是标准重力 (界面上的绿勾)。 */
 export function isStandardMagnitude(gravity: readonly number[] | null | undefined): boolean {
-  return Math.abs(gravityMagnitude(gravity) - STANDARD_GRAVITY) <= MAGNITUDE_TOLERANCE
+  return Math.abs(gravityMagnitude(gravity) - STANDARD_GRAVITY)
+    <= STANDARD_GRAVITY * MAGNITUDE_TOLERANCE_REL
 }
 
 /** 预设本体 (找不到就抛 —— 调用方给的都是 `InstallationPoseId`)。 */
