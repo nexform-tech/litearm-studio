@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { toast } from 'sonner'
 import '@/i18n'
 
 // vitest 未开 globals：RTL 的自动 cleanup 不会注册。
@@ -37,7 +38,7 @@ const mocks = vi.hoisted(() => {
     open: vi.fn(),
     close: vi.fn(),
     grasp: vi.fn(),
-    release: vi.fn(),
+    setZeroGravity: vi.fn(),
     stop: vi.fn(),
     resetStop: vi.fn(),
     clearFault: vi.fn(),
@@ -59,7 +60,7 @@ vi.mock('@/lib/arm/gripperClient', () => ({
     open: mocks.open,
     close: mocks.close,
     grasp: mocks.grasp,
-    release: mocks.release,
+    setZeroGravity: mocks.setZeroGravity,
     stop: mocks.stop,
     resetStop: mocks.resetStop,
     clearFault: mocks.clearFault,
@@ -132,7 +133,7 @@ describe('GripperPanel', () => {
     connected()
     vi.clearAllMocks()
     for (const key of [
-      'open', 'close', 'grasp', 'release', 'stop', 'resetStop', 'clearFault', 'moveTo', 'setMotion',
+      'open', 'close', 'grasp', 'setZeroGravity', 'stop', 'resetStop', 'clearFault', 'moveTo', 'setMotion',
     ] as const) {
       mocks[key].mockResolvedValue(null)
     }
@@ -181,11 +182,32 @@ describe('GripperPanel', () => {
     fireEvent.click(screen.getByTestId('gripper-open'))
     fireEvent.click(screen.getByTestId('gripper-close'))
     fireEvent.click(screen.getByTestId('gripper-grasp'))
+    // 零重力是开关：没在零重力里时按下去, 发的是「进入」(`on:true`)。
     fireEvent.click(screen.getByTestId('gripper-release'))
     expect(mocks.open).toHaveBeenCalledTimes(1)
     expect(mocks.close).toHaveBeenCalledTimes(1)
     expect(mocks.grasp).toHaveBeenCalledTimes(1)
-    expect(mocks.release).toHaveBeenCalledTimes(1)
+    expect(mocks.setZeroGravity).toHaveBeenCalledWith(true)
+  })
+
+  it('shows the zero-gravity state the daemon reports, and clears it when the axis moves again', () => {
+    // 零重力是 daemon 的 `state:"released"` (`MotionState.RELEASE`), 不是界面猜的:
+    // 按钮亮起、多出一条标识，进入时弹一条提示。
+    connected({ state: { state: 'released' } })
+    const { rerender } = render(<GripperPanel />)
+    expect(screen.getByTestId('gripper-zero-gravity').textContent).toMatch(/Zero gravity|零重力/)
+    expect((screen.getByTestId('gripper-release') as HTMLButtonElement).getAttribute('aria-pressed')).toBe('true')
+    expect(toast.success).toHaveBeenCalled()
+
+    // 在零重力里再按一下 = **退出**: 发的是 `on:false`（daemon 会 hold 住当前姿态）。
+    fireEvent.click(screen.getByTestId('gripper-release'))
+    expect(mocks.setZeroGravity).toHaveBeenCalledWith(false)
+
+    // 一次运动把它带回位置控制: 标识必须消失，按钮回到未按下态。
+    connected({ state: { state: 'moving' } })
+    rerender(<GripperPanel />)
+    expect(screen.queryByTestId('gripper-zero-gravity')).toBeNull()
+    expect((screen.getByTestId('gripper-release') as HTMLButtonElement).getAttribute('aria-pressed')).toBe('false')
   })
 
   it('disables millimetre targets under a nominal template and explains why', () => {

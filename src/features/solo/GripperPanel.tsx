@@ -20,9 +20,11 @@ import { Card } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Slider } from '@/components/ui/slider'
+import { Toggle } from '@/components/ui/toggle'
 import { useGripperPanel, FORCE_MAX_N, SPEED_MAX_MM_S, SPEED_MIN_MM_S } from '@/features/gripper/useGripperPanel'
 import type { GripperPanelVm } from '@/features/gripper/useGripperPanel'
 import { useGripperChannels } from '@/lib/arm/useGripper'
+import { cn } from '@/lib/utils'
 import type { CalibrationSource } from '@/lib/arm/gripperClient'
 
 const SOURCE_KEYS: Record<CalibrationSource, string> = {
@@ -37,6 +39,22 @@ const WARNING_KEYS: Record<string, string> = {
   factory: 'gripper:source.factoryWarning',
   missing: 'gripper:source.missingWarning',
 }
+
+/**
+ * 零重力是**开关**（`gripper.set_zero_gravity`），不是一次性动作：按下进入、再按退出，
+ * 所以用 `Toggle` 而不是 `Button` —— 它的 `pressed` 直接读 daemon 推回的 `state:"released"`。
+ *
+ * 皮肤与 `ControlBar` 的零重力同一套（按下压一层主色底），`aria-pressed:` 和
+ * `data-[state=on]:` 两条都写：Radix 两个属性都挂，只写一条会在另一半上被 cva 的
+ * `aria-pressed:bg-muted` / `data-[state=on]:bg-muted` 盖掉。`!` 是必要的，见 ControlBar 注释。
+ */
+const ZERO_G_BUTTON = cn(
+  'h-9 min-w-0 cursor-pointer gap-1.5 rounded-lg border-line bg-background text-[0.75rem] font-semibold text-ink-strong shadow-xs transition-all',
+  'hover:border-line-strong hover:bg-muted/30',
+  'aria-pressed:border-primary! aria-pressed:bg-primary/10! aria-pressed:text-primary!',
+  'data-[state=on]:border-primary! data-[state=on]:bg-primary/10! data-[state=on]:text-primary!',
+  'aria-pressed:hover:bg-primary/15! data-[state=on]:hover:bg-primary/15!',
+)
 
 function sourceLabel(vm: GripperPanelVm, t: (key: string) => string): string {
   const source = vm.conn?.source
@@ -358,18 +376,33 @@ export function GripperPanel() {
           <Grab size="0.75rem" />
           {t('gripper:actions.grasp')}
         </Button>
-        <Button
+        <Toggle
           id="gripper-release"
           data-testid="gripper-release"
           variant="outline"
-          className="h-9 gap-1.5 rounded-lg border-line bg-background text-[0.75rem] font-semibold text-ink-strong shadow-xs transition-all hover:border-line-strong hover:bg-muted/30"
+          pressed={vm.released}
+          onPressedChange={vm.setZeroGravity}
+          title={vm.released ? t('gripper:zeroGravity.exitTitle') : t('gripper:zeroGravity.enterTitle')}
+          className={ZERO_G_BUTTON}
           disabled={!vm.connected || !vm.enabled}
-          onClick={vm.release}
         >
           <Feather size="0.75rem" />
           {t('gripper:actions.release')}
-        </Button>
+        </Toggle>
       </div>
+
+      {/* 零重力标识：daemon 把它单列成 `state:"released"`，所以这一态是从设备**读回来**的，
+          不是界面猜的；再按一次「零重力」或做任意一次运动，它才会消失。 */}
+      {vm.released ? (
+        <div
+          id="gripper-zero-gravity"
+          data-testid="gripper-zero-gravity"
+          className="flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/10 px-2.5 py-1.5 text-[0.65625rem] leading-snug text-primary"
+        >
+          <Feather size="0.75rem" className="flex-none" />
+          <span className="truncate">{t('gripper:zeroGravity.active')}</span>
+        </div>
+      ) : null}
 
       {/* 安全与急停工具条 */}
       <div className="flex gap-2">

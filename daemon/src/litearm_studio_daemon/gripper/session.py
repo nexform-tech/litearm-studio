@@ -77,6 +77,7 @@ GRIPPER_COMMANDS: Dict[str, str] = {
     "gripper.grasp": "夹取 (forceN?, holdS?) → {ok}",
     "gripper.move_to": "移动到 targetMm (0..行程, speedMmS?) → {ok}",
     "gripper.release": "零重力 (零力矩, 仍使能) → null",
+    "gripper.set_zero_gravity": "进入/退出零重力 (on) → {ok}",
     "gripper.stop": "急停 (不排队, 立即生效) → null",
     "gripper.reset_stop": "复位急停 → null",
     "gripper.set_motion": "改速度/夹持力 → 生效中的设置",
@@ -93,7 +94,7 @@ GRIPPER_COMMANDS: Dict[str, str] = {
 _NEEDS_CONNECTION = frozenset({
     "gripper.enable", "gripper.disable", "gripper.clear_fault",
     "gripper.open", "gripper.close", "gripper.grasp", "gripper.move_to",
-    "gripper.release", "gripper.reset_stop", "gripper.set_motion",
+    "gripper.release", "gripper.set_zero_gravity", "gripper.reset_stop", "gripper.set_motion",
     "gripper.load_template", "gripper.import_calibration", "gripper.write_zero",
 })
 
@@ -119,14 +120,22 @@ _WIRE_STATUS = {
 }
 
 #: Motion FSM state → the wire's ``state`` field (§4.1).
+#:
+#: ``RELEASE`` and ``ZERO_G`` are the two zero-gravity states (零力矩、仍使能、
+#: 可反驱) and get a value of their own: an operator who presses 零重力 has to see
+#: that the axis is free, and a zero-torque axis reads exactly like an idle one
+#: otherwise.  It is not ``"stopped"`` (that is the latched e-stop, which also
+#: disables) and not ``"disabled"`` (the motor is still energised).  They are the
+#: same physical state — the button toggles one, the calibration wizard holds the
+#: other — so they share the wire value.
 _MOTION_WIRE = {
     MotionState.IDLE: "ready",
     MotionState.HOLD: "holding",
     MotionState.HOLD_RAD: "holding",
     MotionState.SERVO: "moving",
     MotionState.HOLD_FORCE: "grasping",
-    MotionState.RELEASE: "ready",
-    MotionState.ZERO_G: "ready",
+    MotionState.RELEASE: "released",
+    MotionState.ZERO_G: "released",
     MotionState.FAULT: "fault",
     MotionState.BLOCKED: "fault",
 }
@@ -905,6 +914,20 @@ class GripperSession:
     def _cmd_release(self, p: dict) -> None:
         del p
         self.loop.submit(cmd.Release())
+
+    def _cmd_set_zero_gravity(self, p: dict) -> dict:
+        """The button's toggle: ``on`` enters zero gravity, ``off`` leaves it.
+
+        Entering is ``cmd.SetZeroGravity(True)`` — zero torque, still enabled,
+        back-drivable.  Leaving holds the pose the jaws are in, which is the same
+        job the arm's ``zero_g_stop`` does; the measured position it needs is the
+        worker's to take, so this only carries the direction.
+        """
+        on = p.get("on")
+        if not isinstance(on, bool):
+            raise ValueError("on 需布尔值")
+        self.loop.submit(cmd.SetZeroGravity(on=on))
+        return {"ok": True}
 
     def _cmd_stop(self, p: dict) -> None:
         del p

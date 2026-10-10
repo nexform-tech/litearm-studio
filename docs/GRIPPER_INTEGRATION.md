@@ -114,7 +114,7 @@ Additive. Existing arm frames and commands do not change.
 
 {"t":"gripper_state","stamp":123.4,"state":{
   "positionMm":41.2,"forceN":0.0,"torqueNm":0.0,
-  "enabled":true,"state":"ready|moving|grasping|holding|fault|disabled|stopped",
+  "enabled":true,"state":"ready|moving|grasping|holding|released|fault|disabled|stopped",
   "errorCode":1,"temps":{"mosTemp":31,"coilTemp":34},
   "fresh":true,"gate":"READY|TEMPLATE|FACTORY|BLOCKED","gateReason":"…"}}
 
@@ -171,6 +171,7 @@ progress, so the page can say why it is waiting.
 | `gripper.grasp` | `forceN?`, `holdS?` | `{"ok":true}` |
 | `gripper.move_to` | `targetMm` (0..travel), `speedMmS?` | `{"ok":true}` |
 | `gripper.release` | — | `null` (zero torque, stays enabled, back-drivable) |
+| `gripper.set_zero_gravity` | `on` (bool) | `{"ok":true}` — `on` enters zero gravity (zero torque), `off` leaves it and holds the current pose |
 | `gripper.stop` | — | `null` (E-stop) |
 | `gripper.reset_stop` | — | `null` (release the latch) |
 | `gripper.set_motion` | `speedMmS?`, `forceN?` | the settings now in effect |

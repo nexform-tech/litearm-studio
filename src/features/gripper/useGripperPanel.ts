@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { useGripperAlerts, useGripperCalibration, useGripperConnection, useGripperState } from '@/lib/arm/useGripper'
@@ -79,6 +79,9 @@ export function useGripperPanel() {
   const connected = status === 'connected'
   const enabled = state?.enabled === true
   const estopped = state?.state === 'stopped'
+  /** 零重力（零力矩、仍使能、可反驱）。daemon 把 `RELEASE` 与 `ZERO_G` 都报成
+   * `state:"released"` —— 两者物理相同，都是 `gripper.set_zero_gravity` 的两端。 */
+  const released = state?.state === 'released'
   const gate = state?.gate ?? conn?.gate ?? null
   const travelMm = conn?.travelMm && conn.travelMm > 0 ? conn.travelMm : 85
   const mountMismatch =
@@ -101,6 +104,26 @@ export function useGripperPanel() {
   useEffect(() => {
     storeStored(FORCE_STORAGE_KEY, forceN)
   }, [forceN])
+
+  // 零重力是**一个开关**：`gripper.set_zero_gravity` 的 `on` 进入（零力矩、仍使能、
+  // 可反驱），`off` 退出并保持当前姿态；而**任何一次运动**（张开/闭合/夹取/移动到）
+  // 也会把它带回位置控制。所以每次跨越这条边界都用一条提示说清楚 —— 按下按钮必须
+  // 立刻看见反应，而不是盯着一个什么都没变的读数。
+  //
+  // 断开时 `state` 变 `null`（`released` 跟着变 false），但那不是「退出零重力」，
+  // 所以只在仍连着的时候报退出。提示共用一条 id，连续几条不会把屏幕刷满。
+  const hadReleased = useRef(false)
+  useEffect(() => {
+    if (released === hadReleased.current) return
+    const wasReleased = hadReleased.current
+    hadReleased.current = released
+    if (!connected) return
+    if (released) {
+      toast.success(t('gripper:zeroGravity.entered'), { id: 'gripper-zero-gravity' })
+    } else if (wasReleased) {
+      toast.info(t('gripper:zeroGravity.exited'), { id: 'gripper-zero-gravity' })
+    }
+  }, [released, connected, t])
 
   const fail = useCallback(
     (op: string) => (err: unknown) => {
@@ -155,8 +178,8 @@ export function useGripperPanel() {
     () => run(t('gripper:actions.grasp'), () => gripperClient.grasp({ forceN })),
     [run, t, forceN],
   )
-  const release = useCallback(
-    () => run(t('gripper:actions.release'), () => gripperClient.release()),
+  const setZeroGravity = useCallback(
+    (next: boolean) => run(t('gripper:actions.release'), () => gripperClient.setZeroGravity(next)),
     [run, t],
   )
   const stop = useCallback(() => run(t('gripper:actions.stop'), () => gripperClient.stop()), [run, t])
@@ -216,7 +239,7 @@ export function useGripperPanel() {
   const stateLabel = useMemo(() => {
     const key = state?.state
     if (!key) return t('gripper:readout.unknown')
-    const known = ['ready', 'moving', 'grasping', 'holding', 'fault', 'disabled', 'stopped']
+    const known = ['ready', 'moving', 'grasping', 'holding', 'released', 'fault', 'disabled', 'stopped']
     return known.includes(key) ? t(`gripper:state.${key}`) : key
   }, [state?.state, t])
 
@@ -239,6 +262,7 @@ export function useGripperPanel() {
     disabledReason,
     enabled,
     estopped,
+    released,
     travelMm,
     mountMismatch,
     calib,
@@ -257,7 +281,7 @@ export function useGripperPanel() {
     open,
     close,
     grasp,
-    release,
+    setZeroGravity,
     stop,
     resetStop,
     clearFault,
