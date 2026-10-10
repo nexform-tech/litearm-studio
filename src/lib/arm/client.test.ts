@@ -252,6 +252,8 @@ describe('ArmClient (daemon WebSocket)', () => {
       [() => client.setGravityScale([1, 1, 1, 1, 1, 1, 1]), { m: 'set_gravity_scale', p: { values: [1, 1, 1, 1, 1, 1, 1] } }],
       [() => client.setInertiaScale([1, 1, 1, 1, 1, 1, 1]), { m: 'set_inertia_scale', p: { values: [1, 1, 1, 1, 1, 1, 1] } }],
       [() => client.setGravityVector([0, 0, -1]), { m: 'set_gravity_vector', p: { g: [0, 0, -1] } }],
+      [() => client.getGravity(), { m: 'get_gravity', p: {} }],
+      [() => client.getGravity([0, 1, 0, 0, 0, 0, 0]), { m: 'get_gravity', p: { q: [0, 1, 0, 0, 0, 0, 0] } }],
       [() => client.setJointParam(2, 50, 2, 10), { m: 'set_joint_param', p: { idx: 2, kp: 50, kd: 2, tau_max: 10 } }],
       [() => client.setJointLimits(2, -1.5, 1.5), { m: 'set_joint_limits', p: { idx: 2, q_min: -1.5, q_max: 1.5 } }],
       [() => client.saveParams(), { m: 'save_params', p: {} }],
@@ -291,6 +293,15 @@ describe('ArmClient (daemon WebSocket)', () => {
     expect(frame).toMatchObject({ m: 'get_ff_vec', p: { item: 7 } })
     ws.receive({ t: 'res', id: frame.id, ok: true, v: [1, 2, 3, 4, 5, 6, 7] })
     await expect(promise).resolves.toEqual([1, 2, 3, 4, 5, 6, 7])
+  })
+
+  it('getGravity() keeps the model gravity term the daemon answers with', async () => {
+    const { client, ws } = connectedClient()
+    const promise = client.getGravity([0, 0.2, 0, 0, 0, 0, 0])
+    const frame = ws.lastFrame('cmd')!
+    expect(frame).toMatchObject({ m: 'get_gravity', p: { q: [0, 0.2, 0, 0, 0, 0, 0] } })
+    ws.receive({ t: 'res', id: frame.id, ok: true, v: [1.5, 0, 0, 0, 0, 0, 0] })
+    await expect(promise).resolves.toEqual([1.5, 0, 0, 0, 0, 0, 0])
   })
 
   it('license() sends the read-only command and keeps the UID the signer needs', async () => {

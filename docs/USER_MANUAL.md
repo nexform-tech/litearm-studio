@@ -34,7 +34,7 @@ STM32 firmware ──USB CDC (1d50:606f)──> CAN ──> motors
 | :--- | :--- |
 | Control | 3D pose monitoring & simulation, joint angle control, Cartesian jog & linear interpolation, mode switching, one-click homing |
 | Telemetry | Joint telemetry sampling & recording, session details, CSV export |
-| Settings | End-effector payload, gravity & inertia, gains & limits, diagnostics, gripper & bus, activation |
+| Settings | End-effector payload, mounting direction, gains & limits, diagnostics, gripper & bus, activation |
 | Activation | Fill in a registration form once, before first use, to unlock the arm |
 
 ### 1.2 Install and run
@@ -272,7 +272,7 @@ The current version has no separate "Controller Logs" page. For link health, use
 
 ## 5. System & Algorithm Settings
 
-The Settings page is organised into seven tabs: **Payload / Gravity & Inertia / Gains & Limits / Diagnostics / Gripper & Bus / Activation / Firmware update** (activation is covered in §1.4, the firmware update in §5.7).
+The Settings page is organised into seven tabs: **Payload / Mounting / Gains & Limits / Diagnostics / Gripper & Bus / Activation / Firmware update** (activation is covered in §1.4, the firmware update in §5.7).
 
 ### 5.1 Payload
 
@@ -283,12 +283,19 @@ Configure the tool/workpiece mass and centre of mass used by the firmware's grav
 
 ---
 
-### 5.2 Gravity & Inertia
+### 5.2 Mounting
 
-- **Per-joint gravity scale**: the feed-forward gain for each joint; `1.0` is the firmware default;
-- **Per-joint inertia scale**: the inertia term on the same feed-forward channels;
-- **Gravity direction**: the gravity unit vector in the base frame (feed-forward scalar item 6);
-- ⚠ The firmware's feed-forward vector is fixed at **7 channels**. When the arm reports fewer axes, the panel draws only the existing channels, but **saving still writes all 7 values**.
+How the base is mounted (upright / inverted / side ±x / ±y). The firmware has no separate mounting-pose command — it only takes the **gravity vector** in the base frame (m/s², feed-forward scalar item 6) — so this tab lets you pick the mounting and works out the vector.
+
+- **Choose the mounting direction**: six presets, each with its base_rpy and gravity vector; the button names the three numbers that will be sent;
+- **Mounting pose and vector**: `g = R(base_rpy)ᵀ·(0,0,-9.81)`, the same expression as the firmware's `kin.c`. Editing rpy recomputes the vector; editing the vector marks rpy as "Custom" (the inverse is not unique, so it is not solved). Each axis accepts the firmware's range for item 6 (±50 m/s²);
+- **Read current / Send (arm must be disabled) / Persist to flash**: read the effective value back, write it to RAM, write it to flash;
+- **Three gates (if any one fails, not a single frame is sent)**:
+  1. **Never write what you have not read**: until the device's current direction has been read back successfully, Send and Persist stay greyed out — otherwise the form's defaults (`[0,0,0]`) get written to the device as if they were a mounting;
+  2. **The arm must be disarmed**: sending is blocked while the drives are enabled **or while the state is unknown** (not one state frame has arrived). Changing the gravity vector steps the gravity feed-forward within a single cycle, and the three components are **not atomic** — halfway through, the magnitude is 13.87 (1.41 g) with the direction 45° off. This page will **not** disarm the arm for you: disarming has physical consequences (the arm loses its holding torque), and that is a decision made on the control page;
+  3. **A `|g|` more than 1% away from 9.81 asks for confirmation**: it catches the plausible-looking mistake of editing one component only (upright→side with z left at -9.81);
+- **Post-write self-check**: once the write is done, the tab reports three things — the **read-back delta** (the three numbers read back vs what was written; only a difference within f32 rounding counts as a match), **`|g|`** (is the read-back magnitude still near 9.81), and **`G(q)` before/after** (the firmware model's gravity term: writing the same value must not move it, a changed value must). The first two only show that the bytes landed — **only the `G(q)` leg shows the value actually reached the model**. On firmware without that command (0x39) the line says "skipped" rather than pretending it passed;
+- ⚠ A preset only fills the draft; nothing reaches the firmware until you press Send. The "Device now" line reads the firmware, not the draft you are editing.
 
 ---
 

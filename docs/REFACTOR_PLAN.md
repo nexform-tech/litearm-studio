@@ -117,6 +117,7 @@ litearm-python  ──USB CDC (1d50:606f @921600)──>  STM32  ──CAN──
 | `set_gravity_scale` / `set_inertia_scale` | 同名 | 重力/惯量前馈系数（vec item 7/8） |
 | `set_gravity_vector` | `arm.set_gravity_vector(g)` | 重力方向（scalar item 6） |
 | `get_ff_vec` / `get_ff_scalar` | 同名 | 读回，与上一组构成写→读回闭环 |
+| `get_gravity` | `arm.model.get_gravity(q)` | 给定姿态的模型重力项 `G(q)`（0x39，纯读）—— 安装方向写完后的"真的进了模型"自检；省略 `q` 用最近一帧状态的姿态 |
 | `kin_bench` | `arm.diag.kin_bench()` | 固件自检 + 链路诊断计数 |
 | `license` | `arm.license()` | 只读：授权状态 + 设备 UID（**未激活是状态不是错误**；契约见 [ACTIVATION.md](ACTIVATION.md)） |
 | `activate` | 激活服务 + `arm.activate()` | 提交注册信息换取本机凭据并写入设备（**唯一出网的一条**，须失能态） |

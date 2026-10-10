@@ -49,7 +49,7 @@ litearm-python  ──USB CDC (1d50:606f)──>  STM32  ──CAN──>  motor
   - 1 Hz state records in the daemon's log file as `kind: "sample"`, so a session's
     numbers sit next to its events.
 - **LiteGrip gripper** (Linux only) — enable, open, close, grasp and release, with live position, force, torque and temperature readings and a calibration check on the Gripper page.
-- **Settings and activation** — payload, gravity and inertia, per-joint gains and soft limits, the firmware self-test, USB DFU firmware update, and the one-time arm activation.
+- **Settings and activation** — payload, mounting direction (upright / inverted / side ±x / ±y, sent to the firmware as the base-frame gravity vector), per-joint gains and soft limits, the firmware self-test, USB DFU firmware update, and the one-time arm activation.
 - **Internationalization** — English / 简体中文.
 
 ### Not in this build

@@ -38,6 +38,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import litearm
 from litearm import Arm
+from litearm.model import MODEL_JM_N as GRAVITY_JOINT_COUNT
 
 from . import statemap
 from . import activation
@@ -207,6 +208,8 @@ COMMANDS: Dict[str, str] = {
     "set_gravity_vector": "设重力方向向量 (前馈 scalar item 6, 3 值)",
     "get_ff_vec": "读回前馈向量 (item 7=重力系数 / 8=惯量系数)",
     "get_ff_scalar": "读回前馈标量 (item 4=载荷质量 / 5=质心 / 6=重力向量)",
+    "get_gravity": "读固件动力学模型在给定关节角下的重力项 G(q) (0x39, 纯读) —— "
+                   "安装方向下发后的\"真的进了模型\"自检用它, 省略 q 则用最近一帧状态的姿态",
     "kin_bench": "固件运动学自检 + 链路诊断计数",
     # ---- 授权/激活 (只读那一半; 提交凭据要等凭据格式定稿, 见 docs/ACTIVATION.md) ----
     "license": "读设备授权记录: 是否已激活 + 设备 UID (arm.license) —— "
@@ -1320,6 +1323,22 @@ class Session:
                 sub_idx = p.get("sub", 0)
                 return statemap.jsonable(
                     arm.get_ff_scalar(_int(p, "item"), _int_value(sub_idx, "sub")).value)
+            if m == "get_gravity":
+                # ⚠ `q` 可省: 省了就取**最近一帧状态**的关节角。这不是"图省事" ——
+                #   工具页的自检要在**同一个姿态**上比前后两次 G(q), 由守护进程给出
+                #   这一帧最省事也最不容易错位 (前端手里的 q 可能已经旧了几十毫秒)。
+                #   没有状态帧就**拒绝**: 拿 `[0]*n` 冒充姿态会让"写进去了没有"
+                #   这个判据悄悄失去意义 —— 那是这条命令唯一的存在理由。
+                q_raw = p.get("q")
+                if q_raw is None:
+                    q_raw = getattr(self._state, "q", None)
+                if q_raw is None:
+                    raise ValueError("尚未收到状态帧 —— 无法确定 G(q) 的姿态")
+                # ⚠ 7 是 **SDK 的 `MODEL_JM_N`**, 不是"这台臂的轴数": 动力学模型恒 9 刚体 /
+                #   7 关节, 台架 1J 上也一样 —— 拿轴数当长度会在这条命令上恰好一致、
+                #   在别的机型上错得静默。
+                q = _vector(q_raw, GRAVITY_JOINT_COUNT, "q")
+                return statemap.jsonable(arm.model.get_gravity(q).value)
             if m == "kin_bench":
                 return statemap.jsonable(arm.diag.kin_bench().value)
             if m == "license":

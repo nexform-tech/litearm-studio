@@ -680,6 +680,17 @@ export class ArmClient {
     return [x, y, z]
   }
 
+  /**
+   * 固件动力学模型在某个姿态下的重力项 `G(q)`（0x39，纯读、无门控）。
+   *
+   * 省略 `q` 时用守护进程**最近一帧状态**的关节角 —— 「安装方向」下发后的自检靠它
+   * 证明"重力向量真的进了模型"，而不是只证明"字节写进去了"（读回一致只说明后者）。
+   */
+  async getGravity(q?: number[]): Promise<number[]> {
+    const v = await this._sendCmd('get_gravity', q == null ? {} : { q })
+    return Array.isArray(v) ? v.map((x) => (typeof x === 'number' ? x : Number(x) || 0)) : []
+  }
+
   /** 逐轴 MIT 刚度/阻尼/力矩钳幅（RAM，需 `saveParams()` 才持久化）。 */
   async setJointParam(idx: number, kp: number, kd: number, tau_max: number): Promise<unknown> {
     return this._sendCmd('set_joint_param', { idx, kp, kd, tau_max })

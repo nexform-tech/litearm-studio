@@ -915,6 +915,32 @@ def test_gravity_vector_roundtrip(fake_session: Session) -> None:
     assert got == pytest.approx([0.0, 0.0, -9.81])
 
 
+def test_get_gravity_follows_the_pose_it_is_given(fake_session: Session) -> None:
+    """`get_gravity` 是"写进去了没有"的判据，所以姿态必须真的进到固件那一侧。
+
+    桩固件的 G(q) 只让 J1 那一项随 `q[1]` 变（见 `litearm.testing`），于是"换一个
+    姿态、G 的第一项跟着变"正好证明 `q` 被送进了 0x39，而不是被忽略后随便回一帧。
+    """
+    upright = fake_session.execute("get_gravity", {"q": [0.0] * 7})
+    tilted = fake_session.execute("get_gravity", {"q": [0.0, 0.4, 0.0, 0.0, 0.0, 0.0, 0.0]})
+
+    assert len(upright) == len(tilted) == 7
+    assert all(isinstance(v, float) for v in upright)
+    assert tilted[0] != upright[0]
+    # 其余分量只跟模型质量有关，与姿态无关 —— 换姿态不该把它们也搅动。
+    assert tilted[1:] == pytest.approx(upright[1:])
+
+
+def test_get_gravity_without_q_uses_the_last_state_frame(fake_session: Session) -> None:
+    """省略 `q` 时用**最近一帧状态**的姿态（页面自检的默认路径）。"""
+    assert _wait(lambda: fake_session.state() is not None), "假会话没推出状态帧"
+
+    got = fake_session.execute("get_gravity", {})
+
+    assert len(got) == 7
+    assert got == pytest.approx(fake_session.execute("get_gravity", {"q": [0.0] * 7}))
+
+
 def test_kin_bench_returns_timings_and_link(fake_session: Session) -> None:
     bench = fake_session.execute("kin_bench", {})
     assert isinstance(bench, dict)
@@ -942,6 +968,7 @@ def test_reset_factory_params_requires_disarmed(fake_session: Session) -> None:
     ("set_gravity_vector", {"g": [0.0, 0.0]}),             # 需 3 值
     ("get_ff_vec", {}),                                    # 缺 item
     ("get_ff_scalar", {"item": "7"}),                      # item 非整数
+    ("get_gravity", {"q": [0.0] * 6}),                     # 模型恒 7 关节, 长度不对
 ])
 def test_calibration_commands_validate_their_arguments(fake_session: Session,
                                                        method: str,
