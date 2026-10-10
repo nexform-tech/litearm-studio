@@ -144,17 +144,20 @@ the Debian package yourself, run `make deb` (Docker; it pins the Ubuntu 22.04 to
 frozen runtime has to be linked against — see [daemon/README.md](daemon/README.md#打包phase-5)).
 For the bare executable instead, run `pnpm build` and then `python packaging/build.py`.
 
-On Windows the same artifact is built by `scripts/build-windows.ps1` — the counterpart of
-`make deb`, and the one build path that needs no Docker. It mirrors the checkout to a
-Windows-local directory when the source is on a WSL share (PyInstaller over 9p is slow and
-fragile), builds in the venv it keeps under `%USERPROFILE%\litearm-studio-win`, and takes the
-two SDKs from the `sdk/` submodules like every other path. `scripts/deploy-windows.ps1` then
-names the result `litearm-studio-<version>-windows-amd64.exe` and writes its `.sha256`:
+Building the Windows executable by hand is the one path that needs no Docker, and it is the
+only thing `scripts/build-windows.ps1` does: mirror the checkout to a Windows-local directory
+when the source sits on a WSL share (PyInstaller over 9p is slow and fragile), build in the
+venv it keeps under `%USERPROFILE%\litearm-studio-win`, and call the same
+`packaging/build.py` the release job calls. It installs the two SDKs from the `sdk/`
+submodules like every other path.
 
 ```powershell
 .\scripts\build-windows.ps1 -Source \\wsl.localhost\Debian\home\me\litearm\litearm-studio
-.\scripts\deploy-windows.ps1 -Artifact <workdir>\litearm-studio\packaging\dist\litearm-studio-daemon.exe -CopyTo $env:USERPROFILE\Desktop
 ```
+
+Naming the result `litearm-studio-<version>-windows-amd64.exe` and writing its `.sha256` is
+the release job's business (`.github/workflows/release.yml`, `packaging/checksums.py`); a
+local build stops at `packaging/dist/litearm-studio-daemon.exe`.
 
 The Windows executable carries the LiteArm icon from `assets/litearm.ico`. It is committed, so a
 normal build never regenerates it; rebuild it only when the brand mark changes, and keep

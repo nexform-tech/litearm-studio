@@ -131,17 +131,19 @@ chmod +x "litearm-studio-${version}-linux-amd64"
 发布附件由 `.github/workflows/release.yml` 的 `package` job 产出；自己构建则先 `pnpm build`
 再执行 `python packaging/build.py`。
 
-Windows 上是同一个产物，由 `scripts/build-windows.ps1` 构建 —— 它是 `make deb` 的对等物，
-也是唯一不需要 Docker 的构建路径。源码在 WSL 共享路径上时，它先把整棵树镜像到 Windows
+手工构建 Windows 可执行文件是唯一不需要 Docker 的路径，而这也是
+`scripts/build-windows.ps1` 的全部职责：源码在 WSL 共享路径上时先把整棵树镜像到 Windows
 本地目录（PyInstaller 直接跑在 9p 共享上又慢又脆），在 `%USERPROFILE%\litearm-studio-win`
-下复用同一个 venv，两个 SDK 与其它路径一样取自 `sdk/` 这两个 submodule。构建完之后用
-`scripts/deploy-windows.ps1` 命名成 `litearm-studio-<版本>-windows-amd64.exe` 并写出
-`.sha256`：
+下复用同一个 venv，然后调用发布流水线用的同一个 `packaging/build.py`。两个 SDK 与其它
+路径一样取自 `sdk/` 这两个 submodule。
 
 ```powershell
 .\scripts\build-windows.ps1 -Source \\wsl.localhost\Debian\home\me\litearm\litearm-studio
-.\scripts\deploy-windows.ps1 -Artifact <工作目录>\litearm-studio\packaging\dist\litearm-studio-daemon.exe -CopyTo $env:USERPROFILE\Desktop
 ```
+
+把产物命名成 `litearm-studio-<版本>-windows-amd64.exe`、写出 `.sha256` 是发布 job 的事
+（`.github/workflows/release.yml`、`packaging/checksums.py`）；手工构建到
+`packaging/dist/litearm-studio-daemon.exe` 为止。
 
 Windows 可执行文件使用 `assets/litearm.ico` 作为图标。该文件已入库，正常构建不需要重新生成；
 只有在品牌标识变化时才需要重建，并且始终以 `assets/icon-source.svg` 为准：
