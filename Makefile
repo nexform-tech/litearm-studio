@@ -10,13 +10,14 @@
 #   make typecheck  Run TypeScript type checking
 #   make build      Build production web bundle (tsc + Vite, output to dist/)
 #   make preview    Preview production web build locally
+#   make deb        Build the installable Debian package (Docker, Ubuntu 22.04 base)
 
 SHELL := /bin/bash
 ROOT := $(CURDIR)
 
 .DEFAULT_GOAL := help
 
-.PHONY: help setup dev test lint typecheck build preview pdf pdf-zh pdf-en docs doc
+.PHONY: help setup dev test lint typecheck build preview deb deb-image pdf pdf-zh pdf-en docs doc
 
 help: ## Show available commands
 	@echo 'LiteArm Studio'
@@ -43,6 +44,12 @@ build: ## Build production web app (tsc + Vite, output to dist/)
 
 preview: ## Preview production build locally
 	pnpm preview
+
+deb: ## Build the installable Debian package (Docker, Ubuntu 22.04 base)
+	./scripts/build-deb.sh
+
+deb-image: ## (Re)build the container image the .deb build runs in
+	docker build -f packaging/deb.Dockerfile -t litearm-studio-deb-builder:22.04 .
 
 pdf: ## Build documentation PDFs (Quickstart + User Manual)
 	$(MAKE) -C docs pdf
