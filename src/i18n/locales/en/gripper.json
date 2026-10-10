@@ -82,9 +82,17 @@
     "moving": "Moving",
     "grasping": "Grasping",
     "holding": "Holding",
+    "released": "Zero gravity",
     "fault": "Fault",
     "disabled": "Disabled",
     "stopped": "Stopped"
+  },
+  "zeroGravity": {
+    "active": "Zero gravity · zero torque, back-drivable",
+    "enterTitle": "Enter zero gravity: zero torque while energised, the jaws can be pushed by hand",
+    "exitTitle": "Leave zero gravity: open, close, grasp or any other move restores position control",
+    "entered": "Entered zero gravity",
+    "exited": "Left zero gravity"
   },
   "busy": {
     "label": "Gripper busy",

@@ -213,7 +213,7 @@ def test_commands_need_a_connection(tmp_path: Path) -> None:
     try:
         for method in ("gripper.enable", "gripper.open", "gripper.move_to",
                        "gripper.set_motion", "gripper.release",
-                       "gripper.write_zero"):
+                       "gripper.set_zero_gravity", "gripper.write_zero"):
             with pytest.raises(GripperNotConnectedError):
                 session.execute(method, {"targetMm": 10.0})
         # 断开/连接本身在未连接时是合法的 (幂等), 急停也是。
@@ -279,6 +279,36 @@ def test_a_grasp_with_a_hold_time_lets_go_by_itself(tmp_path: Path) -> None:
             session.loop.motion.state
         # 零重力不是失能: 电机仍在使能, 可以被推。
         assert session.state()["enabled"] is True
+    finally:
+        session.close()
+
+
+def test_set_zero_gravity_is_a_switch_enter_and_exit(tmp_path: Path) -> None:
+    """§6.3: 按钮是**开关** —— `on:true` 进零重力 (`state:"released"`), `on:false` 退出并
+    回到持位 (`state:"holding"`)。两个方向都在同一条线上, 操作员按一下就能退出来。"""
+    session = make_session(tmp_path)
+    try:
+        connect(session)
+        session.execute("gripper.enable", {})
+        assert wait_for(lambda: session.state() and session.state()["enabled"])
+
+        assert session.execute("gripper.set_zero_gravity", {"on": True}) == {"ok": True}
+        assert wait_for(
+            lambda: session.state() and session.state()["state"] == "released"), \
+            session.state()
+        # 零重力不是失能: 电机仍使能, 可以被推。
+        assert session.state()["enabled"] is True
+
+        assert session.execute("gripper.set_zero_gravity", {"on": False}) == {"ok": True}
+        assert wait_for(
+            lambda: session.state() and session.state()["state"] == "holding"), \
+            session.state()
+
+        # `on` 必须是布尔 —— `"false"`/`1` 这种真值会让开关悄悄卡在一个方向。
+        with pytest.raises(ValueError):
+            session.execute("gripper.set_zero_gravity", {})
+        with pytest.raises(ValueError):
+            session.execute("gripper.set_zero_gravity", {"on": "true"})
     finally:
         session.close()
 

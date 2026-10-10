@@ -82,9 +82,17 @@
     "moving": "运动中",
     "grasping": "夹持中",
     "holding": "保持中",
+    "released": "零重力",
     "fault": "故障",
     "disabled": "未使能",
     "stopped": "急停"
+  },
+  "zeroGravity": {
+    "active": "零重力中 · 零力矩可反驱",
+    "enterTitle": "进入零重力：零力矩、仍使能，可用手直接推动夹爪",
+    "exitTitle": "退出零重力：做张开/闭合/夹取等任意动作即恢复位置控制",
+    "entered": "进入零重力",
+    "exited": "退出零重力"
   },
   "busy": {
     "label": "夹爪忙碌",

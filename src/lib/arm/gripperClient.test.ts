@@ -192,7 +192,7 @@ describe('GripperClient (daemon WebSocket)', () => {
       client.close(),
       client.grasp({ forceN: 20, holdS: 2 }),
       client.moveTo(40, 60),
-      client.release(),
+      client.setZeroGravity(true),
       client.stop(),
       client.resetStop(),
       client.setMotion({ speedMmS: 30, forceN: 12 }),
@@ -213,7 +213,7 @@ describe('GripperClient (daemon WebSocket)', () => {
       'gripper.close',
       'gripper.grasp',
       'gripper.move_to',
-      'gripper.release',
+      'gripper.set_zero_gravity',
       'gripper.stop',
       'gripper.reset_stop',
       'gripper.set_motion',
@@ -225,6 +225,7 @@ describe('GripperClient (daemon WebSocket)', () => {
     expect(ws.lastFrame('gripper.move_to')!.p).toEqual({ targetMm: 40, speedMmS: 60 })
     expect(ws.lastFrame('gripper.connect')!.p).toEqual({ channel: 'can1', canId: 9, mount: 'reverse' })
     expect(ws.lastFrame('gripper.grasp')!.p).toEqual({ forceN: 20, holdS: 2 })
+    expect(ws.lastFrame('gripper.set_zero_gravity')!.p).toEqual({ on: true })
 
     // 让在途 RPC 收尾（daemon 的 res：id 就是帧里的 id）。
     for (const frame of ws.frames().filter((f) => f.t === 'cmd')) {

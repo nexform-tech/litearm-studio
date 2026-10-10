@@ -265,9 +265,9 @@ export class GripperClient {
     return this._cmd('gripper.move_to', speedMmS == null ? { targetMm } : { targetMm, speedMmS })
   }
 
-  /** 零重力：零力矩、仍使能、可反驱。 */
-  release() {
-    return this._cmd('gripper.release')
+  /** 零重力开关：`on` 进入（零力矩、仍使能、可反驱），`off` 退出并保持当前姿态。 */
+  setZeroGravity(on: boolean) {
+    return this._cmd('gripper.set_zero_gravity', { on })
   }
 
   /** 急停。⚠ daemon 在 WS 读循环上直接处理，不排队（§4.2）。 */
