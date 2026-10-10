@@ -154,6 +154,11 @@ def test_launcher_is_a_wrapper_around_the_bundled_executable():
     script = deb.launcher_script()
     assert script.startswith("#!/bin/sh\n")
     assert f'exec {deb.INSTALL_DIR}/{deb.BINARY_NAME} "$@"' in script
+    # The wrapper points the gripper at the packaged default calibration: the path
+    # under /usr/lib stays put across launches (the one-file bundle unpacks to a
+    # fresh temp dir each time), so the settings page can name a stable file.
+    assert f"LITEGRIP_FACTORY_CALIB={deb.INSTALL_DIR}/factory_calibration.json" in script
+    assert "export LITEGRIP_FACTORY_CALIB" in script
 
 
 def test_udev_rule_grants_the_desktop_user_access():
@@ -184,6 +189,9 @@ def test_payload_installs_the_executable_the_launcher_and_every_icon_size(tmp_pa
     modes = {path.as_posix(): mode for path, _source, mode in entries}
 
     assert modes[f"usr/lib/{deb.PACKAGE}/{deb.BINARY_NAME}"] == 0o755
+    # The default gripper calibration ships beside the executable, at the path the
+    # launcher exports as LITEGRIP_FACTORY_CALIB.
+    assert modes[f"usr/lib/{deb.PACKAGE}/factory_calibration.json"] == 0o644
     assert modes[f"usr/bin/{deb.LAUNCHER}"] == 0o755
     assert modes[f"usr/share/applications/{deb.PACKAGE}.desktop"] == 0o644
     assert modes[f"usr/lib/udev/rules.d/60-{deb.PACKAGE}.rules"] == 0o644
