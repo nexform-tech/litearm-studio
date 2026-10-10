@@ -296,3 +296,39 @@ def test_gripper_list_dir_round_trips_before_any_connection(tmp_path: Path) -> N
     finally:
         session.close()
         gripper.close()
+
+
+def test_gripper_write_zero_round_trips_over_the_socket(tmp_path: Path) -> None:
+    """`gripper.write_zero` 走普通命令路 (COMMAND_TIMEOUT_S 兜底): 等 tick 回结果。
+
+    它不再是那条要跑几十秒的 `gripper.zero` —— 写零位是单帧 + 回读, 秒级返回。
+    """
+    session, gripper, app = _make(tmp_path)
+    assert gripper is not None
+    try:
+        with TestClient(app) as client:
+            with client.websocket_connect("/ws") as ws:
+                ws.receive_json()
+                ws.receive_json()
+                ws.receive_json()
+                _connect_gripper(ws)
+
+                ws.send_json({"t": "cmd", "id": 2, "m": "gripper.enable", "p": {}})
+                assert _recv_until(ws, "res")["v"] == {"enabled": True}
+                # 等到第一条带位置的状态帧, 写零位才有可回读的角度。
+                deadline = time.monotonic() + 5.0
+                while time.monotonic() < deadline:
+                    frame = ws.receive_json()
+                    if (frame["t"] == "gripper_state"
+                            and frame["state"]["positionMm"] is not None):
+                        break
+                else:
+                    raise AssertionError("没等到带位置的状态帧")
+
+                ws.send_json({"t": "cmd", "id": 3, "m": "gripper.write_zero", "p": {}})
+                res = _recv_until(ws, "res")
+                assert res["ok"] is True
+                assert abs(res["v"]["afterRad"]) < 1e-3
+    finally:
+        session.close()
+        gripper.close()

@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import json
-import threading
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -118,14 +117,44 @@ def test_row_5_a_measured_file_beats_a_declared_mount(home: Path) -> None:
     assert info.provenance == calibration.PROVENANCE_USER
 
 
-def test_row_6_the_factory_file_is_reported_as_factory(home: Path, tmp_path: Path,
-                                                       monkeypatch: pytest.MonkeyPatch) -> None:
+def test_row_5_the_bundled_default_is_adopted_as_a_user_calibration(
+        home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """没有实测文件时, 打包的 factory_calibration.json 就是默认选中的标定。
+
+    按"已选" (``PROVENANCE_USER``) 分类, 不是 ``factory``: 它是控制台自带的默认,
+    不是从别的机器上读来的数据, 所以闸门立即放行, 不必先确认。来源带一条警告。
+    """
     factory = write(tmp_path / "factory.json", VALID)
     monkeypatch.setenv("LITEGRIP_FACTORY_CALIB", str(factory))
     info = calibration.resolve(CHANNEL, travel_mm=85.0)
-    assert info.provenance == calibration.PROVENANCE_FACTORY
-    assert info.wire_source == "factory"
+    assert info.provenance == calibration.PROVENANCE_USER
+    assert info.wire_source == "measured"
+    assert Path(info.path) == factory
     assert info.limits is not None
+    assert any(calibration.BUNDLED_FACTORY_WARNING in w for w in info.warnings), info.warnings
+
+
+def test_row_5_a_measured_file_beats_the_bundled_default(
+        home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """本通道自己的实测文件 (row 2) 仍然压过打包默认 (row 5)。"""
+    monkeypatch.setenv("LITEGRIP_FACTORY_CALIB",
+                       str(write(tmp_path / "factory.json", REVERSE_FILE)))
+    own = write(home / ".litegrip" / f"{CHANNEL}_calibration.json", VALID)
+    info = calibration.resolve(CHANNEL, travel_mm=85.0)
+    assert info.provenance == calibration.PROVENANCE_USER
+    assert Path(info.path) == own
+    assert not any(calibration.BUNDLED_FACTORY_WARNING in w for w in info.warnings)
+
+
+def test_row_5_a_reverse_declaration_falls_through_to_the_template(
+        home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """打包默认是正装几何, 回答不了反装声明 —— 落到反装模板, 方向仍然正确。"""
+    monkeypatch.setenv("LITEGRIP_FACTORY_CALIB",
+                       str(write(tmp_path / "factory.json", VALID)))   # 正装
+    info = calibration.resolve(CHANNEL, mount="reverse", travel_mm=85.0)
+    assert info.provenance == calibration.PROVENANCE_TEMPLATE
+    assert info.template == "reverse"
+    assert info.limits is not None and info.limits.reversed_mount
 
 
 def test_row_7_nothing_is_missing_not_factory(home: Path) -> None:
@@ -138,11 +167,11 @@ def test_row_7_nothing_is_missing_not_factory(home: Path) -> None:
 
 def test_the_default_mount_is_normal_so_a_fresh_install_lands_on_the_template(
         home: Path, tmp_path: Path) -> None:
-    """默认装配方向是正装：没有实测文件时落到第 5 行，而不是第 6/7 行。
+    """没有打包默认、也没有实测文件时，正装声明落到标称模板。
 
-    这是操作员能感到的差别：正装模板允许张开/闭合，出厂回退和"什么都没有"什么都不
-    允许。第 6/7 行仍然可达 —— 显式把方向写成别的、或模板文件缺失 —— 但默认不再走
-    那里。
+    ``home`` 关掉了打包的 factory_calibration.json，所以这里走的是第 6 行的模板。
+    这是操作员能感到的差别：正装模板允许张开/闭合，而第 7 行"什么都没有"什么都不
+    允许。有打包默认时第 5 行会先接手（见 ``test_the_packaged_default_is_the_initial_calibration``）。
     """
     store = ChannelStore(tmp_path / "gripper.json")
     assert store.get(CHANNEL).mount == "normal"
@@ -291,9 +320,12 @@ def test_an_in_memory_probe_result_is_not_yet_motion() -> None:
     assert "保存" in reason
 
 
-def test_a_template_is_surmountable_for_direction_only() -> None:
-    info = calibration.resolve(CHANNEL, mount="normal", travel_mm=85.0,
-                               env={"LITEGRIP_FACTORY_CALIB": "/nonexistent"})
+def test_a_template_is_surmountable_for_direction_only(home: Path) -> None:
+    # ``home`` hands ``resolve`` a private ``$HOME`` and disables the bundled
+    # default, so this is the row-6 template and not the row-5 shipped file —
+    # matching the row tests above, and never reading the machine running the
+    # suite (which may have a measured or malformed file of its own).
+    info = calibration.resolve(CHANNEL, mount="normal", travel_mm=85.0)
     state, reason = evaluate_gate(info)
     assert state is GateState.TEMPLATE
     assert "从未在本机实测" in reason
@@ -369,25 +401,6 @@ def _connect(session: GripperSession, **params: Any) -> None:
     assert session.connected()
 
 
-def _heartbeat_in_background(session: GripperSession) -> threading.Event:
-    """Keep the watchdog fed while the calling thread blocks on a long command.
-
-    A real probe takes tens of seconds and the daemon's own heartbeat loop feeds
-    it only while a browser is connected; a test that calls ``zero()`` on the
-    calling thread has to do the same, or the watchdog (§5.1) aborts the probe
-    out from under it.  Set the returned event to stop.
-    """
-    stop = threading.Event()
-
-    def beat() -> None:
-        while not stop.is_set():
-            session.heartbeat()
-            time.sleep(0.2)
-
-    threading.Thread(target=beat, name="test-heartbeat", daemon=True).start()
-    return stop
-
-
 def test_load_template_persists_the_mount_and_reports_provenance(tmp_path: Path) -> None:
     session = _session(tmp_path)
     try:
@@ -410,7 +423,12 @@ def test_load_template_persists_the_mount_and_reports_provenance(tmp_path: Path)
         session.close()
 
 
-def test_move_to_is_refused_under_a_template_but_open_is_not(tmp_path: Path) -> None:
+def test_move_to_is_refused_under_a_template_but_open_is_not(tmp_path: Path,
+                                                            home: Path) -> None:
+    # ``home`` disables the bundled default and provides no measured file, so
+    # ``connect(mount="reverse")`` lands on the reverse *template* — the state
+    # this test is about.  Without it the machine's own ``$HOME`` decides what
+    # is in effect, which is exactly the coupling this fixture removes.
     session = _session(tmp_path)
     try:
         _connect(session, mount="reverse")
@@ -429,16 +447,49 @@ def test_move_to_is_refused_under_a_template_but_open_is_not(tmp_path: Path) -> 
         session.close()
 
 
-def test_list_calibrations_answers_without_a_connection(tmp_path: Path) -> None:
+def test_the_packaged_default_is_the_initial_calibration(
+        tmp_path: Path, home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """没有 pin、没有 channel 文件时, 会话默认落在打包的 factory_calibration.json 上。
+
+    它按"已选"分类 (PROVENANCE_USER): 开机就有可用的几何, 闸门立刻 READY, 不必先跑
+    一次实测。来源带一条警告, 提醒这是随程序打包的默认值、可能不是本机夹爪。
+    """
+    factory = write(tmp_path / "factory_calibration.json", VALID)
+    monkeypatch.setenv("LITEGRIP_FACTORY_CALIB", str(factory))
+
     session = _session(tmp_path)
     try:
-        items = session.execute("gripper.list_calibrations", {})
-        assert isinstance(items, list) and items
-        for item in items:
-            assert set(item) >= {"path", "source", "valid", "problems", "warnings",
-                                 "closedRad", "openRad", "fileRadToMm", "template"}
+        _connect(session)
+        info = session.loop.info
+        assert info is not None
+        assert Path(info.path).resolve() == factory.resolve()
+        assert info.provenance == calibration.PROVENANCE_USER
+        assert any(calibration.BUNDLED_FACTORY_WARNING in w for w in info.warnings), info.warnings
+        assert session.gate() is GateState.READY
     finally:
         session.close()
+
+
+def test_the_bundled_default_skips_the_channel_cross_check(
+        tmp_path: Path, home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """打包默认硬写了 channel=can0, 换到 can1 上不能因此被判 INVALID。
+
+    它是"默认", 不是"某台夹爪的实测", 所以 row 1 对它 adopt 并加警告, 而不是逐通道
+    交叉核对 (后者会把 can1 上的默认文件直接判死)。对照: 同一份内容换个名字、走普通
+    row 1, 通道不符就会被拒 —— 说清这是对**打包默认**的特例, 不是对文件内容的放水。
+    """
+    factory = write(tmp_path / "factory_calibration.json", VALID)
+    monkeypatch.setenv("LITEGRIP_FACTORY_CALIB", str(factory))
+
+    info = calibration.resolve("can1", path=str(factory), travel_mm=85.0)
+    assert info.provenance == calibration.PROVENANCE_USER
+    assert info.limits is not None
+    assert any(calibration.BUNDLED_FACTORY_WARNING in w for w in info.warnings), info.warnings
+
+    other = write(tmp_path / "other.json", VALID)      # same bytes, different name
+    refused = calibration.resolve("can1", path=str(other), travel_mm=85.0)
+    assert refused.provenance == calibration.PROVENANCE_INVALID
+    assert any("channel=can0" in p for p in refused.problems), refused.problems
 
 
 def test_import_calibration_pins_and_applies_the_file(tmp_path: Path) -> None:
@@ -491,56 +542,12 @@ def test_set_allow_factory_is_persisted(tmp_path: Path) -> None:
     assert _session(tmp_path).config.allow_factory is True
 
 
-def test_list_calibrations_marks_the_one_in_effect_and_includes_it(
-        tmp_path: Path, home: Path) -> None:
-    """生效的那一份必须出现在列表里 —— 即使它不是解析顺序里的候选。
-
-    仿真后端保存到自己的文件（绝不碰台架那份），所以只有候选列表的页面会在一次成功的
-    zero() 之后显示"什么都没测到"。
-
-    ⚠ 探测期间必须一直喂心跳。看门狗 (3s) 会中止没有心跳的探测，而中止的探测现在会
-    **如实报错**（见 ``test_an_aborted_probe_is_never_reported_as_measured``）。心跳一
-    停这条用例就失败 —— 那正是它要钉住的行为：只有真的测完才会得到 ``measured``。
-    """
-    session = _session(tmp_path)
-    try:
-        _connect(session)
-        before = session.execute("gripper.list_calibrations", {})
-        # 生效的那一份**总是**在列表里，即使它不是解析顺序里的候选（仿真默认就在这里）。
-        assert sum(1 for item in before if item.get("inUse")) == 1, before
-
-        assert session.execute("gripper.enable", {}) == {"enabled": True}
-        deadline = time.monotonic() + 3.0
-        while time.monotonic() < deadline and not (session.state() and session.state()["enabled"]):
-            session.heartbeat()
-            time.sleep(0.01)
-        beats = _heartbeat_in_background(session)
-        try:
-            result = session.execute("gripper.zero", {"travelMm": 85.0})
-        finally:
-            beats.set()
-        assert result["source"] == "measured"
-        # 一次真的实测：结果必须已经落盘，而不是内存里那一份（内存的那份不算数）。
-        info = session.loop.info
-        assert info is not None and info.path is not None
-        assert Path(info.path).is_file(), info.path
-
-        after = session.execute("gripper.list_calibrations", {})
-        active = [item for item in after if item.get("inUse")]
-        assert len(active) == 1, after
-        assert active[0]["path"] == session.loop.info.path
-        assert active[0]["source"] == "measured"
-        assert active[0]["closedRad"] is not None
-    finally:
-        session.close()
-
-
 def test_an_aborted_probe_is_never_reported_as_measured(tmp_path: Path, home: Path) -> None:
     """被中止的探测不能拿"上一份标定"冒充结果。
 
     中止路径（看门狗 / 急停 / 断开 / 位置帧发不出去）都会清掉 ``probe`` 而把 ``info``
     留在**上一份**标定上。以前的等待谓词只看"probe 没了、info 还在且不是内存标定"，
-    于是立刻满足，``zero()`` 把那份旧标定当成刚测出来的结果回给页面，还标着
+    于是立刻满足，引导式标定把那份旧标定当成刚测出来的结果回给页面，还标着
     ``source: "measured"``，同时一个文件都没写。
     """
     session = _session(tmp_path)
@@ -554,11 +561,17 @@ def test_an_aborted_probe_is_never_reported_as_measured(tmp_path: Path, home: Pa
 
         # 位置帧发不出去 ⇒ 探测自己在 0.5s 内中止（真机上的同类触发是链路掉了）。
         session.loop.backend.tx_fail = True
-        with pytest.raises(GripperCalibrationError):
-            session.execute("gripper.zero", {"travelMm": 85.0})
-
+        before = session.loop.probe_seq
+        session.loop.submit(cmd.StartGuidedCalibration())
+        deadline = time.monotonic() + 5.0
         outcome = session.loop.probe_outcome
-        assert outcome is not None and outcome[1] is False, outcome
+        while time.monotonic() < deadline and not (outcome is not None and outcome[0] > before):
+            session.heartbeat()
+            time.sleep(0.01)
+            outcome = session.loop.probe_outcome
+
+        assert outcome is not None and outcome[0] > before, outcome
+        assert outcome[1] is False, outcome
         # 报告失败之后，闸门仍然是关的：没有任何"刚测好的标定"被采用。
         assert session.loop.backend.calibration_info().provenance != "measured"
     finally:

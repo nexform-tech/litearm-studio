@@ -472,6 +472,12 @@ SIM_MAX_STEP_S = 0.05
 #: operator the whole procedure.
 ZERO_PROBE_TIMEOUT_S = 120.0
 
+#: How long ``write_zero`` waits for the tick to answer.  The write is a limp
+#: stream, a disable, the frame, a re-enable and a read-back — well under a second
+#: on real hardware — so this is a backstop against a command that never landed,
+#: not a service level.
+WRITE_ZERO_TIMEOUT_S = 10.0
+
 #: How long ``load_template``/``import_calibration`` wait for the tick to report
 #: the load they asked for.  One tick is 5 ms plus one backend call, so this is a
 #: backstop against a command that never landed, not a service level.

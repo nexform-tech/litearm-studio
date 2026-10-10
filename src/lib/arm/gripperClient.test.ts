@@ -197,10 +197,9 @@ describe('GripperClient (daemon WebSocket)', () => {
       client.resetStop(),
       client.setMotion({ speedMmS: 30, forceN: 12 }),
       client.loadTemplate('normal'),
-      client.listCalibrations(),
       client.listDir('/tmp'),
       client.importCalibration('/tmp/x.json'),
-      client.zero(85),
+      client.writeZero(),
       client.setAllowFactory(true),
     ]
     const methods = ws.frames().filter((f) => f.t === 'cmd').map((f) => f.m)
@@ -220,10 +219,9 @@ describe('GripperClient (daemon WebSocket)', () => {
       'gripper.reset_stop',
       'gripper.set_motion',
       'gripper.load_template',
-      'gripper.list_calibrations',
       'gripper.list_dir',
       'gripper.import_calibration',
-      'gripper.zero',
+      'gripper.write_zero',
       'gripper.set_allow_factory',
     ])
     expect(ws.lastFrame('gripper.move_to')!.p).toEqual({ targetMm: 40, speedMmS: 60 })

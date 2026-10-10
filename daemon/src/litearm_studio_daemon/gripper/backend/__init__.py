@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import threading
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any, Callable
 
 from ..calibration import CalibrationInfo
@@ -107,6 +108,21 @@ class MoveAborted(BackendError):
     it was blocking.  It is not a failure of the move: the caller abandons the
     axis exactly as it does for any other interrupted move.
     """
+
+
+@dataclass(frozen=True)
+class WriteZeroResult:
+    """The outcome of writing the motor's encoder zero (CAN 0xFE).
+
+    A pure value, defined here rather than imported from the SDK so the
+    simulator can answer it without pulling in ``litegrip`` (and its ``fcntl`` /
+    ``PF_CAN`` imports), exactly as it does for the rest of the interface.
+    """
+
+    before_rad: float
+    after_rad: float
+    ok: bool
+    tolerance_rad: float = 1e-3
 
 
 class GripperBackend(ABC):
@@ -324,6 +340,15 @@ class GripperBackend(ABC):
     def set_calibration_path(self, path: str | None) -> None:
         """Pin the calibration file this channel resolves to (§5.3 row 1)."""
         raise Unsupported("this backend cannot pin a calibration file")
+
+    def write_zero(self) -> WriteZeroResult:
+        """Make the current encoder angle the motor's zero (CAN 0xFE).
+
+        Optional: a backend with no encoder offset to write (or no motor) raises
+        :class:`Unsupported`, and the worker reports that as a refusal rather
+        than a fault.
+        """
+        raise Unsupported("this backend cannot write an encoder zero")
 
     def set_mount(self, mount: str | None) -> None:
         """Record the declared mounting direction, for calibration resolution.

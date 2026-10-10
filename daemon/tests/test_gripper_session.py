@@ -212,7 +212,8 @@ def test_commands_need_a_connection(tmp_path: Path) -> None:
     session = make_session(tmp_path)
     try:
         for method in ("gripper.enable", "gripper.open", "gripper.move_to",
-                       "gripper.set_motion", "gripper.release"):
+                       "gripper.set_motion", "gripper.release",
+                       "gripper.write_zero"):
             with pytest.raises(GripperNotConnectedError):
                 session.execute(method, {"targetMm": 10.0})
         # 断开/连接本身在未连接时是合法的 (幂等), 急停也是。
@@ -344,7 +345,7 @@ def test_probe_can_be_aborted_by_an_estop(tmp_path: Path) -> None:
 
     # 时钟必须往前走: 仿真的状态帧按 dt 累积, 而冻结的时钟等于"电机不回帧" ——
     # 那种状态下探测现在会被拒绝, 见
-    # test_zero_is_refused_before_a_position_has_been_read。
+    # test_write_zero_is_refused_before_a_position_has_been_read。
     now = [0.0]
 
     def clock() -> float:
@@ -565,13 +566,12 @@ def test_reconfiguring_while_the_old_loop_is_busy_is_refused(tmp_path: Path) -> 
         session.close()
 
 
-def test_zero_is_refused_before_a_position_has_been_read(tmp_path: Path) -> None:
-    """使能了但还没有位置帧时不许开探测 —— `0.0 rad` 是占位符, 不是读数。
+def test_write_zero_is_refused_before_a_position_has_been_read(tmp_path: Path) -> None:
+    """使能了但还没有位置帧时不许写零位 —— `0.0 rad` 是占位符, 不是读数。
 
-    SDK 在第一帧状态到达之前一直返回 `0.0 rad`, 而 `0.0` 落在行程**里面**: 换算出来
-    是个看得过去的毫米数, 所以它不会因为"离谱"被拦下。探测却把它当参考起点
-    (`_ref_rad = entry + step`)、以 kp=60 和 `ungated=True` 发帧, 直到下一个步进点
-    才重新锚定 —— 也就是真机上"使能后立刻标定"或"链路连着但电机不回帧"的那一拍。
+    写零位本身与角度无关 (0xFE 只改偏移), 但"写没写进去"要靠回读实测角来证:
+    没有状态帧时回读只会是那个占位符 `0.0`, 于是"写成功"就是句谎话。会话那道门
+    提前拒掉它; worker 那道门是权威 (急停/未连接/未使能/无位置各记一条 outcome)。
     """
     session = make_session(tmp_path)
     try:
@@ -582,16 +582,35 @@ def test_zero_is_refused_before_a_position_has_been_read(tmp_path: Path) -> None
         assert wait_for(lambda: session.loop.enabled)
         assert not session.loop._have_position, "这条用例需要'还没读到位置'的状态"
 
-        before = session.loop.probe_seq
+        before = session.loop.write_zero_seq
         with pytest.raises(GripperCalibrationError, match="位置"):
-            session.execute("gripper.zero", {"travelMm": 85.0})
-        assert session.loop.probe_seq == before, "被拒绝的标定不该开探测"
+            session.execute("gripper.write_zero", {})
+        assert session.loop.write_zero_seq == before, "被拒绝的写零位不该开一次写入"
         assert session.loop.measured_rad() is None
+    finally:
+        session.close()
 
-        # worker 那道门是权威, 直接钉住它: 会话那道只是把理由提前说清楚。
-        session.loop._start_probe(guided=True)
-        assert session.loop.probe is None
-        assert session.loop.probe_seq == before
+
+def test_write_zero_round_trips_through_the_sim(tmp_path: Path) -> None:
+    """端到端: 连接→使能→等到位置→写零位; 回读 ~0 且 seq 前进。
+
+    模拟器把 `zero_offset_rad` 记成当前物理角, 于是上报角变成 0 —— 这正是真机 0xFE
+    的行为: 只改编码器偏移, 不动物理量程。写入后 worker 会重判闸门并 (必要时) 在
+    当前角度驻留, 但零位落在标定区间之内, 所以闸门不被这次写入打破。
+    """
+    session = make_session(tmp_path)
+    try:
+        connect(session)
+        assert session.execute("gripper.enable", {}) == {"enabled": True}
+        assert wait_for(lambda: session.loop.measured_rad() is not None)
+
+        before_seq = session.loop.write_zero_seq
+        result = session.execute("gripper.write_zero", {})
+        assert result["ok"] is True
+        assert abs(result["afterRad"]) < 1e-3
+        # 起点不是 0 (夹爪停在闭合位), 所以这次写入确实把偏移挪动了。
+        assert abs(result["beforeRad"]) > 1e-3
+        assert session.loop.write_zero_seq == before_seq + 1
     finally:
         session.close()
 
@@ -673,7 +692,7 @@ def _only_file(listing: dict) -> dict:
 
 
 def test_list_dir_answers_without_a_connection(tmp_path: Path) -> None:
-    """和 ``list_calibrations`` 同理：列举是文件系统问题，设置页连接**之前**就要问。"""
+    """列举是文件系统问题，设置页连接**之前**就要问（浏览选标定靠它）。"""
     session = make_session(tmp_path)
     try:
         assert session.status == "disconnected"
@@ -721,7 +740,7 @@ def test_list_dir_validates_against_this_channels_settings(tmp_path: Path) -> No
 
 
 def test_list_dir_marks_the_calibration_in_effect(tmp_path: Path) -> None:
-    """生效的那一份打 ``inUse`` —— 与 ``list_calibrations`` 同一处判定。"""
+    """生效的那一份打 ``inUse`` —— 浏览选标定时标出"正在用"。"""
     session = make_session(tmp_path)
     try:
         connect(session)

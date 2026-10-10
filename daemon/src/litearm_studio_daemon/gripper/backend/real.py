@@ -58,6 +58,7 @@ from . import (
     LinkDown,
     MoveAborted,
     NotReady,
+    WriteZeroResult,
 )
 
 log = logging.getLogger(__name__)
@@ -619,6 +620,26 @@ class RealBackend(GripperBackend):
         """Pin the file this channel resolves to (§5.3 row 1)."""
         self._claim()
         self._calibration_path = path
+
+    def write_zero(self) -> WriteZeroResult:
+        """Write the motor's encoder zero (CAN 0xFE) via the SDK.
+
+        The SDK sequence leaves the axis limp, disables it, sends 0xFE, re-enables
+        and reads the angle back; the read-back is what tells the operator whether
+        the write took.  It only changes the offset, not the span, so any
+        calibration already measured stays numerically valid.
+        """
+        self._claim()
+        self._require_connected()
+        try:
+            result = self._gripper.write_zero()
+        except LiteGripError as exc:
+            raise BackendError(f"写入零位失败: {exc}") from exc
+        return WriteZeroResult(
+            before_rad=float(result.before_rad),
+            after_rad=float(result.after_rad),
+            ok=bool(result.ok),
+        )
 
     def set_mount(self, mount: str | None) -> None:
         """Record the declared mounting direction (§5.3 row 5)."""

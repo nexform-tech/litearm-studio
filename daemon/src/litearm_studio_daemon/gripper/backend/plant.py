@@ -114,6 +114,11 @@ class Plant:
         self.temp_mos = self.config.amb_temp
         self.temp_coil = self.config.amb_temp
 
+        # What the encoder calls zero.  The physical angle ``q`` is unaffected by
+        # a 0xFE write; only the *reported* angle shifts, and it shifts by the
+        # physical angle that was current when the write happened.
+        self.zero_offset_rad = 0.0
+
         # Last command received from the controller.
         self._q_cmd = self.q
         self._dq_cmd = 0.0
@@ -232,16 +237,21 @@ class Plant:
             return True
         return False
 
+    def reported_q(self) -> float:
+        """The angle the encoder reports, which is what a 0xFE write shifts."""
+        return self.q - self.zero_offset_rad
+
     def snapshot(self, t: float = 0.0) -> Telemetry:
         """Current state as a :class:`Telemetry`."""
-        pos_mm = self.limits.to_mm(self.q)
+        reported = self.reported_q()
+        pos_mm = self.limits.to_mm(reported)
         # The motor's own torque estimate, which is what the SDK reports and
         # what the force conversion is defined on.  At equilibrium against an
         # object this equals the contact reaction, so a blocked gripper reads
         # the force it is actually applying.
         tau = self.tau
         return Telemetry(
-            position_rad=self.q,
+            position_rad=reported,
             velocity_rad_s=self.dq,
             torque_nm=tau,
             temperature_mos=int(round(self.temp_mos)),
@@ -260,6 +270,7 @@ class Plant:
         self.temp_mos = self.config.amb_temp
         self.temp_coil = self.config.amb_temp
         self.object_mm = None
+        self.zero_offset_rad = 0.0
 
     # ── helpers ─────────────────────────────────────────────────────────────
     def _update_temperatures(self, dt: float) -> None:

@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { formatArmError } from '@/lib/arm/errors'
 import { gripperClient } from '@/lib/arm/gripperClient'
-import type { CalibrationCandidate } from '@/lib/arm/gripperClient'
 import { useGripperAlerts, useGripperCalibration, useGripperConnection, useGripperState } from '@/lib/arm/useGripper'
 
 /** daemon 侧 `STROKE_MIN_MM` / `STROKE_MAX_MM`：行程的合理带。 */
@@ -15,8 +14,8 @@ export type GripperSettingsVm = ReturnType<typeof useGripperSettings>
 /**
  * 设置页里夹爪那一段的视图模型（§6.2）。
  *
- * 这里做的是**配置**：通道、CAN ID、装配方向、用哪份标定、导入标定、运行零位标定与
- * 实测行程。操作夹爪本身在夹爪页 —— 两处共用同一个 `gripperClient`。
+ * 这里做的是**配置**：通道、CAN ID、装配方向、用哪份标定、导入标定、零位写入与
+ * 行程。操作夹爪本身在夹爪页 —— 两处共用同一个 `gripperClient`。
  */
 export function useGripperSettings() {
   const { t } = useTranslation(['common', 'gripper'])
@@ -33,7 +32,6 @@ export function useGripperSettings() {
   const [travel, setTravel] = useState(85)
   const [importPath, setImportPath] = useState('')
   const [channels, setChannels] = useState<string[]>([])
-  const [calibrations, setCalibrations] = useState<CalibrationCandidate[]>([])
   const [scanning, setScanning] = useState(false)
   const [applying, setApplying] = useState(false)
 
@@ -57,16 +55,12 @@ export function useGripperSettings() {
     setTravel(connTravel && connTravel > 0 ? connTravel : 85)
   }, [connChannel, connCanId, connMount, connTravel])
 
-  /** 枚举 + 扫描标定：都是文件系统/内核的问题，不需要连接。 */
+  /** 枚举本机 CAN 接口：内核的问题，不需要连接。 */
   const refresh = useCallback(async () => {
     setScanning(true)
     try {
-      const [found, candidates] = await Promise.all([
-        gripperClient.listChannels().catch(() => [] as string[]),
-        gripperClient.listCalibrations(),
-      ])
+      const found = await gripperClient.listChannels().catch(() => [] as string[])
       setChannels(found)
-      setCalibrations(candidates)
       // ⚠ 只在**还没有选择**时用枚举结果填上默认值，而且是函数式更新：
       // 用闭包里的 `channel` 判断会把操作员在这次扫描返回之前选好的通道冲掉
       // （实测：选中 can1 之后被一次迟到的扫描改回 can0）。
@@ -80,7 +74,7 @@ export function useGripperSettings() {
 
   useEffect(() => {
     void refresh()
-    // 只扫一次：之后由操作员按「重新扫描」触发。
+    // 挂载时扫一次；此后在应用配置、载入模板、导入标定、写零位之后各刷新一次。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -151,32 +145,21 @@ export function useGripperSettings() {
     [fail, t],
   )
 
-  const zero = useCallback(async () => {
-    if (!(travel > 0)) {
-      toast.error(t('gripper:settings.noTravel'), { id: 'gripper-settings-error' })
-      return
-    }
+  const writeZero = useCallback(async () => {
     try {
-      const result = await gripperClient.zero(travel)
+      const result = await gripperClient.writeZero()
       toast.success(
-        t('gripper:zero.done', {
-          closed: result.closedRad.toFixed(4),
-          open: result.openRad.toFixed(4),
-          scale: result.radToMm.toFixed(1),
+        t('gripper:writeZero.done', {
+          before: result.beforeRad.toFixed(4),
+          after: result.afterRad.toFixed(4),
         }),
         { id: 'gripper-settings-error', duration: 8000 },
       )
       await refresh()
     } catch (err) {
-      fail(t('gripper:zero.title'))(err)
+      fail(t('gripper:writeZero.title'))(err)
     }
-  }, [travel, fail, refresh, t])
-
-  /** 生效中的那一份：按路径/模板名匹配扫描结果。 */
-  const activePath = useMemo(() => {
-    if (!conn?.path) return null
-    return conn.path
-  }, [conn?.path])
+  }, [fail, refresh, t])
 
   return {
     present,
@@ -201,8 +184,6 @@ export function useGripperSettings() {
     setTravel,
     importPath,
     setImportPath,
-    calibrations,
-    activePath,
     scanning,
     applying,
     // 动作
@@ -211,7 +192,7 @@ export function useGripperSettings() {
     useTemplate,
     importCalibration,
     setAllowFactory,
-    zero,
+    writeZero,
     connect,
     disconnect,
   }

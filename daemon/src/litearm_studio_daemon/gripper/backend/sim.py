@@ -30,7 +30,7 @@ from .. import calibration, constants
 from ..calibration import CalibrationInfo
 from ..telemetry import Telemetry
 from ..units import Limits, derive_scale
-from . import ConnectFailed, FaultActive, GripperBackend, NotReady
+from . import ConnectFailed, FaultActive, GripperBackend, NotReady, WriteZeroResult
 from .plant import Plant, PlantConfig
 
 
@@ -290,6 +290,24 @@ class SimBackend(GripperBackend):
         """Pin the file this channel resolves to (§5.3 row 1)."""
         self._claim()
         self._pinned = Path(path) if path else None
+
+    def write_zero(self) -> WriteZeroResult:
+        """Re-zero the encoder in software (the 0xFE write, made observable).
+
+        The plant keeps integrating the same physical angle; only what the
+        encoder *reports* shifts, by the angle current at the moment of the
+        write.  Modelled rather than stubbed because write-zero is exercised
+        end-to-end in simulation, and a no-op would let a re-zero that should
+        have invalidated the loaded calibration pass unnoticed.
+        """
+        self._claim()
+        self._require_connected()
+        if not self._enabled:
+            raise NotReady("尚未使能")
+        before = self.plant.reported_q()
+        self.plant.zero_offset_rad = self.plant.q
+        return WriteZeroResult(before_rad=before, after_rad=self.plant.reported_q(),
+                               ok=True)
 
     def set_mount(self, mount: str | None) -> None:
         """Record the declared mounting direction (§5.3 row 5)."""

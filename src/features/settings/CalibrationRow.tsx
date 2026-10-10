@@ -11,11 +11,10 @@ const SOURCE_KEYS: Record<CalibrationSource, string> = {
 }
 
 /**
- * 一份标定候选的**展示**行 —— 设置页的清单与浏览对话框共用同一份 markup。
+ * 一份标定候选的**展示**行 —— 浏览对话框里用它渲染每个 `*.json` 文件。
  *
- * 抽出来是为了让"两处长得一样"由**构造**保证，而不是靠复制粘贴去维持：任何一处
- * 的字段/措辞改动都同时落到两处。给它 `onSelect` 就变成可点的一行（对话框里用它
- * 选文件），不给就是只读的一行（设置页的清单）。
+ * 抽出来是为了让"行渲染只有一份"由**构造**保证，而不是靠复制粘贴去维持：字段/
+ * 措辞改动只落一处。给它 `onSelect` 就变成可点的一行（对话框里用它选文件）。
  */
 export function CalibrationRow({
   row,
@@ -23,7 +22,7 @@ export function CalibrationRow({
   onSelect,
 }: {
   row: CalibrationCandidate
-  /** 覆盖 `row.inUse`；设置页用它把 `activePath` 也算进来。 */
+  /** 覆盖 `row.inUse`（daemon 已经标注"生效中"，这里可再覆盖）。 */
   inUse?: boolean
   onSelect?: (path: string) => void
 }) {

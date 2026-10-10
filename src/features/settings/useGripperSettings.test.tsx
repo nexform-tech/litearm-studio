@@ -1,6 +1,5 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import i18n from '@/i18n'
 
 const mocks = vi.hoisted(() => {
   const conn = { current: null as Record<string, unknown> | null }
@@ -17,12 +16,11 @@ const mocks = vi.hoisted(() => {
     connect: vi.fn(),
     disconnect: vi.fn(),
     listChannels: vi.fn(),
-    listCalibrations: vi.fn(),
     listDir: vi.fn(),
     loadTemplate: vi.fn(),
     importCalibration: vi.fn(),
     setAllowFactory: vi.fn(),
-    zero: vi.fn(),
+    writeZero: vi.fn(),
   }
 })
 
@@ -35,12 +33,11 @@ vi.mock('@/lib/arm/gripperClient', () => ({
     connect: mocks.connect,
     disconnect: mocks.disconnect,
     listChannels: mocks.listChannels,
-    listCalibrations: mocks.listCalibrations,
     listDir: mocks.listDir,
     loadTemplate: mocks.loadTemplate,
     importCalibration: mocks.importCalibration,
     setAllowFactory: mocks.setAllowFactory,
-    zero: mocks.zero,
+    writeZero: mocks.writeZero,
   },
   hasCandidate: (e: { type?: string; valid?: unknown }) =>
     e.type === 'file' && typeof e.valid === 'boolean',
@@ -104,46 +101,22 @@ describe('useGripperSettings', () => {
     connected()
     vi.clearAllMocks()
     mocks.listChannels.mockResolvedValue(['can0', 'can1'])
-    mocks.listCalibrations.mockResolvedValue([
-      {
-        path: '/tmp/cal.json',
-        source: 'measured',
-        provenance: 'user_file',
-        template: null,
-        channel: 'can0',
-        valid: true,
-        problems: [],
-        warnings: [],
-        closedRad: 1.7,
-        openRad: -0.06,
-        fileRadToMm: 46.7,
-        mount: 'normal',
-      },
-    ])
     mocks.connect.mockResolvedValue({ started: true })
     mocks.disconnect.mockResolvedValue({ stopped: true })
     mocks.loadTemplate.mockResolvedValue({ mount: 'reverse', source: 'template' })
     mocks.importCalibration.mockResolvedValue({ path: '/tmp/my.json', source: 'measured' })
     mocks.setAllowFactory.mockResolvedValue({ allowFactory: true })
-    mocks.zero.mockResolvedValue({
-      closedRad: 1.71,
-      openRad: -0.07,
-      radToMm: 46.5,
-      source: 'measured',
-      warnings: [],
-    })
+    mocks.writeZero.mockResolvedValue({ ok: true, beforeRad: 1.71, afterRad: 0.0001 })
   })
 
   afterEach(() => {
     vi.clearAllMocks()
   })
 
-  it('scans channels and calibrations without a connection', async () => {
+  it('scans channels without a connection', async () => {
     const { result } = renderHook(() => useGripperSettings())
-    await waitFor(() => expect(mocks.listCalibrations).toHaveBeenCalled())
+    await waitFor(() => expect(mocks.listChannels).toHaveBeenCalled())
     await waitFor(() => expect(result.current.channels).toEqual(['can0', 'can1']))
-    expect(result.current.calibrations).toHaveLength(1)
-    expect(result.current.calibrations[0].source).toBe('measured')
   })
 
   it('shows the record the device reports, not the last thing typed', async () => {
@@ -204,30 +177,16 @@ describe('useGripperSettings', () => {
     expect(mocks.setAllowFactory).toHaveBeenCalledWith(true)
   })
 
-  it('runs zero with the travel field and rescans afterwards', async () => {
+  it('writes the encoder zero and rescans afterwards', async () => {
     const { result } = renderHook(() => useGripperSettings())
+    mocks.listChannels.mockClear()
     await act(async () => {
-      result.current.setTravel(62.5)
+      await result.current.writeZero()
     })
-    mocks.listCalibrations.mockClear()
-    await act(async () => {
-      await result.current.zero()
-    })
-    expect(mocks.zero).toHaveBeenCalledWith(62.5)
-    expect(mocks.listCalibrations).toHaveBeenCalled()
-  })
-
-  it('refuses a zero with a non-positive travel before touching the device', async () => {
-    const { result } = renderHook(() => useGripperSettings())
-    await act(async () => {
-      result.current.setTravel(0)
-    })
-    await act(async () => {
-      await result.current.zero()
-    })
-    expect(mocks.zero).not.toHaveBeenCalled()
+    expect(mocks.writeZero).toHaveBeenCalledTimes(1)
+    expect(mocks.listChannels).toHaveBeenCalled()
     const { toast } = await import('sonner')
-    expect(toast.error).toHaveBeenCalledWith(i18n.t('gripper:settings.noTravel'), expect.anything())
+    expect(toast.success).toHaveBeenCalled()
   })
 
   it('reports whether a probe is running', async () => {

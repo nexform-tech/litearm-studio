@@ -1,15 +1,13 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { AlertTriangle, FileJson, FolderOpen, RefreshCw, ScanLine, Upload } from 'lucide-react'
+import { AlertTriangle, FolderOpen, RefreshCw, ScanLine, Upload } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { NumberField } from '@/components/ui/number-field'
-import { Progress } from '@/components/ui/progress'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Toggle } from '@/components/ui/toggle'
-import { CalibrationRow } from './CalibrationRow'
 import { GripperBrowserDialog } from './GripperBrowserDialog'
 import { useGripperSettings, TRAVEL_MAX_MM, TRAVEL_MIN_MM } from './useGripperSettings'
 import { dirOf } from './useGripperBrowse'
@@ -32,8 +30,7 @@ export function GripperSection() {
   const { t } = useTranslation(['common', 'gripper'])
   const vm = useGripperSettings()
   const [browseOpen, setBrowseOpen] = useState(false)
-
-  const calibrationRows = vm.calibrations
+  const [writingZero, setWritingZero] = useState(false)
 
   return (
     <div className="flex flex-col gap-4">
@@ -111,6 +108,17 @@ export function GripperSection() {
               </SelectContent>
             </Select>
           </Field>
+          {/* 行程不再是"实测"要填的东西，而是 mm/rad 换算的分母：由它和标定角度
+              定出每 rad 多少毫米，所以它随配置卡一起提交。 */}
+          <Field label={t('gripper:settings.travel')}>
+            <NumberField
+              value={vm.travel}
+              min={TRAVEL_MIN_MM}
+              max={TRAVEL_MAX_MM}
+              step={0.5}
+              onCommit={vm.setTravel}
+            />
+          </Field>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -147,81 +155,47 @@ export function GripperSection() {
             </span>
           ) : null}
         </div>
+        <p className="text-[0.6875rem] leading-relaxed text-muted-foreground">{t('gripper:settings.travelDesc')}</p>
       </Card>
 
       <Card className="flex flex-col gap-3 rounded-[0.875rem] p-5">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h2 className="text-sm font-bold text-foreground">{t('gripper:settings.calibrations')}</h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">{t('gripper:settings.calibrationsDesc')}</p>
-          </div>
-          <Button
-            id="gripper-rescan"
-            data-testid="gripper-rescan"
-            size="sm"
-            variant="outline"
-            disabled={vm.scanning}
-            onClick={() => void vm.refresh()}
-          >
-            <RefreshCw className={vm.scanning ? 'size-3.5 animate-spin' : 'size-3.5'} />
-            {t('gripper:settings.refresh')}
-          </Button>
+        <div>
+          <h2 className="text-sm font-bold text-foreground">{t('gripper:settings.import')}</h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">{t('gripper:settings.importDesc')}</p>
         </div>
 
-        {calibrationRows.length === 0 ? (
-          <p className="text-xs text-muted-foreground">{t('gripper:source.missing')}</p>
-        ) : (
-          <ul id="gripper-calibrations" data-testid="gripper-calibrations" className="flex flex-col gap-2">
-            {calibrationRows.map((row) => {
-              const inUse = row.inUse ?? (vm.activePath != null && row.path === vm.activePath)
-              return (
-                <li key={`${row.path}-${row.template ?? ''}`}>
-                  <CalibrationRow row={row} inUse={inUse} />
-                </li>
-              )
-            })}
-          </ul>
-        )}
-
-        <div className="flex flex-col gap-2 border-t border-line pt-3">
-          <div className="flex items-center gap-1.5 text-[0.6875rem] font-semibold text-ink-muted">
-            <FileJson className="size-3.5" />
-            {t('gripper:settings.import')}
-          </div>
-          <p className="text-[0.6875rem] leading-relaxed text-muted-foreground">{t('gripper:settings.importDesc')}</p>
-          <div className="flex gap-2">
-            <Input
-              id="gripper-import-path"
-              data-testid="gripper-import-path"
-              value={vm.importPath}
-              placeholder={t('gripper:settings.importPlaceholder')}
-              spellCheck={false}
-              onChange={(e) => vm.setImportPath(e.target.value)}
-            />
-            <Button
-              id="gripper-import-browse"
-              data-testid="gripper-import-browse"
-              size="sm"
-              variant="outline"
-              // 列举是文件系统问题，免连接（同「重新扫描」）；导入才需要连接。
-              disabled={!vm.present}
-              onClick={() => setBrowseOpen(true)}
-            >
-              <FolderOpen className="size-3.5" />
-              {t('gripper:settings.browse')}
-            </Button>
-            <Button
-              id="gripper-import"
-              data-testid="gripper-import"
-              size="sm"
-              variant="outline"
-              disabled={!vm.connected || vm.importPath.trim() === ''}
-              onClick={() => void vm.importCalibration()}
-            >
-              <Upload className="size-3.5" />
-              {t('common:import')}
-            </Button>
-          </div>
+        <div className="flex gap-2">
+          <Input
+            id="gripper-import-path"
+            data-testid="gripper-import-path"
+            value={vm.importPath}
+            placeholder={t('gripper:settings.importPlaceholder')}
+            spellCheck={false}
+            onChange={(e) => vm.setImportPath(e.target.value)}
+          />
+          <Button
+            id="gripper-import-browse"
+            data-testid="gripper-import-browse"
+            size="sm"
+            variant="outline"
+            // 列举是文件系统问题，免连接；导入才需要连接。
+            disabled={!vm.present}
+            onClick={() => setBrowseOpen(true)}
+          >
+            <FolderOpen className="size-3.5" />
+            {t('gripper:settings.browse')}
+          </Button>
+          <Button
+            id="gripper-import"
+            data-testid="gripper-import"
+            size="sm"
+            variant="outline"
+            disabled={!vm.connected || vm.importPath.trim() === ''}
+            onClick={() => void vm.importCalibration()}
+          >
+            <Upload className="size-3.5" />
+            {t('common:import')}
+          </Button>
         </div>
 
         <GripperBrowserDialog
@@ -234,46 +208,36 @@ export function GripperSection() {
 
       <Card className="flex flex-col gap-3 rounded-[0.875rem] p-5">
         <div>
-          <h2 className="text-sm font-bold text-foreground">{t('gripper:zero.title')}</h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">{t('gripper:zero.desc')}</p>
+          <h2 className="text-sm font-bold text-foreground">{t('gripper:writeZero.title')}</h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">{t('gripper:writeZero.desc')}</p>
         </div>
 
-        <div className="grid grid-cols-2 gap-3 md:max-w-md">
-          <Field label={t('gripper:zero.travel')}>
-            <NumberField
-              value={vm.travel}
-              min={TRAVEL_MIN_MM}
-              max={TRAVEL_MAX_MM}
-              step={0.5}
-              onCommit={vm.setTravel}
-            />
-          </Field>
-          <div className="flex items-end gap-2">
-            <Button
-              id="gripper-zero"
-              data-testid="gripper-zero"
-              size="sm"
-              disabled={!vm.connected || !vm.enabled || vm.probing || !(vm.travel > 0)}
-              onClick={() => void vm.zero()}
-            >
-              <ScanLine className="size-3.5" />
-              {vm.probing ? t('gripper:zero.running') : t('gripper:zero.start')}
-            </Button>
-          </div>
+        <div className="flex items-center gap-3">
+          <Button
+            id="gripper-write-zero"
+            data-testid="gripper-write-zero"
+            size="sm"
+            disabled={!vm.connected || !vm.enabled || writingZero}
+            onClick={() => {
+              setWritingZero(true)
+              void vm.writeZero().finally(() => setWritingZero(false))
+            }}
+          >
+            <ScanLine className="size-3.5" />
+            {writingZero ? t('gripper:writeZero.running') : t('gripper:writeZero.button')}
+          </Button>
+          {vm.state ? (
+            <span className="text-[0.6875rem] text-muted-foreground">
+              {t('gripper:writeZero.current', {
+                pos: vm.state.positionMm == null ? t('gripper:readout.unknown') : `${vm.state.positionMm.toFixed(2)} mm`,
+              })}
+            </span>
+          ) : null}
         </div>
 
-        <p className="text-[0.6875rem] leading-relaxed text-muted-foreground">{t('gripper:settings.travelDesc')}</p>
+        <p className="text-[0.6875rem] leading-relaxed text-warn">{t('gripper:writeZero.warning')}</p>
         {!vm.enabled && vm.connected ? (
-          <p className="text-[0.6875rem] text-warn">{t('gripper:zero.needsEnabled')}</p>
-        ) : null}
-
-        {vm.calib && vm.probing ? (
-          <div className="flex flex-col gap-1.5" id="gripper-zero-progress" data-testid="gripper-zero-progress">
-            <Progress value={Math.round(vm.calib.progress * 100)} />
-            <div className="text-[0.6875rem] text-muted-foreground">
-              {t(`gripper:zero.phase.${vm.calib.phase}`, { defaultValue: vm.calib.phase })} · {vm.calib.detail}
-            </div>
-          </div>
+          <p className="text-[0.6875rem] text-warn">{t('gripper:writeZero.needsEnabled')}</p>
         ) : null}
       </Card>
 

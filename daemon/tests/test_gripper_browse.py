@@ -2,8 +2,7 @@
 
 纯函数层，根目录可注入（``home=``），所以整棵树都建在 ``tmp_path`` 上，不碰运行
 测试那台机器的家目录。钉的是：列什么、怎么排序、每个 ``*.json`` 怎么复用
-``inspect_file`` 的校验结果并把它平铺成和 ``gripper.list_calibrations`` 一样的行，
-以及哪些输入该被拒绝。
+``inspect_file`` 的校验结果并把它平铺成浏览选标定用的行，以及哪些输入该被拒绝。
 """
 from __future__ import annotations
 
@@ -77,7 +76,7 @@ def test_a_directory_named_like_a_calibration_is_still_a_directory(home: Path) -
 
 # ── 每个 *.json 复用 inspect_file 的结论 ───────────────────────────────────
 
-def test_a_valid_calibration_carries_a_list_calibrations_row(home: Path) -> None:
+def test_a_valid_calibration_carries_a_browse_row(home: Path) -> None:
     path = _write(home / "ok.json", MEASURED_CALIBRATION)
 
     row = _rows(home, channel="can0")["ok.json"]

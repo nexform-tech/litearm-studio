@@ -75,7 +75,7 @@ export type GripperAlert = {
 /** daemon `gripper_busy` 帧：一次阻塞调用正在进行。 */
 export type GripperBusy = { busy: boolean; what: string }
 
-/** `gripper.list_calibrations` 的一项。 */
+/** `gripper.list_dir` 里一个 `*.json` 文件行的标定字段（`CalibrationRow` 吃它）。 */
 export type CalibrationCandidate = {
   path: string
   source: CalibrationSource
@@ -116,7 +116,7 @@ export type BrowseEntry = {
   openRad?: number | null
   fileRadToMm?: number | null
   mount?: 'normal' | 'reverse' | null
-  /** daemon 说这一份正在生效（同 `list_calibrations` 的 `inUse`）。 */
+  /** daemon 说这一份正在生效。 */
   inUse?: boolean
 }
 
@@ -350,10 +350,6 @@ export class GripperClient {
     return this._cmd('gripper.load_template', { mount }) as Promise<{ mount: string; source: string }>
   }
 
-  listCalibrations(): Promise<CalibrationCandidate[]> {
-    return this._cmd('gripper.list_calibrations') as Promise<CalibrationCandidate[]>
-  }
-
   importCalibration(path: string): Promise<{ path: string; source: string }> {
     return this._cmd('gripper.import_calibration', { path }) as Promise<{ path: string; source: string }>
   }
@@ -361,30 +357,25 @@ export class GripperClient {
   /**
    * 列举**控制机**某个目录下的子目录与 `*.json` 标定，并逐个校验。
    *
-   * 不给 `path` → 起始目录是 daemon 用户的家目录。免连接（与 `list_calibrations`
-   * 同理：列举是文件系统问题，设置页连接之前就要问）。
+   * 不给 `path` → 起始目录是 daemon 用户的家目录。免连接（列举是文件系统问题，
+   * 设置页连接之前就要问）。
    */
   listDir(path?: string): Promise<BrowseListing> {
     return this._cmd('gripper.list_dir', path ? { path } : {}) as Promise<BrowseListing>
   }
 
   /**
-   * 引导式实测。**没有超时**：它要顶两次机械限位，几十秒是正常的，而客户端这条
-   * 路径本来就没有 60s 兜底（§4.2 要求客户端不要给它设 60s 超时）。
+   * 写入零位：把夹爪**当前**编码器角度记为电机零位（CAN 0xFE）。
+   *
+   * 只改偏移、不改量程，所以已有的 span 保持有效；但 0xFE 是写 flash、不可逆，
+   * 且只应在夹爪确实处于想当零点的位置时调用。daemon 会在命令线程上等 tick 回读，
+   * 秒级返回（其上限见 `WRITE_ZERO_TIMEOUT_S`），所以走普通 `COMMAND_TIMEOUT_S`。
    */
-  zero(travelMm: number): Promise<{
-    closedRad: number
-    openRad: number
-    radToMm: number
-    source: string
-    warnings: string[]
-  }> {
-    return this._cmd('gripper.zero', { travelMm }) as Promise<{
-      closedRad: number
-      openRad: number
-      radToMm: number
-      source: string
-      warnings: string[]
+  writeZero(): Promise<{ ok: boolean; beforeRad: number; afterRad: number }> {
+    return this._cmd('gripper.write_zero') as Promise<{
+      ok: boolean
+      beforeRad: number
+      afterRad: number
     }>
   }
 

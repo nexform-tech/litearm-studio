@@ -176,6 +176,13 @@ def launcher_script() -> str:
         f"# Installed by the {PACKAGE} Debian package. The program itself is a\n"
         "# self-contained one-file executable under /usr/lib; this wrapper only gives it\n"
         "# a name on PATH that matches the desktop entry.\n"
+        "#\n"
+        "# Point the gripper at the packaged default calibration. The file lives under\n"
+        "# /usr/lib rather than inside the one-file bundle so the path stays the same\n"
+        "# across launches (the bundle unpacks to a fresh temporary directory each time),\n"
+        "# which is what lets the calibration page name a stable file.\n"
+        f"LITEGRIP_FACTORY_CALIB={INSTALL_DIR}/factory_calibration.json\n"
+        "export LITEGRIP_FACTORY_CALIB\n"
         f'exec {INSTALL_DIR}/{BINARY_NAME} "$@"\n'
     )
 
@@ -282,6 +289,11 @@ def payload(binary: Path) -> List[Entry]:
     """Everything the package installs, in a fixed order."""
     entries: List[Entry] = [
         (Path(f"usr/lib/{PACKAGE}/{BINARY_NAME}"), binary, 0o755),
+        # The packaged default gripper calibration the launcher points the daemon
+        # at (LITEGRIP_FACTORY_CALIB).  It is the SDK's own shipped file: a
+        # read-only datum that describes whichever unit it was taken on.
+        (Path(f"usr/lib/{PACKAGE}/factory_calibration.json"),
+         ROOT / "packaging" / "factory_calibration.json", 0o644),
         (Path(f"usr/bin/{LAUNCHER}"), launcher_script().encode(), 0o755),
         (Path(f"usr/share/applications/{PACKAGE}.desktop"), desktop_entry().encode(), 0o644),
         (Path(f"usr/lib/udev/rules.d/60-{PACKAGE}.rules"), udev_rule().encode(), 0o644),
