@@ -509,8 +509,9 @@ behaviour. i18n assertions for the new namespace in both locales.
   fails the build: an artifact that silently ships without the gripper is worse
   than a build that stops.
 - The SDK is not on PyPI. Install it from a checkout the way `litearm` already is,
-  and pin the revision: `v0.4.0` in both workflows, the release that introduced
-  named templates and per-channel calibration paths.
+  and pin the revision: `v0.14.0` in both workflows, the first release with
+  `LiteGrip.write_zero()` (CAN `0xFE`); named templates and per-channel
+  calibration paths date from `v0.4.0`.
 - Linux only. `litegrip` needs `fcntl` and `PF_CAN`, so it is never imported at
   module scope: `gripper/backend/real.py` is imported inside `_make_backend`, the
   daemon's session import is guarded, and `__main__` builds no gripper session off
@@ -541,7 +542,7 @@ Three items, each with the check that closes it. None of them blocks P1 or P2.
 3. **Per-unit calibration files.** Confirm with the gripper's SDK owner whether a
    per-unit file ships with each gripper or whether the templates are the intended
    factory default. The implementation supports both; only the default differs.
-   The SDK revision is pinned at `v0.4.0`; if a per-unit file becomes the default,
+   The SDK revision is pinned at `v0.14.0`; if a per-unit file becomes the default,
    the resolution order in §5.3 does not change — only the file that ships.
 
 ## 11. Do not

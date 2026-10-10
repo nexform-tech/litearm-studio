@@ -76,13 +76,14 @@ jobs:
           path: litearm-python
 
       # 夹爪 SDK 同样不在 PyPI 上, 而且只在 Linux 上能用 (需要 PF_CAN)。版本钉在
-      # v0.4.0: 它是"按名字载入标定模板 + 每通道标定文件"落地的那个版本, 也就是
-      # docs/GRIPPER_INTEGRATION.md 描述的接口。
+      # v0.14.0: 它是含 LiteGrip.write_zero() (CAN 0xFE, 来自 litegrip-python#32)
+      # 的首个 release, 上位机"写零位"要用; 它同时保留了"按名字载入标定模板 + 每
+      # 通道标定文件"的接口, 也就是 docs/GRIPPER_INTEGRATION.md 描述的那套。
       - name: Checkout the LiteGrip SDK
         uses: actions/checkout@v4
         with:
           repository: nexform-tech/litegrip-python
-          ref: v0.4.0
+          ref: v0.14.0
           path: litegrip-python
 
       - name: Install the SDKs and the daemon
