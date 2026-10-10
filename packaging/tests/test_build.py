@@ -223,3 +223,40 @@ def test_the_dynamically_chosen_uvicorn_implementations_are_still_imported() -> 
         "uvicorn.protocols.websockets.websockets_sansio_impl",
     ):
         assert name in hidden, f"{name} 没被点名 —— 冻结产物会在运行时少掉这条路径"
+
+
+# ------------------------------------------------------ 交付形态 (单文件 / 目录)
+
+def test_the_bundle_shape_defaults_to_onefile_and_refuses_nonsense(monkeypatch) -> None:
+    """默认必须是 `onefile`。
+
+    便携下载（其他 Linux、Windows）拿到的仍然是一个文件 —— 性能优化不该顺手把用户拿到的
+    东西从"一个文件"换成"一个目录"。要目录形态的交付（`.deb`）必须显式指定。
+    """
+    monkeypatch.delenv(build.MODE_ENV, raising=False)
+    assert build.bundle_mode() == "onefile"
+    assert build.bundle_mode_args("onefile") == ["--onefile"]
+
+    monkeypatch.setenv(build.MODE_ENV, "onedir")
+    assert build.bundle_mode() == "onedir"
+    assert build.bundle_mode_args("onedir") == ["--onedir"]
+
+    monkeypatch.setenv(build.MODE_ENV, "single-file")
+    with pytest.raises(SystemExit) as excinfo:
+        build.bundle_mode()
+    assert "onefile" in str(excinfo.value)
+
+
+def test_the_directory_shape_reports_the_size_of_the_whole_tree(monkeypatch, tmp_path) -> None:
+    """目录形态的体积要连 `_internal/` 一起算。
+
+    只量那个可执行文件会少报一个数量级（实测 7.2 MB 对 48.0 MB），而"产物多大"正是
+    这份日志里给人看的那个数。
+    """
+    monkeypatch.setattr(build, "OUT_DIST", tmp_path)
+    tree = tmp_path / build.EXE_NAME
+    (tree / "_internal").mkdir(parents=True)
+    (tree / build.EXE_NAME).write_bytes(b"x" * 7000)
+    (tree / "_internal" / "libpython.so").write_bytes(b"y" * 3000)
+
+    assert build.bundle_size_mb("onedir") == pytest.approx(0.01)
