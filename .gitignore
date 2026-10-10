@@ -19,6 +19,7 @@ Release/
 node_modules/
 .pnpm-store/
 .venv/
+.venv-build/
 __pycache__/
 *.pyc
 *.egg-info/

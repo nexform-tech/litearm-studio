@@ -61,7 +61,12 @@ function DialogContent({
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-          "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          // ⚠ `grid-cols-1` 不是装饰: 它给这一列定的是 `minmax(0, 1fr)`。少了它, 隐式列
+          // 按 `auto` 定尺, WebKit 会把它算到 `max-width` 那一边 —— 实测 (WebKitGTK
+          // 2.52.5, 标定选择器) 312px 的对话框里列宽 384.5px, 于是右边一列全被对话框的
+          // `overflow` 裁掉: 上升/家目录按钮、底部的关闭键、每行右侧的圆角。Chromium 恰好
+          // 算得下, 所以只在 webview 里看得见 (issue #103 "弹窗是纯白、连返回都没有")。
+          "fixed top-1/2 left-1/2 z-50 grid grid-cols-1 w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           className
         )}
         {...props}

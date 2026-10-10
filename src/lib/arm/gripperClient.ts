@@ -94,52 +94,6 @@ export type CalibrationCandidate = {
   inUse?: boolean
 }
 
-/** `gripper.list_dir` 的一项：一个子目录，或一个 `*.json` 文件。 */
-export type BrowseEntry = {
-  name: string
-  path: string
-  type: 'dir' | 'file'
-  /** 能否进入（目录）/ 能否读取（文件）—— 界面据此置灰、禁点。 */
-  readable: boolean
-  symlink?: boolean
-  /** 仅 `type === 'file'`：文件元数据 + `candidate_dict` 的全部字段。 */
-  size?: number
-  mtime?: number
-  source?: CalibrationSource
-  provenance?: string
-  template?: string | null
-  channel?: string
-  valid?: boolean
-  problems?: string[]
-  warnings?: string[]
-  closedRad?: number | null
-  openRad?: number | null
-  fileRadToMm?: number | null
-  mount?: 'normal' | 'reverse' | null
-  /** daemon 说这一份正在生效（同 `list_calibrations` 的 `inUse`）。 */
-  inUse?: boolean
-}
-
-/** `gripper.list_dir` 的答复。 */
-export type BrowseListing = {
-  /** 实际列举的绝对目录 —— 前端以此为准做导航。 */
-  path: string
-  /** 上级目录；文件系统根为 `null`。 */
-  parent: string | null
-  /** 条目数命中上限（daemon 侧截断），界面应告知操作员。 */
-  truncated: boolean
-  entries: BrowseEntry[]
-}
-
-/**
- * 这个条目是不是一份可渲染的标定候选（`type === 'file'` 且带校验结论）。
- *
- * 目录行与文件行的形状不同，靠 `valid` 是否存在来分流 —— `CalibrationRow` 只吃后者。
- */
-export function hasCandidate(e: BrowseEntry): e is BrowseEntry & CalibrationCandidate {
-  return e.type === 'file' && typeof e.valid === 'boolean'
-}
-
 /** `gripper.set_motion` 的答复：**已经生效**的设置。 */
 export type MotionSettings = { speedMmS: number; forceN: number }
 
@@ -356,16 +310,6 @@ export class GripperClient {
 
   importCalibration(path: string): Promise<{ path: string; source: string }> {
     return this._cmd('gripper.import_calibration', { path }) as Promise<{ path: string; source: string }>
-  }
-
-  /**
-   * 列举**控制机**某个目录下的子目录与 `*.json` 标定，并逐个校验。
-   *
-   * 不给 `path` → 起始目录是 daemon 用户的家目录。免连接（与 `list_calibrations`
-   * 同理：列举是文件系统问题，设置页连接之前就要问）。
-   */
-  listDir(path?: string): Promise<BrowseListing> {
-    return this._cmd('gripper.list_dir', path ? { path } : {}) as Promise<BrowseListing>
   }
 
   /**
