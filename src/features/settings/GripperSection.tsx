@@ -8,9 +8,7 @@ import { Input } from '@/components/ui/input'
 import { NumberField } from '@/components/ui/number-field'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Toggle } from '@/components/ui/toggle'
-import { GripperBrowserDialog } from './GripperBrowserDialog'
 import { useGripperSettings, TRAVEL_MAX_MM, TRAVEL_MIN_MM } from './useGripperSettings'
-import { dirOf } from './useGripperBrowse'
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -29,7 +27,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 export function GripperSection() {
   const { t } = useTranslation(['common', 'gripper'])
   const vm = useGripperSettings()
-  const [browseOpen, setBrowseOpen] = useState(false)
+  const [picking, setPicking] = useState(false)
   const [writingZero, setWritingZero] = useState(false)
 
   return (
@@ -178,9 +176,13 @@ export function GripperSection() {
             data-testid="gripper-import-browse"
             size="sm"
             variant="outline"
-            // 列举是文件系统问题，免连接；导入才需要连接。
-            disabled={!vm.present}
-            onClick={() => setBrowseOpen(true)}
+            // 选文件是文件系统问题，免连接；导入才需要连接。对话框由**本地程序**弹
+            // （原生打开对话框），所以它必须在场（`present`）。
+            disabled={!vm.present || picking}
+            onClick={() => {
+              setPicking(true)
+              void vm.pickCalibration().finally(() => setPicking(false))
+            }}
           >
             <FolderOpen className="size-3.5" />
             {t('gripper:settings.browse')}
@@ -197,13 +199,6 @@ export function GripperSection() {
             {t('common:import')}
           </Button>
         </div>
-
-        <GripperBrowserDialog
-          open={browseOpen}
-          onOpenChange={setBrowseOpen}
-          onPick={(path) => vm.setImportPath(path)}
-          initialPath={dirOf(vm.importPath)}
-        />
       </Card>
 
       <Card className="flex flex-col gap-3 rounded-[0.875rem] p-5">

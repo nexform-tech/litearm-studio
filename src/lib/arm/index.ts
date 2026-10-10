@@ -36,7 +36,6 @@ export { useArmMetrics } from './useArmMetrics'
 export type { SeriesSample, MetricSeries, MetricChip, MetricType, ArmMetricsReturn, UseArmMetricsOptions } from './useArmMetrics'
 export { GripperClient, gripperClient, normalizeGripperState } from './gripperClient'
 export type {
-  CalibrationCandidate,
   CalibrationSource,
   GripperAlert,
   GripperBusy,

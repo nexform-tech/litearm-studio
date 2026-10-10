@@ -230,19 +230,21 @@ def _on_ui_thread(window: Any, call: Callable[[], Any]) -> Any:
 
 
 class WindowHandle:
-    """窗口把手 —— 抬窗口 (第二次启动的落点) 与"导出存到哪"都由它做。
+    """窗口把手 —— 抬窗口 (第二次启动的落点)、"导出存到哪"与"选哪份标定"都由它做。
 
-    ⚠ 这些方法会被 **HTTP 线程**调用 (`POST /api/focus`、`POST /api/export`), 不是
-    GUI 线程。pywebview 自己会把 GTK/Qt 的调用投递到 GUI 线程, Windows 那一路由
-    `_on_ui_thread` 补上; 抬不起来、对话框开不出来也只是"没抬起来 / 没导出", 不影响
-    机械臂会话。
+    ⚠ 这些方法会被 **HTTP 线程**调用 (`POST /api/focus`、`POST /api/export`、
+    `POST /api/pick-file`), 不是 GUI 线程。pywebview 自己会把 GTK/Qt 的调用投递到 GUI
+    线程, Windows 那一路由 `_on_ui_thread` 补上; 抬不起来、对话框开不出来也只是"没抬
+    起来 / 没导出 / 没选上", 不影响机械臂会话。
     """
 
-    def __init__(self, window: Any, *, save_dialog: int) -> None:
+    def __init__(self, window: Any, *, save_dialog: int, open_dialog: int) -> None:
         self._window = window
         #: `webview.FileDialog.SAVE` —— 由 `run_window` 传入, 因为这个模块**不能**在
         #: 顶层 import webview (GUI 是软依赖, 无界面运行的机器上根本没有它)。
         self._save_dialog = save_dialog
+        #: `webview.FileDialog.OPEN` —— 同上, 供 `/api/pick-file` 选标定文件。
+        self._open_dialog = open_dialog
 
     def raise_window(self) -> None:
         self._window.restore()
@@ -267,13 +269,40 @@ class WindowHandle:
         path = _on_ui_thread(self._window, _ask)
         return path or None
 
+    def ask_open_path(self, initial_dir: Optional[str] = None) -> Optional[str]:
+        """弹原生"打开文件"对话框, 返回操作员选定的路径; 取消 (或开不出来) 返回 `None`。
+
+        与 `ask_save_path` 同一套路, 只是换成 `FileDialog.OPEN` 并加一个 `*.json` 过滤。
+        标定文件是**控制机上已经存在**的一份 `*.json`(设置页的"浏览…"): 页面跑在 webview
+        里, 既给不出一个真实路径, 也铺不开一个稳当的目录浏览器, 所以由持有窗口的这一侧去问。
+
+        `initial_dir` 是对话框从哪开始; 取不到、或它并不是一个存在的目录, 就从平台默认目录
+        开始 —— 与 `ask_save_path` 同一条防线: 把不存在的目录交给 GTK 会让对话框弹不出来。
+        """
+        start = Path(initial_dir).expanduser() if initial_dir else None
+        if start is None or not start.is_dir():
+            start = default_export_dir()
+
+        def _ask() -> Optional[str]:
+            chosen = self._window.create_file_dialog(
+                self._open_dialog, str(start),
+                False, "", ("JSON (*.json)",))
+            if not chosen:
+                return None
+            # 与 `ask_save_path` 同一道防线: pywebview 在"确认了但没有文件名"时回
+            # `(None,)`, 别让它变成字符串 `"None"` 再被当成一个路径。
+            first = chosen[0]
+            return str(first) if first else None
+
+        return _on_ui_thread(self._window, _ask) or None
+
 
 def run_window(url: str, *, on_ready: Callable[[Any], None],
                title: str = APP_NAME) -> None:
     """在 `url` 打开应用窗口, 并**阻塞到窗口关闭**。
 
-    `on_ready` 在 GUI 起来之前拿到 `WindowHandle`, 供 `/api/focus` 与 `/api/export`
-    (导出文件的保存对话框) 使用。
+    `on_ready` 在 GUI 起来之前拿到 `WindowHandle`, 供 `/api/focus`、`/api/export`
+    (导出文件的保存对话框) 与 `/api/pick-file` (选标定文件的打开对话框) 使用。
 
     ⚠ **返回即代表操作员关掉了窗口** —— 这是本程序唯一的正常退出信号 (另一个是进程收到
     信号)。调用者据此收尾即可, 不需要再判断任何状态。
@@ -286,7 +315,8 @@ def run_window(url: str, *, on_ready: Callable[[Any], None],
                                    min_size=WINDOW_MIN_SIZE)
     if window is None:  # pragma: no cover - 只有后端异常时才会
         raise WindowUnavailable(_unavailable_message("pywebview 没有创建窗口"))
-    on_ready(WindowHandle(window, save_dialog=int(webview.FileDialog.SAVE)))
+    on_ready(WindowHandle(window, save_dialog=int(webview.FileDialog.SAVE),
+                          open_dialog=int(webview.FileDialog.OPEN)))
     log.info("应用窗口已打开: %s", url)
     try:
         # ⚠ `icon` 是 `start()` 的参数而不是 `create_window()` 的 (6.2.1 的签名如此)。

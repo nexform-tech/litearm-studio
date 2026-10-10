@@ -773,13 +773,34 @@ def _export_saver(handles: List[Any], *, window: bool
     return _save_path
 
 
+def _open_picker(handles: List[Any], *, window: bool
+                 ) -> Optional[Callable[[Optional[str]], Optional[str]]]:
+    """`/api/pick-file` 的"弹原生打开对话框"动作; 没有窗口的进程返回 `None` (接口回 `no-window`)。
+
+    与 `_export_saver` 同构, 差别只在语义: 这里要的是控制机上**已经存在**的一份 `*.json`
+    (设置页选标定文件), 所以弹的是打开对话框、回的是操作员挑中的那个路径。`None` 钩子仍然
+    表示"没有窗口", 闭包返回 `None` 才表示"操作员按了取消" —— 两者在页面那里是两种不同
+    的结局 (前者回退/告知, 后者什么都不做)。
+    """
+    if not window:
+        return None
+
+    def _pick(initial_dir: Optional[str]) -> Optional[str]:
+        if not handles:            # 窗口还没建好, 或已经关掉了
+            return None
+        return handles[0].ask_open_path(initial_dir)
+
+    return _pick
+
+
 def create_app(session: Session, *, gripper: Optional[Any] = None,
                version: str = __version__,
                ui_dir: Optional[str] = None,
                repo_dist: Optional[Path] = None,
                allow_origins: Iterable[str] = (),
                focus: Optional[Callable[[], bool]] = None,
-               save_path: Optional[Callable[[str], Optional[str]]] = None) -> FastAPI:
+               save_path: Optional[Callable[[str], Optional[str]]] = None,
+               pick_path: Optional[Callable[[Optional[str]], Optional[str]]] = None) -> FastAPI:
     """建 FastAPI 应用 (不含绑定/启动 —— 那是 `run()` 的事)。
 
     `/api/health` 返回版本与连接状态; 给了静态目录就把它挂在 `/` 上
@@ -788,6 +809,9 @@ def create_app(session: Session, *, gripper: Optional[Any] = None,
     它返回假, `/api/focus` 如实转告调用者。
     `save_path` 是"弹保存对话框并回答操作员选了哪里"的动作 (`WindowHandle.ask_save_path`),
     同样由 `serve` 注入; 无界面运行时它是 `None`, `/api/export` 如实回 `no-window`。
+    `pick_path` 是"弹打开对话框并回答操作员挑了哪个文件"的动作
+    (`WindowHandle.ask_open_path`), 参数是从哪个目录开始 (`None` = 平台默认);
+    无界面运行时它是 `None`, `/api/pick-file` 如实回 `no-window`。
     """
     resolved = resolve_ui_dir(ui_dir, repo_dist=repo_dist)
     daemon = Daemon(session, gripper=gripper, version=version, ui_dir=resolved,
@@ -850,6 +874,31 @@ def create_app(session: Session, *, gripper: Optional[Any] = None,
             return JSONResponse({"ok": False, "error": "write-failed",
                                  "detail": str(exc)})
         return JSONResponse({"ok": True, "saved": True, "path": str(chosen)})
+
+    # ── 选标定文件: 页面够不到控制机的文件系统, 由**本进程**弹原生打开对话框 ──────
+    #
+    # 与 `/api/export` 同一套路, 只是换了个方向。标定文件是控制机上**已经存在**的一份
+    # `*.json`: `gripper.import_calibration` 要的是它的**主机路径** (daemon 把它 pin 住、
+    # 重连时按路径重新解析), 而页面跑在 webview 里 —— 它自己那个目录浏览器在打包后的
+    # 宿主里并不可靠, 也给不出一个稳当的选择。所以路径由持有窗口的这一侧去问, 页面只拿回
+    # 一个路径填进输入框, 导入流程一行不改。
+    #
+    # 同源判据与 `/api/export`、`/ws` 同一套: 别的网页不该能把我们的对话框弹到操作员脸上。
+    # 对话框本身可能开着很久, 那期间 WebSocket 与其它接口照常工作。
+    @app.api_route("/api/pick-file", methods=["POST"])
+    async def _pick_file(request: Request, dir: str = "") -> JSONResponse:
+        origin = request.headers.get("origin")
+        if origin is not None and not origin_allowed(
+                origin, request.headers.get("host", ""), allow_origins):
+            return JSONResponse({"ok": False, "error": "cross-origin"}, status_code=403)
+        if pick_path is None:
+            # 无界面运行 (`--no-open`): 没有窗口可以弹对话框。页面据此如实告知操作员
+            # 这里选不了文件 (而不是静默)—— 纯浏览器/服务端场景本就给不出主机路径。
+            return JSONResponse({"ok": True, "picked": False, "reason": "no-window"})
+        chosen = await asyncio.to_thread(pick_path, dir or None)
+        if not chosen:
+            return JSONResponse({"ok": True, "picked": False, "reason": "cancelled"})
+        return JSONResponse({"ok": True, "picked": True, "path": str(chosen)})
 
     # ── 日志历史回读 (issue #79 第 5 点 / #80) ──────────────────────────────
     #
@@ -1033,8 +1082,9 @@ async def serve(session: Session, *, gripper: Optional[Any] = None,
                     fields={"requested_port": int(http_port), "port": int(port),
                             "origin_changed": True})
 
-    #: 窗口把手 —— `window_runner` 在 GUI 起来时交回来, `/api/focus` 与 `/api/export`
-    #: 用它抬窗口、弹保存对话框 (见 `instance`)。无界面运行时永远是空。
+    #: 窗口把手 —— `window_runner` 在 GUI 起来时交回来, `/api/focus`、`/api/export`
+    #: 与 `/api/pick-file` 用它抬窗口、弹保存/打开对话框 (见 `instance`)。无界面运行时
+    #: 永远是空。
     handles: List[Any] = []
 
     def _focus() -> bool:
@@ -1044,7 +1094,8 @@ async def serve(session: Session, *, gripper: Optional[Any] = None,
         return True
     app = create_app(session, gripper=gripper, version=version, ui_dir=ui_dir,
                      allow_origins=allow_origins, focus=_focus,
-                     save_path=_export_saver(handles, window=open_browser))
+                     save_path=_export_saver(handles, window=open_browser),
+                     pick_path=_open_picker(handles, window=open_browser))
     config = uvicorn.Config(app, host=host, port=port, log_level="info",
                             ws_ping_interval=20.0, ws_ping_timeout=20.0)
     server = uvicorn.Server(config)

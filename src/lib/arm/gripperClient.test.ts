@@ -197,7 +197,6 @@ describe('GripperClient (daemon WebSocket)', () => {
       client.resetStop(),
       client.setMotion({ speedMmS: 30, forceN: 12 }),
       client.loadTemplate('normal'),
-      client.listDir('/tmp'),
       client.importCalibration('/tmp/x.json'),
       client.writeZero(),
       client.setAllowFactory(true),
@@ -219,7 +218,6 @@ describe('GripperClient (daemon WebSocket)', () => {
       'gripper.reset_stop',
       'gripper.set_motion',
       'gripper.load_template',
-      'gripper.list_dir',
       'gripper.import_calibration',
       'gripper.write_zero',
       'gripper.set_allow_factory',
@@ -227,23 +225,12 @@ describe('GripperClient (daemon WebSocket)', () => {
     expect(ws.lastFrame('gripper.move_to')!.p).toEqual({ targetMm: 40, speedMmS: 60 })
     expect(ws.lastFrame('gripper.connect')!.p).toEqual({ channel: 'can1', canId: 9, mount: 'reverse' })
     expect(ws.lastFrame('gripper.grasp')!.p).toEqual({ forceN: 20, holdS: 2 })
-    // 给了路径就带 `path`，不给就是 `{}`（daemon 侧落到家目录）。
-    expect(ws.lastFrame('gripper.list_dir')!.p).toEqual({ path: '/tmp' })
 
     // 让在途 RPC 收尾（daemon 的 res：id 就是帧里的 id）。
     for (const frame of ws.frames().filter((f) => f.t === 'cmd')) {
       ws.receive({ t: 'res', id: frame.id, ok: true, v: null })
     }
     await Promise.all(pending)
-  })
-
-  it('listDir without a path sends an empty param object', async () => {
-    const { client, ws } = connected()
-    const promise = client.listDir()
-    const frame = ws.lastFrame('gripper.list_dir')!
-    expect(frame.p).toEqual({})
-    ws.receive({ t: 'res', id: frame.id, ok: true, v: null })
-    await promise
   })
 
   it('rejects with the daemon error object, kinds included', async () => {
