@@ -144,6 +144,18 @@ the Debian package yourself, run `make deb` (Docker; it pins the Ubuntu 22.04 to
 frozen runtime has to be linked against — see [daemon/README.md](daemon/README.md#打包phase-5)).
 For the bare executable instead, run `pnpm build` and then `python packaging/build.py`.
 
+On Windows the same artifact is built by `scripts/build-windows.ps1` — the counterpart of
+`make deb`, and the one build path that needs no Docker. It mirrors the checkout to a
+Windows-local directory when the source is on a WSL share (PyInstaller over 9p is slow and
+fragile), builds in the venv it keeps under `%USERPROFILE%\litearm-studio-win`, and takes the
+two SDKs from the `sdk/` submodules like every other path. `scripts/deploy-windows.ps1` then
+names the result `litearm-studio-<version>-windows-amd64.exe` and writes its `.sha256`:
+
+```powershell
+.\scripts\build-windows.ps1 -Source \\wsl.localhost\Debian\home\me\litearm\litearm-studio
+.\scripts\deploy-windows.ps1 -Artifact <workdir>\litearm-studio\packaging\dist\litearm-studio-daemon.exe -CopyTo $env:USERPROFILE\Desktop
+```
+
 The Windows executable carries the LiteArm icon from `assets/litearm.ico`. It is committed, so a
 normal build never regenerates it; rebuild it only when the brand mark changes, and keep
 `assets/icon-source.svg` as the source of truth:
@@ -181,6 +193,8 @@ so an untracked icon silently falls back to PyInstaller's default executable ico
 | `pnpm lint` | Static analysis (oxlint) |
 | `pnpm exec tsc -b` | TypeScript typecheck |
 | `make deb` | Installable Debian package into `packaging/dist/` (Docker, ~90 s) |
+| `.\scripts\build-windows.ps1` | Windows one-file executable into `packaging/dist/` (no Docker) |
+| `make sdk` | Fetch the pinned SDK submodules and install them into the venv |
 | `python -m pytest daemon/tests -q` | Daemon unit tests (no hardware needed) |
 
 ---
