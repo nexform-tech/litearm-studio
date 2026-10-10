@@ -120,14 +120,11 @@ describe('GripperSection', () => {
     expect((screen.getByTestId('gripper-write-zero') as HTMLButtonElement).disabled).toBe(true)
   })
 
-  it('defaults the mounting direction to normal, with no undeclared option', async () => {
-    // daemon 侧不再有"未声明"这一态（参考硬件是正装）：没有记录时表单必须给正装，
-    // 而不是一个空值。
-    mocks.conn.current = { ...mocks.conn.current, mount: null, declaredMount: null }
+  it('no longer offers a mounting-direction selector', async () => {
+    // 装配方向固定为正装（参考硬件就是正装）：设置页不再让操作员选。
     render(<GripperSection />)
     await waitFor(() => expect(mocks.listChannels).toHaveBeenCalled())
-    expect(screen.getByTestId('gripper-mount').textContent).toMatch(/Normal|正向/)
-    expect(screen.queryByText(/Not declared|未声明/)).toBeNull()
+    expect(screen.queryByTestId('gripper-mount')).toBeNull()
   })
 
   it('persists the factory acknowledgement through the toggle', async () => {

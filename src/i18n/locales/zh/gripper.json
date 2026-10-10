@@ -105,12 +105,11 @@
   },
   "settings": {
     "title": "夹爪与总线",
-    "description": "配置这一路 CAN 接口上的 LiteGrip：通道、CAN ID、装配方向、行程与标定文件。",
+    "description": "配置这一路 CAN 接口上的 LiteGrip：通道、CAN ID、行程与标定文件。",
     "channel": "CAN 接口",
     "canId": "电机 CAN ID",
     "mstId": "主站 CAN ID",
     "mstAuto": "自动",
-    "mount": "装配方向",
     "apply": "应用并重连",
     "applying": "应用中…",
     "needsDisconnect": "改通道或 ID 之前请先断开夹爪",
@@ -129,7 +128,6 @@
     "travel": "行程 (mm)",
     "travelDesc": "每通道记录：它是 mm/rad 换算的分母，必须在重启后仍然存在。",
     "applied": "已应用并重连",
-    "declareMount": "按此方向载入模板",
     "effectiveMount": "设备实际按{{mount}}在跑"
   }
 }

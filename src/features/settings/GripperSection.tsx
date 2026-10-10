@@ -92,20 +92,6 @@ export function GripperSection() {
               onCommit={(v) => vm.setMstId(v === 0 ? null : v)}
             />
           </Field>
-          <Field label={t('gripper:settings.mount')}>
-            <Select
-              value={vm.mount}
-              onValueChange={(v) => vm.setMount(v as 'normal' | 'reverse')}
-            >
-              <SelectTrigger id="gripper-mount" data-testid="gripper-mount">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="normal">{t('gripper:connection.mountNormal')}</SelectItem>
-                <SelectItem value="reverse">{t('gripper:connection.mountReverse')}</SelectItem>
-              </SelectContent>
-            </Select>
-          </Field>
           {/* 行程不再是"实测"要填的东西，而是 mm/rad 换算的分母：由它和标定角度
               定出每 rad 多少毫米，所以它随配置卡一起提交。 */}
           <Field label={t('gripper:settings.travel')}>
@@ -130,21 +116,10 @@ export function GripperSection() {
             <RefreshCw className={vm.applying ? 'size-3.5 animate-spin' : 'size-3.5'} />
             {vm.applying ? t('gripper:settings.applying') : t('gripper:settings.apply')}
           </Button>
-          <Button
-            id="gripper-save-template"
-            data-testid="gripper-save-template"
-            size="sm"
-            variant="outline"
-            disabled={!vm.connected}
-            onClick={() => void vm.useTemplate(vm.mount)}
-          >
-            <ScanLine className="size-3.5" />
-            {t('gripper:settings.declareMount')}
-          </Button>
           {!vm.connected ? (
             <span className="text-[0.6875rem] text-muted-foreground">{t('gripper:settings.needsDisconnect')}</span>
           ) : null}
-          {/* 声明与实际可能不同：菜单里是**声明**，这句话说的是设备**实际**在跑的方向。 */}
+          {/* 声明恒为正向：这句话说的是设备**实际**在跑的方向，不一致时提醒接线。 */}
           {vm.conn && vm.conn.mount !== vm.mount ? (
             <span id="gripper-effective-mount" data-testid="gripper-effective-mount" className="text-[0.6875rem] text-warn">
               {t('gripper:settings.effectiveMount', {

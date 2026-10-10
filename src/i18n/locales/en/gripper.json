@@ -105,12 +105,11 @@
   },
   "settings": {
     "title": "Gripper and bus",
-    "description": "Configure the LiteGrip on this CAN interface: channel, CAN ids, mounting, travel and calibration file.",
+    "description": "Configure the LiteGrip on this CAN interface: channel, CAN ids, travel and calibration file.",
     "channel": "CAN interface",
     "canId": "Motor CAN ID",
     "mstId": "Master CAN ID",
     "mstAuto": "Auto",
-    "mount": "Mounting",
     "apply": "Apply and reconnect",
     "applying": "Applying…",
     "needsDisconnect": "Disconnect the gripper before changing the channel or ids",
@@ -129,7 +128,6 @@
     "travel": "Travel (mm)",
     "travelDesc": "Per channel: it is the denominator of the mm/rad conversion and has to survive a restart.",
     "applied": "Applied and reconnected",
-    "declareMount": "Load this mounting",
     "effectiveMount": "The device is running {{mount}}"
   }
 }

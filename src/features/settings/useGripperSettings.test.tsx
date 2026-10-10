@@ -106,7 +106,6 @@ describe('useGripperSettings', () => {
     mocks.listChannels.mockResolvedValue(['can0', 'can1'])
     mocks.connect.mockResolvedValue({ started: true })
     mocks.disconnect.mockResolvedValue({ stopped: true })
-    mocks.loadTemplate.mockResolvedValue({ mount: 'reverse', source: 'template' })
     mocks.importCalibration.mockResolvedValue({ path: '/tmp/my.json', source: 'measured' })
     mocks.setAllowFactory.mockResolvedValue({ allowFactory: true })
     mocks.writeZero.mockResolvedValue({ ok: true, beforeRad: 1.71, afterRad: 0.0001 })
@@ -135,22 +134,12 @@ describe('useGripperSettings', () => {
     await act(async () => {
       result.current.setChannel('can1')
       result.current.setCanId(9)
-      result.current.setMount('reverse')
     })
     await act(async () => {
       await result.current.apply()
     })
     expect(mocks.disconnect).toHaveBeenCalledTimes(1)
-    expect(mocks.connect).toHaveBeenCalledWith({ channel: 'can1', canId: 9, mstId: undefined, mount: 'reverse' })
-  })
-
-  it('loads a template by name and adopts the read-back direction', async () => {
-    const { result } = renderHook(() => useGripperSettings())
-    await act(async () => {
-      await result.current.useTemplate('reverse')
-    })
-    expect(mocks.loadTemplate).toHaveBeenCalledWith('reverse')
-    expect(result.current.mount).toBe('reverse')
+    expect(mocks.connect).toHaveBeenCalledWith({ channel: 'can1', canId: 9, mstId: undefined, mount: 'normal' })
   })
 
   it('imports a calibration from a path on the control machine', async () => {
