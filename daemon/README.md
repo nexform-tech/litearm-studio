@@ -356,7 +356,9 @@ python scripts/compare_bundles.py litearm-studio_0.17.5_amd64.deb \
     --ignore 'libusb-1.0*' --ignore 'ossl-modules/*' --ignore 'libxxhash*'
 ```
 
-它比的是冻结产物里的清单（PyInstaller 的 TOC），分三组：**系统库**、**界面资源**、Python 层。
+它比的是冻结产物里的清单 —— 单文件是 PyInstaller 的 TOC，目录形态（`.deb` 用的那种）是
+可执行文件自己的 TOC 加上 `_internal/` 那棵树，两种形态读进同一个命名空间，所以可以互相比
+—— 分三组：**系统库**、**界面资源**、Python 层。
 前两组缺一个就判失败（界面资源的文件名里的内容哈希会先抹掉，改界面不算差异）；Python 层里多出来的
 那些（`apt_pkg`、`cryptography`、`certifi`…）是发布 runner 自带的，精简构建不需要，只列出来给你看。
 上面那六个 `--ignore` 就是当前 runner 比我们多出来的那几样。

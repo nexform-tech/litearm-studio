@@ -8,8 +8,9 @@ and started, and only the bundled Adwaita icons would have been broken.
 
     scripts/compare_bundles.py released.deb packaging/dist/litearm-studio_*_amd64.deb [--ignore PATTERN ...]
 
-Both arguments may be a `.deb` or a bare one-file executable. The verdict is about the two
-things that change behaviour:
+Both arguments may be a `.deb`, a bare executable (either shape `packaging/build.py` can
+produce) or the bundle directory itself. The verdict is about the two things that change
+behaviour:
 
 * **libraries** (`*.so*`) — a missing one is a missing capability;
 * **UI assets** (`dist/assets/*`) — the two builds may carry different content hashes, so names
@@ -21,6 +22,15 @@ need. Those are listed for information and never fail the check. `--ignore` adds
 skip entirely.
 
 ⚠ Needs `pip install pyinstaller` (it reads PyInstaller's own archive format).
+
+⚠ **Two shapes, one name space.** `packaging/build.py` can lay the same bundle out as a
+single file or as a directory (`bundle_mode()`), and the `.deb` is built from the
+directory. Both are read into one name space here — the path relative to the bundle root
+— so a directory build can still be compared against a one-file release:
+
+* one-file: every entry lives in the CArchive appended to the executable;
+* directory: the same entries live as real files under `_internal/`, and only the
+  bootstrap is left in the executable's own archive.
 """
 from __future__ import annotations
 
@@ -34,34 +44,76 @@ from pathlib import Path
 from PyInstaller.archive.readers import CArchiveReader
 
 EXE_IN_DEB = Path("usr/lib/litearm-studio/litearm-studio-daemon")
+#: Where the directory shape keeps everything the executable is not (PyInstaller 6+).
+#: Reading the executable alone would see the bootstrap and nothing else.
+CONTENTS_DIR = "_internal"
 #: `LogsPage-CuR9AlHP.js` -> `LogsPage.js`: the hash changes whenever the UI changes, so it
 #: says nothing about whether the bundle is complete.
 HASHED = re.compile(r"-[A-Za-z0-9_-]{8}(\.[a-z]+)$")
 
 
 def bundle_path(argument: str) -> Path:
-    """The one-file executable: either the argument itself, or inside the `.deb` it is."""
+    """The bundle: either the argument itself, or inside the `.deb` it is.
+
+    The result is a **file** in the one-file shape and a **directory** in the directory
+    shape; `toc()` tells them apart.
+    """
     path = Path(argument).resolve()
-    if not path.is_file():
+    if not path.exists():
         raise SystemExit(f"[compare] no such file: {path}")
     if path.suffix != ".deb":
         return path
     temp = Path(tempfile.mkdtemp(prefix="bundle-compare-"))
     subprocess.run(["dpkg-deb", "-x", str(path), str(temp)], check=True)
     inside = temp / EXE_IN_DEB
-    if not inside.is_file():
+    if not inside.exists():
         raise SystemExit(f"[compare] {path} does not contain {EXE_IN_DEB}")
     return inside
 
 
-def toc(path: Path, ignore: list[str]) -> dict[str, int]:
-    """Uncompressed size per entry, keyed by a stable name (asset hashes stripped)."""
+def archive_toc(executable: Path | None) -> dict[str, int]:
+    """The CArchive table of contents of a frozen executable, keyed by entry name."""
+    if executable is None or not executable.is_file():
+        return {}
     out: dict[str, int] = {}
-    for name, entry in CArchiveReader(str(path)).toc.items():
+    for name, entry in CArchiveReader(str(executable)).toc.items():
+        out[name] = out.get(name, 0) + entry[2]
+    return out
+
+
+def shape(path: Path) -> tuple[Path | None, Path | None]:
+    """The executable and the `_internal/` tree of the bundle `path` names.
+
+    Three spellings reach here, and all three have to work:
+
+    * a one-file executable — the bundle *is* that file, there is no contents directory;
+    * a directory bundle — the executable at its root (named after the directory, plus
+      `.exe` on Windows), the entries under `_internal/`;
+    * the executable *inside* a directory bundle, which is what a `.deb` holds: the
+      `_internal/` tree sits **beside** it, not under the directory's own name.
+    """
+    if path.is_dir():
+        return next((candidate for candidate in (path / path.name, path / f"{path.name}.exe")
+                     if candidate.is_file()), None), path / CONTENTS_DIR
+    if (path.parent / CONTENTS_DIR).is_dir():
+        return path, path.parent / CONTENTS_DIR
+    return path, None
+
+
+def toc(path: Path, ignore: list[str]) -> dict[str, int]:
+    """Size per entry of the bundle at `path` (a file or a directory), by relative name."""
+    executable, contents = shape(path)
+    found = archive_toc(executable)
+    if contents is not None and contents.is_dir():
+        for source in sorted(contents.rglob("*")):
+            if source.is_file():
+                found[source.relative_to(contents).as_posix()] = source.stat().st_size
+    out: dict[str, int] = {}
+    for name, size in found.items():
         if any(fnmatch.fnmatch(name, pattern) for pattern in ignore):
             continue
         key = HASHED.sub(r"\1", name) if name.startswith("dist/assets/") else name
-        out[key] = out.get(key, 0) + entry[2]
+        out[key] = out.get(key, 0) + size
     return out
 
 
