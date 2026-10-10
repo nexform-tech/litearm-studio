@@ -42,8 +42,15 @@ jobs:
         include:
           - os: ubuntu-22.04
             suffix: linux-amd64
+            # ⚠ 窗口后端逐平台写死, 不靠自动判据: Linux 借系统的 WebKitGTK（见下面的
+            # apt 那步）, 其余平台用系统自带的内核。写死之后, 构建机上少了谁都会
+            # **当场失败**, 而不是换一个体积差 4 倍的后端悄悄发出去。
+            # ⚠ 之所以放在 matrix 而不是直接写表达式: `runner` 上下文在 job 一级的
+            # `env` 里不合法（`matrix` 合法）—— 见 `LITEARM_STUDIO_WINDOW_BACKEND`。
+            window_backend: gtk
           - os: windows-latest
             suffix: windows-amd64.exe
+            window_backend: native
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write # attach artifacts to the GitHub release
@@ -55,10 +62,8 @@ jobs:
       # `git describe` 的兜底 (CI 检出是 `fetch-depth: 1` + `fetch-tags: false`, 于是那是
       # 个 commit 短哈希), 而那个号会当作诊断信息发给激活服务。
       LITEARM_STUDIO_VERSION: ${{ needs.release.outputs.new_tag }}
-      # ⚠ 显式钉住后端, 不靠自动判据: Linux 走 GTK（见下面那次构建）, 其余平台用系统
-      # 自带的内核。写死之后, 构建机上少了谁都会**当场失败**, 而不是换一个体积
-      # 差 4 倍的后端悄悄发出去。
-      LITEARM_STUDIO_WINDOW_BACKEND: ${{ runner.os == 'Linux' && 'gtk' || 'native' }}
+      # ⚠ 后端同样是产物输入, 也放在这一级（值逐平台写在上面 matrix 里）。
+      LITEARM_STUDIO_WINDOW_BACKEND: ${{ matrix.window_backend }}
       # 激活服务地址：在仓库变量里改（Settings → Secrets and variables →
       # Actions → Variables），不必改工作流，也不必让用户设环境变量。
       # 不设置 = 用 daemon 里的内置生产地址（见 activation.PRODUCTION_ACTIVATION_URL）。
