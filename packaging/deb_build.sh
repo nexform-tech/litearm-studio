@@ -56,7 +56,13 @@ echo "[deb 2/5] checking the window backend is GTK, not a silent fallback"
 export LITEARM_STUDIO_WINDOW_BACKEND=gtk
 export LITEARM_STUDIO_VERSION="$VERSION"
 
-echo "[deb 3/5] packaging the one-file executable (version $VERSION)"
+# ⚠ The directory shape, exactly as the release job does: dpkg installs a tree anyway, so
+# nothing is unpacked at launch and every start is ~300 ms quicker (packaging/build.py's
+# `bundle_mode()` has the measurements). The single-file artifact is a separate download
+# for people who are not installing a package — it is not what this package is built from.
+export LITEARM_STUDIO_BUNDLE_MODE=onedir
+
+echo "[deb 3/5] packaging the executable as a directory (version $VERSION)"
 "$PY" packaging/build.py
 
 echo "[deb 4/5] building the Debian package"

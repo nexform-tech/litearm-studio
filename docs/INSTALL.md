@@ -89,7 +89,7 @@ without a window (the UI is then reachable in a browser at the printed address).
 | Path | Purpose |
 | :--- | :--- |
 | `/usr/bin/litearm-studio` | the command that starts the program |
-| `/usr/lib/litearm-studio/litearm-studio-daemon` | the self-contained executable |
+| `/usr/lib/litearm-studio/litearm-studio-daemon` | the program itself; its `_internal/` directory sits beside it — keep the two together |
 | `/usr/share/applications/litearm-studio.desktop` | the application-list entry |
 | `/usr/share/icons/hicolor/*/apps/litearm-studio.png` | the icon |
 | `/usr/lib/udev/rules.d/60-litearm-studio.rules` | lets the logged-in desktop user open the arm's serial port, so you never join the `dialout` group |

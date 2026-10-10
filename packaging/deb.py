@@ -1,7 +1,7 @@
-"""Turn the packaged one-file executable into a Debian package for Ubuntu users.
+"""Turn the packaged daemon into a Debian package for Ubuntu users.
 
-Usage (**run from the repository root**, after `python packaging/build.py` has produced
-the executable):
+Usage (**run from the repository root**, after `packaging/build.py` has produced the
+executable — see `bundled_daemon()` for which of its two shapes this expects):
 
 ```bash
 python packaging/deb.py
@@ -51,13 +51,17 @@ ROOT = Path(__file__).resolve().parents[1]
 ICON_DIR = ROOT / "assets" / "icon-png"
 WORK = ROOT / "packaging" / "build" / "deb"
 OUT_DIST = ROOT / "packaging" / "dist"
+
+#: What `packaging/build.py` leaves behind — a **file** in `onefile` mode, a **directory**
+#: in `onedir` mode, and the same path either way. `bundled_daemon()` tells them apart;
+#: the package is built from the directory shape (see there for why).
 DEFAULT_BINARY = OUT_DIST / "litearm-studio-daemon"
 
 PACKAGE = "litearm-studio"
 BINARY_NAME = "litearm-studio-daemon"
 #: Command the desktop entry and the documentation name. It is a wrapper, not the
-#: 38 MB executable: a one-file PyInstaller build has no business on PATH under a name
-#: that suggests a normal program.
+#: executable itself: a PyInstaller bundle has no business on PATH under a name that
+#: suggests a normal program.
 LAUNCHER = "litearm-studio"
 INSTALL_DIR = f"/usr/lib/{PACKAGE}"
 
@@ -180,17 +184,17 @@ def depends_for(window_backend: str) -> list[str]:
 
 
 def launcher_script() -> str:
-    """`/usr/bin/litearm-studio`: a two-line wrapper, not a copy of the 38 MB file."""
+    """`/usr/bin/litearm-studio`: a two-line wrapper, not a copy of the executable."""
     return (
         "#!/bin/sh\n"
         f"# Installed by the {PACKAGE} Debian package. The program itself is a\n"
-        "# self-contained one-file executable under /usr/lib; this wrapper only gives it\n"
+        "# self-contained PyInstaller bundle under /usr/lib; this wrapper only gives it\n"
         "# a name on PATH that matches the desktop entry.\n"
         "#\n"
         "# Point the gripper at the packaged default calibration. The file lives under\n"
-        "# /usr/lib rather than inside the one-file bundle so the path stays the same\n"
-        "# across launches (the bundle unpacks to a fresh temporary directory each time),\n"
-        "# which is what lets the calibration page name a stable file.\n"
+        "# /usr/lib beside the bundle rather than inside its `_internal/` tree, so the\n"
+        "# path is the same on every launch whichever shape the release was built in —\n"
+        "# that is what lets the calibration page name a stable file.\n"
         f"LITEGRIP_FACTORY_CALIB={INSTALL_DIR}/factory_calibration.json\n"
         "export LITEGRIP_FACTORY_CALIB\n"
         f'exec {INSTALL_DIR}/{BINARY_NAME} "$@"\n'
@@ -298,7 +302,7 @@ Entry = Tuple[Path, Union[bytes, Path], int]
 def payload(binary: Path) -> List[Entry]:
     """Everything the package installs, in a fixed order."""
     entries: List[Entry] = [
-        (Path(f"usr/lib/{PACKAGE}/{BINARY_NAME}"), binary, 0o755),
+        *bundled_daemon(binary),
         # The packaged default gripper calibration the launcher points the daemon
         # at (LITEGRIP_FACTORY_CALIB).  It is the console's own committed default
         # — the same file the daemon ships inside its package — installed where
@@ -314,6 +318,41 @@ def payload(binary: Path) -> List[Entry]:
         size = png.stem.partition("-")[2]
         entries.append(
             (Path(f"usr/share/icons/hicolor/{size}x{size}/apps/{LAUNCHER}.png"), png, 0o644)
+        )
+    return entries
+
+
+def bundled_daemon(binary: Path) -> List[Entry]:
+    """The daemon itself, wherever it lands under `/usr/lib`.
+
+    `binary` is whatever `packaging/build.py` left behind, in either of the two shapes it
+    can produce (see its `bundle_mode()`). They are told apart by looking at the path,
+    because PyInstaller writes them under the same name:
+
+    * `--onefile` — a single executable, which unpacks the whole bundle into a temporary
+      directory on **every** launch. A file.
+    * `--onedir` — an executable plus the `_internal/` tree beside it, with nothing
+      unpacked at launch. A directory.
+
+    The package is built from the directory shape because dpkg installs a tree anyway, so
+    the shape costs the user nothing and buys back that unpacking. Measured on the
+    reference machine: 272–359 ms off every start.
+
+    Both shapes land at the same `/usr/lib/<pkg>/<name>`, so the launcher, the installed
+    path and the documentation are identical whichever shape a release was built from.
+    """
+    install_root = Path(f"usr/lib/{PACKAGE}")
+    if not binary.is_dir():
+        return [(install_root / BINARY_NAME, binary, 0o755)]
+    entries: List[Entry] = []
+    for source in sorted(binary.rglob("*")):
+        if not source.is_file():
+            continue
+        # Keep each file's own mode: PyInstaller already decided what is executable (the
+        # entry point) and what is merely mapped (the shared libraries, the data files).
+        entries.append(
+            (install_root / source.relative_to(binary), source,
+             source.stat().st_mode & 0o777)
         )
     return entries
 
@@ -396,9 +435,10 @@ def resolve_version() -> str:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="packaging/deb.py",
-        description="Build the Debian package from the packaged one-file executable.")
+        description="Build the Debian package from the packaged daemon.")
     parser.add_argument("--binary", default=str(DEFAULT_BINARY), metavar="PATH",
-                        help=f"the one-file executable to package (default: {DEFAULT_BINARY})")
+                        help="what `packaging/build.py` produced — a single file or a "
+                             f"directory, it tells them apart (default: {DEFAULT_BINARY})")
     parser.add_argument("--version", default=None, metavar="VERSION",
                         help="version to package; a leading `v` is stripped "
                              "(default: LITEARM_STUDIO_VERSION, else git describe)")
@@ -419,9 +459,11 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     binary = Path(args.binary)
-    if not binary.is_file():
+    # Either shape is accepted (see `bundled_daemon`), so the check is "something is
+    # there", not "it is a file" — a directory is the shape this package wants.
+    if not binary.exists():
         raise SystemExit(
-            f"[deb] no executable at {binary} — run `pnpm build` and "
+            f"[deb] nothing at {binary} — run `pnpm build` and "
             f"`python packaging/build.py` first")
     if shutil.which("dpkg-deb") is None:
         raise SystemExit("[deb] dpkg-deb not found: this step needs Debian or Ubuntu")

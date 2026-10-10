@@ -169,6 +169,19 @@ jobs:
       # the serial-port permission (a udev rule with `uaccess`, so no `dialout` group and
       # no re-login) and register a desktop entry, which is what "install" means to them.
       # The standalone executable above is still published for every other Linux.
+      #
+      # ⚠ 这个包用**目录形态**重打一次, 而不是复用上面那个单文件: dpkg 本来就是装一棵树,
+      # 目录形态因此不带来任何代价, 却省掉了每次启动的解包 (~300 ms, 见
+      # `packaging/build.py` 的 `bundle_mode()`)。单文件形态继续作为"下载一个文件就能跑"
+      # 的便携产物发布 —— 两者服务不同场景, 所以这里打两次。
+      - name: Package the directory layout the .deb is built from
+        if: runner.os == 'Linux'
+        working-directory: litearm-studio
+        shell: bash
+        env:
+          LITEARM_STUDIO_BUNDLE_MODE: onedir
+        run: '"$PYTHON" packaging/build.py'
+
       - name: Build the Debian package
         if: runner.os == 'Linux'
         working-directory: litearm-studio
