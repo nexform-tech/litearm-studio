@@ -177,3 +177,49 @@ def test_window_build_args_refuses_a_qt_binding_without_qtpy(monkeypatch):
     with pytest.raises(SystemExit) as excinfo:
         build.window_build_args()
     assert "qtpy" in str(excinfo.value)
+
+
+# ------------------------------------------------------- 冻结产物的瘦身 (包体积/启动)
+
+def _values_after(args: list[str], flag: str) -> list[str]:
+    return [args[i + 1] for i, value in enumerate(args[:-1]) if value == flag]
+
+
+def test_the_optional_implementations_we_never_use_are_excluded() -> None:
+    """钉住那几条 `--exclude-module`，每条都对应一处实测出来的死重。
+
+    `uvloop` 尤其重要，而且**不能靠删参数解决**：`_pyinstaller_hooks_contrib` 的
+    `hook-uvicorn.py` 无条件执行 `collect_submodules('uvicorn')`，于是
+    `uvicorn.loops.uvloop` 进包、它顶上那句 `import uvloop` 又把 16 MB 的 uvloop 拉进来。
+    实测：它是整包里解包体积最大的单项（16.0 MB / 69 MB）。
+    """
+    excluded = _values_after(build.slimming_args(), "--exclude-module")
+    for name in ("uvloop", "watchfiles", "yaml", "setuptools", "pkg_resources"):
+        assert name in excluded, f"{name} 不再被排除 —— 包会白白变大"
+
+
+def test_a_real_runtime_capability_is_not_sacrificed_for_size() -> None:
+    """`httptools` 同样是"可选实现"，但它**必须留着**。
+
+    排掉它 uvicorn 会退回纯 Python 的 h11（能跑），省下的只有 1.1 MB —— 拿一个真实的
+    运行时能力去换 1.1 MB 是笔坏买卖。这条把那次取舍钉住，免得下一次"瘦身"顺手砍掉它。
+    """
+    excluded = _values_after(build.slimming_args(), "--exclude-module")
+    assert "httptools" not in excluded
+
+
+def test_the_dynamically_chosen_uvicorn_implementations_are_still_imported() -> None:
+    """uvicorn 是按**字符串**选实现的（`config.py` 的 `loop_factory` / `*_protocol` /
+    `lifespan` 字段与 `LOGGING_CONFIG`），静态分析看不见 —— 漏一个就是在冻结产物里少一条
+    运行期能力。WebSocket 那条尤其要命：界面的状态推送、命令、日志全走它。
+    """
+    hidden = _values_after(build.uvicorn_build_args(), "--hidden-import")
+    for name in (
+        "uvicorn.logging",
+        "uvicorn.loops.auto",
+        "uvicorn.protocols.http.auto",
+        "uvicorn.protocols.websockets.auto",
+        "uvicorn.lifespan.on",
+        "uvicorn.protocols.websockets.websockets_sansio_impl",
+    ):
+        assert name in hidden, f"{name} 没被点名 —— 冻结产物会在运行时少掉这条路径"
