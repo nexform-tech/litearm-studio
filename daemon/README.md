@@ -323,7 +323,9 @@ make deb        # → packaging/dist/litearm-studio_<版本>_amd64.deb
 ```
 
 它做三件事：构建界面（`pnpm build`）、在**准备好的 Ubuntu 22.04 容器**里跑
-`packaging/build.py` 得到单文件可执行程序、再用 `packaging/deb.py` 打成 `.deb`。
+`packaging/build.py` 得到**目录形态**的可执行程序（`LITEARM_STUDIO_BUNDLE_MODE=onedir`）、
+再用 `packaging/deb.py` 打成 `.deb`。dpkg 本来就是装一棵树，所以目录形态在这里不带来
+任何代价，却省掉了单文件形态每次启动都要做的那次解包（约 300 ms）。
 第一次运行会先建镜像（约 4 分钟），之后每次约 90 秒。
 
 ```bash
@@ -332,8 +334,8 @@ scripts/build-deb.sh --no-ui              # 复用已有 dist/，跳过界面构
 make deb-image                            # 改过 packaging/deb.Dockerfile 之后重建镜像
 ```
 
-⚠ **为什么必须在 Ubuntu 22.04 里构建，而不是本机。** 单文件可执行程序里冻着一个 Python
-运行时，它链接的是**构建机**的 glibc：在更新的发行版上打出来的包会要求 glibc ≥ 2.38，
+⚠ **为什么必须在 Ubuntu 22.04 里构建，而不是本机。** 产物里冻着一个 Python 运行时，
+它链接的是**构建机**的 glibc：在更新的发行版上打出来的包会要求 glibc ≥ 2.38，
 在 Ubuntu 22.04（2.35）与 24.04（2.39）上**根本起不来**；它还会把构建机的 GTK 带去配目标
 机的系统 WebKitGTK。release 工作流的 `package` job 同样在 ubuntu-22.04 上构建，本地的
 `packaging/deb.Dockerfile` 就是那个环境，容器里跑的 `packaging/deb_build.sh` 与那个 job
@@ -386,6 +388,13 @@ python packaging/build.py      # 产物：packaging/dist/litearm-studio-daemon[.
   submodule tag 上，全仓只有这一处版本来源 —— 即 `litegrip-python` v0.14.0，含
   `LiteGrip.write_zero()`（"写零位"，CAN `0xFE`）的首个 release；"按名字载入标定模板
   + 每通道标定文件"始于 `v0.4.0`。
+- **只收该收的图标主题**：`--additional-hooks-dir packaging/hooks` 用我们那条同名的 GTK
+  钩子**替掉** PyInstaller 自带的那条 —— 后者会把**构建机**上装着的整套图标主题原样收进
+  产物（ubuntu-22.04 上是 Humanity 54.7 MB、ubuntu-mono-*、HighContrast…）。界面是
+  webview 里的一片 HTML、自己画图标，GTK 侧只有窗口控件与文件对话框用到主题，而目标机
+  的桌面本来就提供它；我们只留 `Adwaita`（GTK 的兜底主题）与 `hicolor`（XDG 的应用图标
+  基准主题）。少了这个参数不会有任何报错，包只是白白大一截：这条是 `.deb` 安装体积里
+  最大的一项，实测 196.2 MB → 129.8 MB。
 - **版本单一来源**：`LITEARM_STUDIO_VERSION`（CI 传 git tag）> `git describe --tags` >
   `0.0.0+dev`，写进构建时生成的 `_build_version.py`（不入库）。于是 `hello` 帧报的版本
   就是发出去的那个 tag，而不是 `pyproject.toml` 里的占位符。
