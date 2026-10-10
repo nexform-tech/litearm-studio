@@ -4,7 +4,7 @@
 # anyone wondering why a local build needs a container at all.
 #
 # ⚠ **Why Ubuntu 22.04 and not the host.** `packaging/build.py` freezes a Python runtime
-# into a one-file executable, and that runtime links against the build machine's glibc. Built
+# into an executable, and that runtime links against the build machine's glibc. Built
 # on a newer distro it refuses to start on the older ones we ship to: a Debian 13 build
 # (glibc 2.41) wants glibc >= 2.38 and dies on Ubuntu 22.04 (2.35) and 24.04 (2.39) alike.
 # It would also collect the build machine's GTK to sit next to the target's system
@@ -29,7 +29,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # have it — the build dies late, inside PyInstaller, with a message about it.
 #
 # ⚠ `libpython3.10` is not optional either: `python3-venv` alone does not bring the shared
-# library PyInstaller links the one-file bundle against.
+# library PyInstaller links the frozen bundle against.
 RUN apt-get update -qq \
  && apt-get install -y -qq --no-install-recommends \
         python3-venv \

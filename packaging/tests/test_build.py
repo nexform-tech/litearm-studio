@@ -1,4 +1,4 @@
-"""Tests for `packaging/build.py`, the builder of the one-file executable.
+"""Tests for `packaging/build.py`, the builder of the frozen bundle.
 
 The module is loaded by path instead of imported for the same reason as `test_deb.py`:
 its directory is called `packaging`, which would shadow the PyPI package of that name.
