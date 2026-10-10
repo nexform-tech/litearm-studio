@@ -268,6 +268,17 @@ worker publishes a state frame from the SDK's `progress` callback — the only c
 that runs during the move — with the status labelled as motion rather than the
 `holding` the parked FSM would report (issue #84).
 
+Arrival is judged by the move's own target, and there are two routes through
+`RealBackend._drive_to_limit`. A **press** move — `close()`, or an `open()` with
+no work stroke — is sent *past* the calibrated end onto the mechanical stop, so
+it arrives when the jaws stall on or past that end; the check is in millimetres
+against the commanded end rather than the probe's possibly-shallow limit, and an
+obstruction mid-travel is what fails. A **positioning** move — an `open()` whose
+calibration carries a work stroke (`work_stroke_mm` below the mechanical travel,
+which the bundled factory file sets) — stops inside the open end on purpose and
+never stalls, so its arrival is the SDK's own `reached`. Demanding a stall there
+turns a move that did exactly what it was told into a refusal.
+
 ### 5.3 Calibration: resolution, provenance, gate
 
 The daemon decides which calibration is in effect and tells the SDK explicitly.
