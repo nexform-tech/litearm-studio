@@ -123,7 +123,7 @@ chmod +x litearm-studio-0.12.0-linux-amd64
 | 要求 | 说明 |
 | :--- | :--- |
 | glibc 2.35 及以上 | 即 Ubuntu 22.04+、Debian 12+。在 Ubuntu 20.04 上程序无法启动，终端提示缺少 `GLIBC_2.35` |
-| `$TMPDIR` 可执行 | 每次启动都会向 `$TMPDIR`（默认 `/tmp`）解压约 87 MB 并从中运行。`/tmp` 以 `noexec` 挂载时无法启动，请把 `TMPDIR` 指向普通目录 |
+| `$TMPDIR` 可执行 | 每次启动都会把整包（这一版约 130 MB）解压到 `$TMPDIR`（默认 `/tmp`）并从中运行。`/tmp` 以 `noexec` 挂载时无法启动，请把 `TMPDIR` 指向普通目录 |
 | 浏览器 | 任意浏览器均可。`PATH` 中有 Chrome、Chromium、Edge 或 Brave 时，窗口不带地址栏；否则用默认浏览器打开标签页 |
 | 串口访问权限 | 仅连接真实机械臂时需要，见 § 5 |
 

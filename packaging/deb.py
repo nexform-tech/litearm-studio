@@ -36,7 +36,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence, Tuple, Union
+from typing import Iterable, List, NamedTuple, Optional, Sequence, Tuple, Union
 
 # Windows consoles default to cp1252 and would raise on any non-ASCII print. Same guard
 # as build.py/checksums.py, for the same reason: a packaging script must not die on its
@@ -296,8 +296,23 @@ def postrm_script() -> str:
     )
 
 
-#: (path inside the package, bytes or source file, mode)
-Entry = Tuple[Path, Union[bytes, Path], int]
+class Symlink(NamedTuple):
+    """A payload entry that has to stay a **link**, not a copy of what it points at.
+
+    PyInstaller's directory shape keeps the symlinks it collected as real symlinks, and the
+    icon themes are full of them — 6036 aliases in the theme set v0.22.2 shipped. Copying
+    each one's *content* (`shutil.copyfile` follows links, and `is_file()` says yes) turned
+    22.7 MB of theme files into 71.0 MB of duplicates in the installed tree.
+
+    A `NamedTuple` rather than a `dataclass`: the test suite loads this module by path
+    without registering it in `sys.modules`, which `dataclasses` needs and named tuples do
+    not. It is only ever used as a marker plus its one field.
+    """
+    target: str
+
+
+#: (path inside the package, bytes / source file / symlink, mode)
+Entry = Tuple[Path, Union[bytes, Path, Symlink], int]
 
 
 def payload(binary: Path) -> List[Entry]:
@@ -341,21 +356,47 @@ def bundled_daemon(binary: Path) -> List[Entry]:
 
     Both shapes land at the same `/usr/lib/<pkg>/<name>`, so the launcher, the installed
     path and the documentation are identical whichever shape a release was built from.
+
+    Symlinks in the bundle are installed as symlinks (`_bundle_relative_link`), and each
+    file keeps its own mode: PyInstaller already decided what is executable (the entry
+    point) and what is merely mapped (the shared libraries, the data files).
     """
     install_root = Path(f"usr/lib/{PACKAGE}")
     if not binary.is_dir():
         return [(install_root / BINARY_NAME, binary, 0o755)]
     entries: List[Entry] = []
+    root = binary.resolve()
     for source in sorted(binary.rglob("*")):
+        link = _bundle_relative_link(source, root)
+        if link is not None:
+            # 0o777 is what a symlink's own mode is on Linux; `write_tree` does not chmod it.
+            entries.append((install_root / source.relative_to(binary), Symlink(link), 0o777))
+            continue
         if not source.is_file():
             continue
-        # Keep each file's own mode: PyInstaller already decided what is executable (the
-        # entry point) and what is merely mapped (the shared libraries, the data files).
         entries.append(
             (install_root / source.relative_to(binary), source,
              source.stat().st_mode & 0o777)
         )
     return entries
+
+
+def _bundle_relative_link(source: Path, root: Path) -> Optional[str]:
+    """The link text to install `source` as a symlink with, or `None` to copy its content.
+
+    ⚠ Only links that resolve to a file **inside the bundle** are kept. The installed tree
+    has the same shape as the bundle, so the same relative link text points at the same
+    file after installation — and the payload stops carrying a second copy of it. Anything
+    else (a link to something outside the bundle, or a dangling one) keeps the previous
+    behaviour and is copied, which is bigger but always correct.
+    """
+    if not source.is_symlink():
+        return None
+    target = os.readlink(source)
+    resolved = (source.parent / target).resolve()
+    if not resolved.is_file() or not resolved.is_relative_to(root):
+        return None
+    return target
 
 
 def write_tree(root: Path, entries: Iterable[Entry]) -> int:
@@ -364,11 +405,17 @@ def write_tree(root: Path, entries: Iterable[Entry]) -> int:
     `Installed-Size` is what `du` would report for an installed package, so the sizes are
     read back from the written files rather than from the sources: hard links, sparse
     files and block rounding are all irrelevant here, and this keeps the number honest.
+    A symlink counts as its own length, which is also what `du` counts for it — its target
+    is counted where that file actually lives.
     """
     total = 0
     for relative, source, mode in entries:
         target = root / relative
         target.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(source, Symlink):
+            target.symlink_to(source.target)
+            total += target.lstat().st_size
+            continue
         if isinstance(source, bytes):
             target.write_bytes(source)
         else:
@@ -387,7 +434,9 @@ def write_tree(root: Path, entries: Iterable[Entry]) -> int:
     # debhelper, so generate it here. Paths are relative to the filesystem root.
     lines = []
     for path in sorted(root.rglob("*")):
-        if not path.is_file() or control_dir in path.parents:
+        # Symlinks are not listed — that is debhelper's convention, `dpkg --verify` only
+        # checks what is listed, and hashing one would hash its target a second time.
+        if path.is_symlink() or not path.is_file() or control_dir in path.parents:
             continue
         digest = hashlib.md5(path.read_bytes()).hexdigest()
         lines.append(f"{digest}  {path.relative_to(root).as_posix()}\n")

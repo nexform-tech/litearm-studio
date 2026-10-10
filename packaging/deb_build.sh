@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Build the one-file executable and the .deb from it — the part that runs INSIDE the
-# Ubuntu 22.04 build image.
+# Build the executable and the .deb from it — the part that runs INSIDE the Ubuntu 22.04
+# build image. The package is assembled from the **directory** shape (see the
+# `LITEARM_STUDIO_BUNDLE_MODE` step below): dpkg installs a tree anyway.
 #
 # Who reads this: anyone changing how a package is produced. The host-side entry point is
 # `scripts/build-deb.sh`; it mounts the tree at /src and the output directory at /out.

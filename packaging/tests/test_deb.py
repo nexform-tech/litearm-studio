@@ -7,6 +7,7 @@ test builds a real `.deb` with `dpkg-deb`, which is why it is skipped off Debian
 from __future__ import annotations
 
 import importlib.util
+import os
 import pathlib
 import shutil
 import subprocess
@@ -240,6 +241,101 @@ def test_payload_installs_the_whole_directory_when_the_build_is_onedir(tmp_path)
             "factory_calibration.json") in modes
     # 目录**本身**不产生条目 —— dpkg 只记录文件，多出来的目录条目会让 md5sums 变脏。
     assert not [path for path in modes if path.endswith("_internal")]
+
+
+def _onedir_with_one_theme_file(tmp_path: pathlib.Path) -> tuple:
+    """一个最小目录形态产物：图标主题里一个真文件、一个指向它的别名链接。
+
+    图标主题正是链接最多的地方（v0.22.2 的包里有 6036 条），所以这里照着它的形状造。
+    """
+    built = tmp_path / "litearm-studio-daemon"
+    (built / "_internal" / "share" / "icons" / "Adwaita" / "22").mkdir(parents=True)
+    (built / "_internal" / deb.BINARY_NAME).write_bytes(b"#!/bin/true\n")
+    real = built / "_internal" / "share" / "icons" / "Adwaita" / "22" / "about.svg"
+    real.write_bytes(b"<svg>about</svg>" * 8000)  # ~120 KB：够大到"少复制一份"看得见
+    alias = built / "_internal" / "share" / "icons" / "Adwaita" / "16"
+    alias.mkdir(parents=True)
+    (alias / "about.svg").symlink_to(os.path.relpath(real, alias))
+    return built, real, alias / "about.svg"
+
+
+def test_a_symlink_in_the_bundle_is_installed_as_a_symlink(tmp_path):
+    """目录形态里的符号链接要原样装成链接，而不是把它指向的内容再复制一份。
+
+    ⚠ 这条是实测出来的教训：图标主题里 6036 项是**别名链接**，而 `shutil.copyfile`
+    跟着链接走、`is_file()` 也说"是文件"，于是 22.7 MB 的真实主题文件在 `.deb` 里变成
+    71.0 MB 的副本 —— v0.22.2 的安装体积里 48 MB 是这么白来的。
+    """
+    built, real, alias = _onedir_with_one_theme_file(tmp_path)
+    entries = {path: source for path, source, _mode in deb.payload(built)}
+    root = pathlib.Path(f"usr/lib/{deb.PACKAGE}/_internal/share/icons/Adwaita")
+
+    assert isinstance(entries[root / "16" / "about.svg"], deb.Symlink)
+    assert entries[root / "16" / "about.svg"].target == os.readlink(alias)
+    # 链接文本是相对的、目录形状又一样，所以装好之后它指回的是同一棵树里的那份。
+    assert entries[root / "22" / "about.svg"] == real
+
+
+def test_stage_keeps_the_link_and_does_not_pay_for_it_twice(tmp_path):
+    """staged 出来的是真链接，md5sums 不列它，Installed-Size 也不重复计它。
+
+    `du`（也就是 `Installed-Size` 的口径）对链接只算它自己那几十个字节，目标是算在
+    它真正所在的路径上的 —— 这里用"加不加这条别名，体积一样"来钉住。
+    """
+    built, real, alias = _onedir_with_one_theme_file(tmp_path)
+    root, installed_kb = deb.stage(
+        tmp_path / "root", built, version="0.12.0", arch="amd64")
+
+    staged_dir = root / f"usr/lib/{deb.PACKAGE}/_internal/share/icons/Adwaita"
+    staged_alias = staged_dir / "16" / "about.svg"
+    assert staged_alias.is_symlink()
+    assert os.readlink(staged_alias) == os.readlink(alias)
+    # 链接在装好的树里指得回包内那份（不是断链），读出来的内容还是原来的。
+    assert staged_alias.resolve() == (staged_dir / "22" / "about.svg").resolve()
+    assert staged_alias.read_bytes().startswith(b"<svg>about</svg>")
+    # 真文件照旧是普通文件，而且还有执行位之外的原始权限。
+    assert not (staged_dir / "22" / "about.svg").is_symlink()
+
+    md5sums = (root / "DEBIAN" / "md5sums").read_text(encoding="utf-8")
+    assert "Adwaita/22/about.svg" in md5sums
+    # debhelper 的规矩：链接不进 md5sums（`dpkg --verify` 只校验列出来的东西）。
+    assert "Adwaita/16/about.svg" not in md5sums
+
+    # 少了链接的那一份复制，体积应该一样（差值只有链接文本那几十字节）。
+    built_without = tmp_path / "solo"
+    shutil.copytree(built, built_without, symlinks=True)
+    (built_without / "_internal/share/icons/Adwaita/16/about.svg").unlink()
+    _root, without_kb = deb.stage(
+        tmp_path / "root2", built_without, version="0.12.0", arch="amd64")
+    assert installed_kb - without_kb <= 1, "别名链接被当成一整份副本计进去了"
+
+
+def test_a_link_that_leaves_the_bundle_is_copied_and_a_dangling_one_is_skipped(tmp_path):
+    """包外的链接与断链都不该留成链接：前者装到目标机上还是包外（靠不住），后者是断链。
+
+    两种情况都退回原来的行为——能读到内容就复制内容，读不到就跳过（与改之前一致）。
+    """
+    built = tmp_path / "litearm-studio-daemon"
+    icons = built / "_internal" / "share" / "icons" / "Adwaita"
+    icons.mkdir(parents=True)
+    (built / "_internal" / deb.BINARY_NAME).write_bytes(b"#!/bin/true\n")
+
+    outside = tmp_path / "elsewhere.svg"
+    outside.write_bytes(b"<svg>outside</svg>")
+    (icons / "borrowed.svg").symlink_to(outside)
+    (icons / "broken.svg").symlink_to("nowhere.svg")
+
+    entries = {path.as_posix(): source for path, source, _mode in deb.payload(built)}
+    staged = f"usr/lib/{deb.PACKAGE}/_internal/share/icons/Adwaita"
+
+    # 包外那条退回"复制内容"——装到目标机上以后它必须是真文件，不能还是一个指向包外的链接。
+    assert not isinstance(entries[f"{staged}/borrowed.svg"], deb.Symlink)
+    assert f"{staged}/broken.svg" not in entries            # 断链照旧跳过（与改之前一致）
+
+    root, _kb = deb.stage(tmp_path / "root", built, version="0.12.0", arch="amd64")
+    borrowed = root / staged / "borrowed.svg"
+    assert not borrowed.is_symlink()
+    assert borrowed.read_bytes() == b"<svg>outside</svg>"
 
 
 # ------------------------------------------------------------------ the real thing
