@@ -251,6 +251,17 @@ class GripperBackend(ABC):
         """Short human-readable identity, for the title bar and logs."""
 
     # ── optional ────────────────────────────────────────────────────────────
+    def master_id(self) -> int | None:
+        """The DM master ID (``mst_id``) the device is actually answering on.
+
+        A *reading*, not the declared setting: the SDK leaves ``cfg.mst_id``
+        unset and auto-detects the answer at connect, so the value an operator
+        needs to see is whatever the motor turned out to be — never the ``None``
+        the config carries.  ``None`` when it is not known yet (not connected,
+        or a backend with no motor to interrogate).
+        """
+        return None
+
     def open_plain(
         self,
         *,

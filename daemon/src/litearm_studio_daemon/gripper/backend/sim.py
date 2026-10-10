@@ -48,6 +48,9 @@ def default_sim_calibration_path() -> Path:
 class SimBackend(GripperBackend):
     """A gripper that exists only in software."""
 
+    #: The master ID a stock LiteGrip ships with (see :meth:`master_id`).
+    _MASTER_ID = 0x18
+
     def __init__(
         self,
         config: PlantConfig | None = None,
@@ -270,6 +273,18 @@ class SimBackend(GripperBackend):
         # hardware is the one thing this backend must never be.
         self._info = self._resolve_and_apply(written)
         return written
+
+    def master_id(self) -> int | None:
+        """The master ID the simulated motor answers on.
+
+        The simulator stands in for a stock LiteGrip, whose status frames arrive
+        on ``0x18`` — the SDK's own default and the value its auto-detect lands
+        on for an unconfigured unit (``can/controller.py``'s fallback).  So it
+        reports the same ID the real backend would detect, rather than ``None``:
+        a simulator that behaved differently from the hardware is the one thing
+        this backend must never be.
+        """
+        return self._MASTER_ID
 
     def calibration_info(self) -> CalibrationInfo | None:
         return self._info

@@ -84,8 +84,11 @@ export function GripperSection() {
             />
           </Field>
           <Field label={t('gripper:settings.mstId')}>
+            {/* 主站 ID 是**读回**的：SDK 连接时自动探测（记录里存 `null` = 自动），所以这一格
+                显示设备**实际**回应的 ID —— 不是一个空字段，更不是一个假的 0。操作员改了它就
+                当成覆盖发下去（0 仍是"自动"的哨兵）。 */}
             <NumberField
-              value={vm.mstId ?? 0}
+              value={vm.mstId ?? vm.conn?.mstId ?? undefined}
               min={0}
               max={0x7ff}
               step={1}

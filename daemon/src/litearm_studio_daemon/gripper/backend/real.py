@@ -658,6 +658,18 @@ class RealBackend(GripperBackend):
         self._claim()
         self._gripper.config.max_stroke_mm = float(max_stroke_mm)
 
+    def master_id(self) -> int | None:
+        """The master ID the motor answered on, once it has been probed.
+
+        Read off the SDK rather than the channel record: ``LiteGrip.mst_id``
+        returns the value auto-detected at connect (the SDK overwrites its own
+        ``None`` with the answer the motor gave), so this is the ID the hardware
+        is really using — the settings page shows it instead of the ``None`` the
+        record stores.
+        """
+        mst = self._gripper.mst_id
+        return None if mst is None else int(mst)
+
     def describe(self) -> str:
         cfg = self._gripper.config
         mst = "自动" if cfg.mst_id is None else f"0x{cfg.mst_id:02X}"

@@ -444,6 +444,11 @@ class GripperSession:
             error, gate, reason = self._last_error, self._gate, self._gate_reason
             loop = self._loop
         info = loop.info if loop is not None else None
+        # The master ID is a *reading*, not the record's setting: the SDK
+        # auto-detects it at connect, and the record stores ``None`` for exactly
+        # that case.  Asked of the backend so the settings page can show the ID
+        # the motor actually answers on instead of a placeholder zero.
+        mst_id = loop.backend.master_id() if loop is not None else None
         mount = config.mount
         limits = getattr(info, "limits", None) if info is not None else None
         if limits is not None:
@@ -452,6 +457,7 @@ class GripperSession:
             "status": status,
             "channel": config.channel,
             "canId": int(config.can_id),
+            "mstId": mst_id,
             "mount": mount,
             "declaredMount": config.mount,
             "template": getattr(info, "template", None) if info is not None else None,

@@ -81,6 +81,7 @@ describe('GripperSection', () => {
       status: 'connected',
       channel: 'can0',
       canId: 8,
+      mstId: 24,
       mount: 'normal',
       declaredMount: 'normal',
       template: null,
@@ -125,6 +126,20 @@ describe('GripperSection', () => {
     render(<GripperSection />)
     await waitFor(() => expect(mocks.listChannels).toHaveBeenCalled())
     expect(screen.queryByTestId('gripper-mount')).toBeNull()
+  })
+
+  it('shows the master ID the device actually answers on', async () => {
+    // 记录里 mst_id 是 `null`（自动），SDK 连接后自动探测到 0x18（24）—— 那一格显示的是**实际**值。
+    render(<GripperSection />)
+    await waitFor(() => expect(mocks.listChannels).toHaveBeenCalled())
+    expect((screen.getByDisplayValue('24') as HTMLInputElement).value).toBe('24')
+  })
+
+  it('leaves the master ID blank when the device has not reported one', async () => {
+    mocks.conn.current = { ...(mocks.conn.current as Record<string, unknown>), mstId: null }
+    render(<GripperSection />)
+    await waitFor(() => expect(mocks.listChannels).toHaveBeenCalled())
+    expect(screen.queryByDisplayValue('24')).toBeNull()
   })
 
   it('persists the factory acknowledgement through the toggle', async () => {
