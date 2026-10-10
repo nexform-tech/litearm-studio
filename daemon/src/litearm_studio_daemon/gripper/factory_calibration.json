@@ -9,7 +9,7 @@
   "rad_to_mm": 61.01229326764816,
   "work_stroke_mm": 80.0,
   "motor_type": "DM4310",
-  "kp": 5.0,
+  "kp": 100.0,
   "kd": 2.0,
   "grasp_torque_threshold": 0.5
 }

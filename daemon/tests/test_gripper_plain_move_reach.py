@@ -1,13 +1,18 @@
-"""平动张开/闭合「到没到限位」的判据 —— 压在限位上算到, 半路卡住不算。
+"""平动张开/闭合「到没到终点」的判据 —— 到了算到, 半路卡住不算。
 
-``press=True`` 的 ``open()`` / ``close()`` 是把指令推到标定限位**外侧**的机械限位上,
-所以堵转本身就是要的结果; 真正的失败只有一种: 在限位**内侧**停住, 那是撞上了东西。
+一次平动有两条到达路径, 判据跟着它自己的目标走:
 
-SDK 自己的 ``MoveResult.ok`` 问的是另一个问题 —— 停稳点距**标定**限位是否在
-``stop_tol``(0.02 rad ≈ 1 mm)以内。本机张开侧探到的限位比真实机械止点浅约 2.7 mm,
-于是齿爪顶到止点、却"越过"了标定限位 2.7 mm, ``ok`` 判 False —— 全开一次就报一次
-「张开未顶到限位：行程中被挡住」。这组用例钉住替代判据: 以**指令终点**(mm)为准, 短于
-终点超过 ``PRESS_REACH_TOL_MM`` 才算卡住。
+* **压限位**(``press=True``): ``close()``, 以及**没配工作行程**的 ``open()``。指令推到
+  标定限位**外侧**的机械限位上, 所以堵转本身就是要的结果; 真正的失败只有在限位**内侧**
+  停住 —— 那是撞上了东西。SDK 自己的 ``MoveResult.ok`` 问的是另一个问题: 停稳点距**标定**
+  限位是否在 ``stop_tol``(0.02 rad ≈ 1 mm)以内。本机张开侧探到的限位比真实机械止点浅约
+  2.7 mm, 于是齿爪顶到止点、却"越过"了标定限位 2.7 mm, ``ok`` 判 False。所以这条路径用
+  「以**指令终点**(mm)为准, 短于终点超过 ``PRESS_REACH_TOL_MM`` 才算卡住」的替代判据。
+* **普通定位**(``open()`` 且标定带了工作行程): 只走到工作位就停, 开口端留余量, **不堵转**,
+  ``ok = reached and not stalled``。这时到达由 SDK 的 ``reached`` 说了算 —— 拿「必须堵转」
+  去判它, 会把一次完全照做的张开报成「未到位」。
+
+``reached`` 与 mm 判据是**或**的关系: 前者管定位, 后者管压限位, 各自对各自的移动成立。
 """
 from __future__ import annotations
 
@@ -27,10 +32,13 @@ LIMITS = Limits(closed_rad=0.837148, open_rad=-0.813878,
                 rad_to_mm=53.298, max_stroke_mm=87.0)
 
 
-def _result(*, stalled: bool, pos_rad: float, ok: bool) -> SimpleNamespace:
-    """A ``MoveResult``-shaped object, with only the fields under test."""
+def _result(*, stalled: bool, pos_rad: float, ok: bool,
+            reached: bool = False) -> SimpleNamespace:
+    """A ``MoveResult``-shaped object.  ``reached`` defaults to the press case,
+    where the jaws stop past the target rather than on it."""
     return SimpleNamespace(
         ok=ok,
+        reached=reached,
         stalled=stalled,
         state=SimpleNamespace(position_rad=pos_rad),
     )
@@ -86,7 +94,7 @@ def test_an_open_that_stalled_short_of_the_end_is_refused() -> None:
     """停在 -0.6 rad ≈ 76.8 mm: 离张开端还有 10 mm, 是撞上了东西。"""
     backend, _ = _backend(_result(stalled=True, pos_rad=-0.60, ok=False))
 
-    with pytest.raises(Exception, match="未顶到限位"):
+    with pytest.raises(Exception, match="未到位"):
         backend.open_plain(speed_mm_s=50.0)
 
 
@@ -94,16 +102,35 @@ def test_a_close_that_stalled_short_of_the_end_is_refused() -> None:
     """停在 0.1 rad ≈ 39 mm: 夹爪离闭合端还很远。"""
     backend, _ = _backend(_result(stalled=True, pos_rad=0.10, ok=False))
 
-    with pytest.raises(Exception, match="未顶到限位"):
+    with pytest.raises(Exception, match="未到位"):
         backend.close_plain(speed_mm_s=50.0)
 
 
-def test_a_move_that_never_stalled_never_arrived() -> None:
-    """跑完所有步数也没堵转 —— 根本没碰到终点。"""
-    backend, _ = _backend(_result(stalled=False, pos_rad=LIMITS.open_rad, ok=False))
+def test_an_open_that_neither_stalled_nor_reached_is_refused() -> None:
+    """跑完所有步数既没堵转、也没停在指令终点 —— 根本没到位。
 
-    with pytest.raises(Exception, match="未顶到限位"):
+    ``stalled=False`` 本身不再等于失败(定位移动就不该堵转), 判失败的是
+    ``reached=False``: 这条路径只有 ``reached`` 能担保到达。
+    """
+    backend, _ = _backend(_result(stalled=False, reached=False,
+                                  pos_rad=LIMITS.open_rad, ok=False))
+
+    with pytest.raises(Exception, match="未到位"):
         backend.open_plain(speed_mm_s=50.0)
+
+
+def test_a_work_stroke_open_that_stops_at_its_target_is_an_arrival() -> None:
+    """配置带工作行程时 ``open()`` 是普通定位: 停在指令终点、**不堵转**。
+
+    出厂标定文件写 ``work_stroke_mm = 80`` 而机械行程 86 mm, SDK 的 ``open()``
+    于是只走到工作位就停, 开口端留出 6 mm 余量, ``stalled`` 恒为 False。这时唯一
+    能担保到达的是 ``reached``; 再拿「必须堵转」去判, 一次完全照做的张开就会被报成
+    「未到位」—— 这正是本机现场那两次失败里张开那一半。
+    """
+    backend, _ = _backend(_result(stalled=False, reached=True,
+                                  pos_rad=LIMITS.to_rad(80.0), ok=True))
+
+    assert backend.open_plain(speed_mm_s=50.0) is True
 
 
 def test_the_tolerance_is_the_documented_one() -> None:

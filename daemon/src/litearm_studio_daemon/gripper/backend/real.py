@@ -429,12 +429,24 @@ class RealBackend(GripperBackend):
             # own verdict is all there is.
             arrived = result.ok
         else:
-            arrived = short_mm <= constants.PRESS_REACH_TOL_MM
+            # Two ways to arrive, and a move uses whichever its own target calls
+            # for.  ``reached`` is the SDK reporting the jaws settled on the
+            # commanded target — the arrival of a **positioning** move, which is
+            # what ``open()`` becomes once the calibration carries a work stroke
+            # (``work_stroke_mm`` below the mechanical travel, which the shipped
+            # factory file sets): it stops inside the open end on purpose and
+            # never stalls, so requiring a stall here would fail a move that did
+            # exactly what it was told.  ``short_mm`` is the other route, and
+            # only a **press** move (``close()``, or an ``open()`` with no work
+            # stroke) takes it: there the arrival is a stall on or past the
+            # calibrated end, measured against the commanded end rather than the
+            # probe's possibly-shallow limit — see :meth:`_short_of_the_end`.
+            arrived = result.reached or short_mm <= constants.PRESS_REACH_TOL_MM
         if not arrived:
-            # A stall on the inner side of the end is the obstruction it looks
-            # like, and reporting it as a completed move is the one thing this
-            # must not do.
-            raise BackendError(f"{label}未顶到限位：行程中被挡住")
+            # A move that settled short of the end it aimed for is the
+            # obstruction it looks like, and reporting it as a completed move is
+            # the one thing this must not do.
+            raise BackendError(f"{label}未到位：行程中被挡住")
         return True
 
     def _short_of_the_end(self, direction: str, result: Any) -> float | None:
@@ -448,7 +460,10 @@ class RealBackend(GripperBackend):
         the jaws pressed past the commanded end, which is a success.
         """
         if not result.stalled:
-            # Ran out of steps without pressing onto anything: never arrived.
+            # No stall, so there is nothing to measure against the end: the
+            # press route cannot vouch for this move either way.  ``inf`` says
+            # exactly that — the caller then falls back to the SDK's ``reached``,
+            # which is how a positioning move's arrival is decided.
             return math.inf
         limits = self._info.limits if self._info is not None else None
         if limits is None:

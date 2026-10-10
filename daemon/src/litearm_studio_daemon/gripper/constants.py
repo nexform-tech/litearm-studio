@@ -254,7 +254,7 @@ PRESS_REACH_TOL_MM = 1.0
 #: target still lands ~4.4 mm past the limit against a ~2.8 mm gap to the stop,
 #: so the move still stalls *on* the stop and still counts as an arrival.  Too
 #: low and the lead can no longer break static friction there, so the move stalls
-#: short and 张开/闭合 reports 「未顶到限位」.
+#: short and 张开/闭合 reports 「未到位」.
 PRESS_STOP_LEAD_MM = 0.4
 
 # ── Stroke ──────────────────────────────────────────────────────────────────
