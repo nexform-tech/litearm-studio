@@ -54,25 +54,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: litearm-studio
-
-      # litearm-python 不在 PyPI 上, 必须从它自己的仓库检出 (与 ci.yml 同一做法)。
-      - name: Checkout LiteArm Python SDK
-        uses: actions/checkout@v4
-        with:
-          repository: nexform-tech/litearm-python
-          path: litearm-python
-
-      # 夹爪 SDK 只在 Linux 上安装: 它 import 时需要 fcntl / PF_CAN, Windows 上装了
-      # 也没用。钉在 v0.14.0 —— 与 ci.yml 同一个版本, 它含"写零位"用的
-      # LiteGrip.write_zero() (CAN 0xFE, litegrip-python#32), 也保留了打包按名字
-      # 载入标定模板的能力。Windows 产物因此**不含**夹爪 (D10: 缺席, 不是禁用)。
-      - name: Checkout the LiteGrip SDK
-        if: runner.os == 'Linux'
-        uses: actions/checkout@v4
-        with:
-          repository: nexform-tech/litegrip-python
-          ref: v0.14.0
-          path: litegrip-python
+          # 两个 SDK 都是本仓的 submodule (sdk/), 钉在 tag 上 —— 一次检出全部到位。
+          # 夹爪只装 Linux: 它 import 时需要 fcntl / PF_CAN, Windows 产物因此**不含**
+          # 夹爪 (D10: 缺席, 不是禁用)。
+          submodules: recursive
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -130,9 +115,10 @@ jobs:
           fi
           echo "PYTHON=$PY" >> "$GITHUB_ENV"
           "$PY" -m pip install --upgrade pip
-          "$PY" -m pip install -e ../litearm-python
+          # 两个 SDK 都不在 PyPI 上: 从本仓的 submodule 装 (与 `make sdk` 一致)。
+          "$PY" -m pip install ./sdk/litearm-python
           if [ "${{ runner.os }}" = "Linux" ]; then
-            "$PY" -m pip install ../litegrip-python
+            "$PY" -m pip install ./sdk/litegrip-python
           fi
           # ⚠ 窗口依赖是**打包必需**的, 不是可选的: `packaging/build.py` 的
           # `window_build_args()` 在缺 pywebview 时直接判失败 —— 一个开不了窗口的产物

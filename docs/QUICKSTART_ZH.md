@@ -36,14 +36,14 @@ litearm-python  ──USB CDC (1d50:606f @921600)──>  STM32  ──CAN──
 有两条路。只想运行发布版，就下载单文件可执行程序并照着 [INSTALL_ZH.md](INSTALL_ZH.md) 做 —— 不需要
 Python、不需要 pnpm、也不需要克隆仓库。下面的命令是源码构建，开发时才需要。
 
-`litearm-python` 不在 PyPI 上，必须先克隆并本地安装：
+两个 SDK 都不在 PyPI 上 —— 它们是本仓 `sdk/` 下的 git submodule，版本由 tag 钉住 ——
+所以把 submodule 一起克隆下来，再一条命令装好：
 
 ```bash
-git clone https://github.com/nexform-tech/litearm-python.git
-git clone https://github.com/nexform-tech/litearm-studio.git
+git clone --recurse-submodules https://github.com/nexform-tech/litearm-studio.git
 cd litearm-studio
 
-pip install -e ../litearm-python
+make sdk                           # 取回并安装钉住版本的 SDK submodule
 pip install -e "daemon[test,ui]"
 sudo apt install python3-gi gir1.2-webkit2-4.1   # 仅 Linux：窗口的渲染内核
 ```
@@ -124,7 +124,8 @@ litearm-studio-daemon --port /dev/ttyACM1 --http-port 9000 --no-open
 
 ### 启动报找不到 `litearm` 模块
 
-`litearm-python` 不在 PyPI 上，需从检出目录安装：`pip install -e ../litearm-python`。
+`litearm-python` 不在 PyPI 上，它是本仓的 submodule：跑 `make sdk`（或
+`git submodule update --init --recursive && pip install ./sdk/litearm-python`）即可。
 
 ### 提示「未发现 STM32 CDC 设备」
 

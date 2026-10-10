@@ -125,6 +125,27 @@ def test_window_build_args_prefers_qt_when_both_bindings_are_present(monkeypatch
     assert not any("PySide6" in arg for arg in args)
 
 
+def test_arm_build_args_collects_the_sdk_and_its_serial_dependency(monkeypatch):
+    _installed(monkeypatch, "litearm", "serial")
+
+    assert build.arm_build_args() == ["--collect-all", "litearm", "--collect-all", "serial"]
+
+
+def test_arm_build_args_refuses_to_package_an_armless_build(monkeypatch):
+    """缺 `litearm` 时**判失败**, 而不是打出一个连不上臂的产物。
+
+    那种产物比一次构建失败难查得多: PyInstaller 把解析不到的 `import litearm` 当
+    WARNING 放行, 于是包能启动、一连机械臂才 `ModuleNotFoundError`。与 litegrip /
+    pyusb / pywebview 三条同一条口径。
+    """
+    _installed(monkeypatch, "litegrip", "usb")
+    with pytest.raises(SystemExit) as excinfo:
+        build.arm_build_args()
+
+    assert "litearm" in str(excinfo.value)
+    assert "make sdk" in str(excinfo.value)
+
+
 def test_window_build_args_refuses_to_package_a_windowless_build(monkeypatch):
     """缺 pywebview 时**判失败**, 而不是打出一个开不了窗口的产物。
 

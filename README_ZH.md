@@ -55,17 +55,15 @@ litearm-python  ──USB CDC (1d50:606f)──>  STM32  ──CAN──>  电�
 
 - **Node.js** `v20.0.0`+ 与 **pnpm**（`corepack enable` 或 `npm install -g pnpm`）
 - **Python** 3.10+（运行本地程序）
-- `litearm-python` —— **不在 PyPI 上**，需克隆后本地安装：
-
-```bash
-git clone https://github.com/nexform-tech/litearm-python.git
-```
+- **两个 SDK**（`litearm-python`、`litegrip-python`）——**不在 PyPI 上**：它们以 git
+  submodule 的形式随本仓（`sdk/`）发布，版本由 tag 钉住。`make sdk` 一次取回并安装，
+  不需要手工 clone。
 
 ### 2. 跑起完整应用
 
 ```bash
 cd litearm-studio
-pip install -e ../litearm-python
+make sdk                           # 取回并安装钉住版本的 SDK submodule
 pip install -e "daemon[test]"     # 装 fastapi/uvicorn，并提供 litearm-studio-daemon 入口
 pnpm install && pnpm build         # 构建本地程序要托管的界面
 
@@ -81,6 +79,10 @@ litearm-studio-daemon --fake       # 离线：用 SDK 的假传输跑完整会�
 「使能」时固件回的那句 `ERR{0x10,0x08}`。
 
 启动后会打印实际监听的地址（默认 `http://127.0.0.1:8765/`，被占用会自动换端口）并打开窗口。
+
+升级 SDK：切到 `sdk/<repo>` 里新版本的 tag，然后提交更新后的 submodule 指针即可 ——
+`.gitmodules` 加这个指针是两个版本号唯一的落点，开发、CI、`.deb`、Windows 四条构建路径
+都跟着它走。
 
 ### 3. 只调前端
 
