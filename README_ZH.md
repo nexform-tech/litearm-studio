@@ -53,11 +53,30 @@ litearm-python  ──USB CDC (1d50:606f)──>  STM32  ──CAN──>  电�
 
 ### 1. 环境准备
 
-- **Node.js** `v20.0.0`+ 与 **pnpm**（`corepack enable` 或 `npm install -g pnpm`）
+- **Node.js** `v20.0.0`+ 与 **pnpm**（`corepack enable` 或 `npm install -g pnpm`）。
+  `corepack` 是随 Node 一起装的，所以先装 Node 本身 —— 用
+  [nvm](https://github.com/nvm-sh/nvm) 或 NodeSource 的仓库装，装完 `node -v` 打出 `v20.`
+  以上再执行 `corepack enable`。
 - **Python** 3.10+（运行本地程序）
 - **两个 SDK**（`litearm-python`、`litegrip-python`）——**不在 PyPI 上**：它们以 git
   submodule 的形式随本仓（`sdk/`）发布，版本由 tag 钉住。`make sdk` 一次取回并安装，
   不需要手工 clone。
+
+- **`litegrip`（LiteGrip 夹爪 SDK）—— 仅 Linux，不在 PyPI 上**，也要克隆后本地安装：
+
+```bash
+git clone --branch v0.4.0 https://github.com/nexform-tech/litegrip-python.git
+pip install ./litegrip-python
+```
+
+  运行本身不强制要它：Linux 上没装，守护进程照常启动，只是不提供夹爪。但**测试要** ——
+  不装它，文末「常用命令」表里的 `python -m pytest daemon/tests -q` 会在收集阶段直接中断
+  （`ModuleNotFoundError: No module named 'litegrip'`），一个用例都跑不了。细节见
+  [本地程序说明](daemon/README.md)。
+
+**别和同名的旧产品搞混**：`dpkg -l` 里若有 `lite-arm-studio`（描述里写着「Tauri 桌面端」），
+那是旧产品，界面与行为都跟本程序无关。本程序是「本地 Python 程序 + 浏览器界面」，
+命令行入口是 `litearm-studio-daemon`。
 
 ### 2. 跑起完整应用
 
@@ -84,6 +103,16 @@ litearm-studio-daemon --fake       # 离线：用 SDK 的假传输跑完整会�
 `.gitmodules` 加这个指针是两个版本号唯一的落点，开发、CI、`.deb`、Windows 四条构建路径
 都跟着它走。
 
+**连接机械臂是由前端触发的**，本地程序自己不发起连接 —— 界面加载后经 WebSocket 发一帧
+`{"t":"connect"}` 才去连。所以在 `pnpm build` 之前启动，它看起来一切正常，实际谁也没去连臂：
+
+- `GET /` 是 **404**；
+- `/api/health` 里 `"ui": null`、`"connected": false`；
+- **不会**去连机械臂（不是超时，是根本没发起）；
+- 日志里只有一行中文 INFO「没有静态目录 (前端未构建?) —— 只提供 /api/health 与 /ws」。
+
+要单独起本地程序调试，先 `pnpm build`，或改用 §3 的前端开发服务器。
+
 ### 3. 只调前端
 
 ```bash
@@ -103,7 +132,9 @@ Ubuntu 22.04+ / Debian 12+ 直接装 `.deb`：执行权限、串口访问与桌�
 
 ```bash
 cd ~/Downloads
-version=0.12.0
+# 换成你要装的 release 的 tag（去掉 v 前缀）。下面以 v0.17.4 为例，
+# 最新 tag 见 https://github.com/nexform-tech/litearm-studio/releases
+version=0.17.4
 base="https://github.com/nexform-tech/litearm-studio/releases/download/v${version}"
 curl -LO "$base/litearm-studio_${version}_amd64.deb"
 curl -LO "$base/litearm-studio_${version}_amd64.deb.sha256"
@@ -111,6 +142,13 @@ sha256sum -c "litearm-studio_${version}_amd64.deb.sha256"   # 输出 ...: OK
 sudo apt install "./litearm-studio_${version}_amd64.deb"
 litearm-studio --fake     # 离线，不碰硬件
 ```
+
+`version` 是个**会过期的数字**：照抄一个旧值不会报错，`curl` 照样下得到那份旧构建，
+装完才发现比最新版少了好几个版本的功能。装之前扫一眼 releases 页。
+
+每个 release 的三种附件命名固定为 `litearm-studio_<版本>_amd64.deb`、
+`litearm-studio-<版本>-linux-amd64`、`litearm-studio-<版本>-windows-amd64.exe`，各自都带
+`.sha256`。
 
 其他发行版与 Windows 用单文件可执行程序：它下载后**没有执行权限**，先 `chmod +x`；Linux 版需要
 glibc 2.35 及以上。
@@ -167,6 +205,18 @@ PyInstaller 悄悄退回它自带的默认图标。
 | `pnpm lint` | 执行 oxlint 静态检查 |
 | `pnpm exec tsc -b` | TypeScript 类型检查 |
 | `python -m pytest daemon/tests -q` | 本地程序单元测试（不需要硬件） |
+
+**本机装了 ROS 2 时 `pytest` 会在收集阶段崩掉，与本仓库无关**：pytest 按 entry point
+自动加载 `/opt/ros/...` 里的插件，其中 `launch` 需要未安装的 `lark`
+（`ModuleNotFoundError: No module named 'lark'`）。venv 拦不住它 —— `PYTHONPATH` 的优先级
+高于 venv 的 `site-packages`。加下面任一个即可：
+
+```bash
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest daemon/tests -q
+env -u PYTHONPATH python -m pytest daemon/tests -q
+```
+
+`-p no:launch_testing` **不够**：`launch_ros` 那个入口照样会被加载。
 
 ---
 

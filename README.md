@@ -62,11 +62,33 @@ Trajectory teaching/playback, dexterous-hand panels and per-joint impedance or h
 
 ### 1. Prerequisites
 
-- **Node.js** `v20.0.0`+ and **pnpm** (`corepack enable` or `npm install -g pnpm`)
+- **Node.js** `v20.0.0`+ and **pnpm** (`corepack enable` or `npm install -g pnpm`).
+  `corepack` ships with Node, so install Node itself first — with
+  [nvm](https://github.com/nvm-sh/nvm) or NodeSource's repository — and only run
+  `corepack enable` once `node -v` prints `v20.` or later.
 - **Python** 3.10+ for the local daemon
 - **The two SDKs** (`litearm-python`, `litegrip-python`) — not on PyPI: they ship as git
   submodules under `sdk/`, pinned by tag. `make sdk` fetches and installs them; there is
   nothing to clone by hand.
+
+- **`litegrip` (the LiteGrip gripper SDK) — Linux only, not on PyPI either**, so clone and install
+  that too:
+
+```bash
+git clone --branch v0.4.0 https://github.com/nexform-tech/litegrip-python.git
+pip install ./litegrip-python
+```
+
+  Running does not strictly require it: on Linux the daemon starts without it and simply offers no
+  gripper. **The tests do** — without it the `python -m pytest daemon/tests -q` from the Common
+  Commands table at the end of this file stops during collection
+  (`ModuleNotFoundError: No module named 'litegrip'`) and not one test runs. Details in the
+  [daemon README](daemon/README.md).
+
+**Do not confuse this with the older product of a similar name**: if `dpkg -l` lists
+`lite-arm-studio` (described as a Tauri desktop app), that is the old product and neither its UI
+nor its behaviour has anything to do with this one. This is a local Python program plus a browser
+UI, and its command is `litearm-studio-daemon`.
 
 ### 2. Run the whole application
 
@@ -93,6 +115,17 @@ and every build path — dev, CI, `.deb`, Windows — follows it.
 
 The console prints the URL it bound to (default `http://127.0.0.1:8765/`, auto-incrementing if busy) and opens a window.
 
+**Connecting to the arm is triggered by the UI** — the daemon never starts a connection on its own:
+it waits for the UI to send a `{"t":"connect"}` frame over the WebSocket. Start it before
+`pnpm build`, then, and it looks healthy while nothing is connecting:
+
+- `GET /` returns **404**;
+- `/api/health` reports `"ui": null` and `"connected": false`;
+- it **never** tries to reach the arm — not a timeout, no attempt at all;
+- the only hint is one INFO line: `没有静态目录 (前端未构建?) —— 只提供 /api/health 与 /ws`.
+
+To debug the daemon on its own, run `pnpm build` first, or use the UI dev server from §3.
+
 ### 3. UI-only development
 
 ```bash
@@ -113,7 +146,10 @@ serial-port permission and adds an entry to the application list.
 
 ```bash
 cd ~/Downloads
-version=0.12.0
+# replace with the tag of the release you want (drop the leading v);
+# v0.17.4 is used as an example, latest tag on
+# https://github.com/nexform-tech/litearm-studio/releases
+version=0.17.4
 base="https://github.com/nexform-tech/litearm-studio/releases/download/v${version}"
 curl -LO "$base/litearm-studio_${version}_amd64.deb"
 curl -LO "$base/litearm-studio_${version}_amd64.deb.sha256"
@@ -121,6 +157,14 @@ sha256sum -c "litearm-studio_${version}_amd64.deb.sha256"   # prints: ...: OK
 sudo apt install ./litearm-studio_${version}_amd64.deb
 litearm-studio --fake     # offline, no hardware
 ```
+
+`version` is a number that **goes stale**: copy an old one and nothing fails — `curl` happily
+downloads that older build and you only notice after installing that it is several releases
+behind. Check the releases page before you install.
+
+Asset names are fixed per release: `litearm-studio_<version>_amd64.deb`,
+`litearm-studio-<version>-linux-amd64`, `litearm-studio-<version>-windows-amd64.exe`, each with a
+matching `.sha256`.
 
 Everywhere else — and on Windows — use the standalone file. It is not executable as downloaded, so
 `chmod +x` it first; the Linux one needs glibc 2.35 or newer:
@@ -182,6 +226,19 @@ so an untracked icon silently falls back to PyInstaller's default executable ico
 | `pnpm exec tsc -b` | TypeScript typecheck |
 | `make deb` | Installable Debian package into `packaging/dist/` (Docker, ~90 s) |
 | `python -m pytest daemon/tests -q` | Daemon unit tests (no hardware needed) |
+
+**On a machine with ROS 2 installed, `pytest` dies during collection and none of this repository
+is involved**: pytest auto-loads the plugins under `/opt/ros/...` by entry point, and `launch`
+needs `lark`, which is not installed (`ModuleNotFoundError: No module named 'lark'`). A
+virtualenv does not stop it — `PYTHONPATH` takes priority over the venv's `site-packages`. Either
+of these works:
+
+```bash
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest daemon/tests -q
+env -u PYTHONPATH python -m pytest daemon/tests -q
+```
+
+`-p no:launch_testing` is **not** enough: the `launch_ros` entry point gets loaded anyway.
 
 ---
 
