@@ -82,6 +82,29 @@
     "crashBody": "The app caught an error while drawing this screen. This usually comes from an unexpected arm data state or an empty message from the local program.",
     "reloadPage": "Reload Page"
   },
+  "transport": {
+    "notConnected": "The local program is not connected",
+    "disconnected": "The connection was closed",
+    "connectionLost": "The connection to the local program was lost",
+    "noReply": "the local program did not reply within {{seconds}} s",
+    "noReplyMethod": "the local program did not reply within {{seconds}} s ({{method}})",
+    "busy": "The arm is moving; wait for the current motion to finish",
+    "commandFailed": "The command failed"
+  },
+  "storage": {
+    "unsupported": "IndexedDB is not available in this environment",
+    "openFailed": "opening IndexedDB failed",
+    "requestFailed": "the IndexedDB request failed",
+    "txFailed": "the IndexedDB transaction failed",
+    "txAborted": "the IndexedDB transaction was aborted",
+    "samplesQueryFailed": "querying the samples failed",
+    "samplesReadFailed": "reading the samples failed",
+    "samplesTrimFailed": "trimming the samples failed",
+    "logsTrimFailed": "trimming the log cache failed",
+    "logsReadFailed": "reading the log cache failed",
+    "logsHttpStatus": "GET /api/logs returned {{status}}",
+    "sessionMissing": "that session no longer exists"
+  },
   "units": {
     "deg": "°",
     "rad": "rad",

@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto'
 import { act, renderHook, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import i18n from '@/i18n'
 
 vi.mock('@/lib/arm/useArmConnection', () => ({
   useArmConnection: () => ({
@@ -28,6 +29,10 @@ function sample(ts: number) {
 describe('useTelemetryState', () => {
   beforeEach(async () => {
     await telemetryDb.clearAll()
+  })
+
+  afterEach(async () => {
+    await i18n.changeLanguage('zh')
   })
 
   it('retries and shows samples once a new session gets data', async () => {
@@ -95,4 +100,17 @@ describe('useTelemetryState', () => {
     expect(result.current.selectedId).toBe(newest)
     expect((await telemetryDb.listSessions()).map((s) => s.id)).toContain(newest)
   }, 15000)
+
+  // 存储层抛出的那句话也会被直接摆到界面上（面板显示 `err.message`），所以它必须跟着
+  // 界面语言走，而不是一句写死的中文。
+  it('reports a missing session in the interface language', async () => {
+    await i18n.changeLanguage('en')
+    const { result } = renderHook(() => useTelemetryState())
+
+    await act(async () => {
+      await result.current.exportSession(999_999)
+    })
+
+    expect(result.current.error).toBe('that session no longer exists')
+  })
 })

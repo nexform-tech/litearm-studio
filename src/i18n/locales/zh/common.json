@@ -82,6 +82,29 @@
     "crashBody": "应用在渲染界面时捕获到了错误。这通常是由于机械臂数据状态异常或通信数据为空引起的。",
     "reloadPage": "重新加载页面"
   },
+  "transport": {
+    "notConnected": "本地程序未连接",
+    "disconnected": "连接已断开",
+    "connectionLost": "本地程序连接已断开",
+    "noReply": "本地程序 {{seconds}} 秒内没有应答",
+    "noReplyMethod": "本地程序 {{seconds}} 秒内没有应答（{{method}}）",
+    "busy": "机械臂正在运动，请等待当前动作完成",
+    "commandFailed": "命令执行失败"
+  },
+  "storage": {
+    "unsupported": "当前环境不支持 IndexedDB",
+    "openFailed": "IndexedDB 打开失败",
+    "requestFailed": "IndexedDB 请求失败",
+    "txFailed": "IndexedDB 事务失败",
+    "txAborted": "IndexedDB 事务中止",
+    "samplesQueryFailed": "查询采样失败",
+    "samplesReadFailed": "读取采样失败",
+    "samplesTrimFailed": "裁剪采样失败",
+    "logsTrimFailed": "裁剪日志缓存失败",
+    "logsReadFailed": "读取日志缓存失败",
+    "logsHttpStatus": "/api/logs 返回 {{status}}",
+    "sessionMissing": "会话不存在"
+  },
   "units": {
     "deg": "°",
     "rad": "rad",

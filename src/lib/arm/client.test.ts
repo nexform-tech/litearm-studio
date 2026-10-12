@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FakeWebSocket } from '@/test/fakeWebSocket'
 import type { RobotState } from './client'
 import { REQUEST_TIMEOUT_MS } from './socket'
+import i18n from '@/i18n'
 
 const { ArmClient } = await import('./client')
 
@@ -383,7 +384,7 @@ describe('ArmClient (daemon WebSocket)', () => {
 
   it('rejects commands while the socket is not open', async () => {
     const client = new ArmClient()
-    await expect(client.enable()).rejects.toThrow('本地程序未连接')
+    await expect(client.enable()).rejects.toThrow(i18n.t('common:transport.notConnected'))
   })
 
   it('fails an in-flight command whose reply never arrives, instead of hanging forever', async () => {
@@ -395,7 +396,7 @@ describe('ArmClient (daemon WebSocket)', () => {
 
     // daemon 没回这条 ⇒ 到点必须自己落地。否则按钮一直转, 而 socket 还开着、
     // `_rejectAllPending` 也没有理由被调用 (issue #135)。
-    const settled = expect(promise).rejects.toThrow(/没有应答/)
+    const settled = expect(promise).rejects.toThrow(i18n.t('common:transport.noReplyMethod', { seconds: REQUEST_TIMEOUT_MS / 1000, method: 'enable' }))
     await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS + 1)
     await settled
     // 兜底超时**不是重发**: 一条命令只发一次。
@@ -424,7 +425,7 @@ describe('ArmClient (daemon WebSocket)', () => {
     const first = client.movej([0.1])
     expect(client.motionBusy).toBe(true)
 
-    await expect(client.movej([0.2])).rejects.toThrow('正在运动')
+    await expect(client.movej([0.2])).rejects.toThrow(i18n.t('common:transport.busy'))
 
     const frame = ws.lastFrame('cmd')!
     ws.receive({ t: 'res', id: frame.id, ok: true, v: null })
@@ -477,7 +478,7 @@ describe('ArmClient (daemon WebSocket)', () => {
     // 帧发出去了但链路在应答前断掉：在途请求被拒，这次断开无从确认。
     ws.drop()
 
-    await expect(done).rejects.toThrow('本地程序连接已断开')
+    await expect(done).rejects.toThrow(i18n.t('common:transport.connectionLost'))
     expect(client.status).toBe('reconnecting')
   })
 
@@ -545,7 +546,7 @@ describe('ArmClient (daemon WebSocket)', () => {
     const { client, ws } = connectedClient()
     const pending = client.enable()
     ws.drop()
-    await expect(pending).rejects.toThrow('本地程序连接已断开')
+    await expect(pending).rejects.toThrow(i18n.t('common:transport.connectionLost'))
   })
 
   it('connect() after a drop cancels the backoff and retries immediately', async () => {
@@ -623,5 +624,22 @@ describe('normalizeRobotState', () => {
       { mosTemp: 0, coilTemp: 0 },
       { mosTemp: 42, coilTemp: 0 },
     ])
+  })
+})
+
+// socket / client 抛出的那些句子会原样进 toast 与故障灯（`formatArmError` 对普通 Error
+// 只透传 message），所以它们也得跟着界面语言走 —— 从前是写死的中文。
+describe('transport errors follow the interface language', () => {
+  afterEach(async () => {
+    await i18n.changeLanguage('zh')
+  })
+
+  it('says the local program is not connected, in English', async () => {
+    await i18n.changeLanguage('en')
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+
+    const client = new ArmClient()
+
+    await expect(client.enable()).rejects.toThrow('The local program is not connected')
   })
 })

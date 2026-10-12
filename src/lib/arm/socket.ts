@@ -1,3 +1,4 @@
+import i18n from '@/i18n'
 import type { DaemonErrorInfo } from './errors'
 
 type Listener = () => void
@@ -121,7 +122,7 @@ export class DaemonSocket {
       this.reconnectTimer = null
     }
     this._closeSocket()
-    this._rejectAllPending('连接已断开')
+    this._rejectAllPending(i18n.t('common:transport.disconnected'))
     this._setStatus('disconnected')
   }
 
@@ -140,14 +141,21 @@ export class DaemonSocket {
   sendRequest(frame: Record<string, unknown>): Promise<unknown> {
     const ws = this.socket
     if (!ws || ws.readyState !== WebSocket.OPEN) {
-      return Promise.reject(new Error('本地程序未连接'))
+      return Promise.reject(new Error(i18n.t('common:transport.notConnected')))
     }
     const id = this.nextId++
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id)
-        const method = typeof frame.m === 'string' ? `（${frame.m}）` : ''
-        reject(new Error(`本地程序 ${REQUEST_TIMEOUT_MS / 1000} 秒内没有应答${method}`))
+        const seconds = REQUEST_TIMEOUT_MS / 1000
+        // 方法名要不要带上看这一刻有没有 —— 两个词条各说一遍，好过在英文句子里留一对
+        // 中文全角括号。
+        const method = typeof frame.m === 'string' ? frame.m : ''
+        reject(new Error(
+          method
+            ? i18n.t('common:transport.noReplyMethod', { seconds, method })
+            : i18n.t('common:transport.noReply', { seconds }),
+        ))
       }, REQUEST_TIMEOUT_MS)
       this.pending.set(id, {
         resolve: (v) => {
@@ -163,7 +171,7 @@ export class DaemonSocket {
       if (!sent) {
         this.pending.delete(id)
         clearTimeout(timer)
-        reject(new Error('本地程序未连接'))
+        reject(new Error(i18n.t('common:transport.notConnected')))
       }
     })
   }
@@ -208,7 +216,7 @@ export class DaemonSocket {
     ws.onclose = () => {
       if (this.socket !== ws) return
       this.socket = null
-      this._rejectAllPending('本地程序连接已断开')
+      this._rejectAllPending(i18n.t('common:transport.connectionLost'))
       if (this.manualDisconnect) {
         this._setStatus('disconnected')
         return
@@ -271,7 +279,10 @@ export class DaemonSocket {
       return
     }
     const info = (msg.err && typeof msg.err === 'object' ? msg.err : {}) as DaemonErrorInfo
-    const detail = typeof info.msg === 'string' && info.msg ? info.msg : '命令执行失败'
+    const detail =
+      typeof info.msg === 'string' && info.msg
+        ? info.msg
+        : i18n.t('common:transport.commandFailed')
     const error = new Error(detail) as CommandError
     error.err = info
     entry.reject(error)
