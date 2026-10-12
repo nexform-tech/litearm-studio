@@ -191,8 +191,9 @@ describe('GripperPanel', () => {
   })
 
   it('shows the zero-gravity state the daemon reports, and clears it when the axis moves again', () => {
-    // 零重力是 daemon 的 `state:"released"` (`MotionState.RELEASE`), 不是界面猜的:
-    // 按钮亮起、多出一条标识，进入时弹一条提示。
+    // 零重力是 daemon 报回来的 `state:"released"`, 不是界面猜的: 按钮亮起、多出一条
+    // 标识，进入时弹一条提示。daemon 内部有两个状态都报这个值（开关进的是 `ZERO_G`，
+    // `gripper.release` 进的是 `RELEASE`），界面只看线上那个值，所以两条路都点亮。
     connected({ state: { state: 'released' } })
     const { rerender } = render(<GripperPanel />)
     expect(screen.getByTestId('gripper-zero-gravity').textContent).toMatch(/Zero gravity|零重力/)

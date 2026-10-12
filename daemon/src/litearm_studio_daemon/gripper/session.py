@@ -76,8 +76,9 @@ GRIPPER_COMMANDS: Dict[str, str] = {
     "gripper.close": "闭合 → {ok}",
     "gripper.grasp": "夹取 (forceN?, holdS?) → {ok}",
     "gripper.move_to": "移动到 targetMm (0..行程, speedMmS?) → {ok}",
-    "gripper.release": "零重力 (零力矩, 仍使能) → null",
-    "gripper.set_zero_gravity": "进入/退出零重力 (on) → {ok}",
+    "gripper.release": "零重力 (零力矩, 仍使能; **无 UI 调用方** —— 面板走下面那条开关, "
+                       "这条留给脚本/其它客户端) → null",
+    "gripper.set_zero_gravity": "进入/退出零重力 (on) → {ok} —— 面板那颗零重力按钮发的就是它",
     "gripper.stop": "急停 (不排队, 立即生效) → null",
     "gripper.reset_stop": "复位急停 → null",
     "gripper.set_motion": "改速度/夹持力 → 生效中的设置",
@@ -126,8 +127,16 @@ _WIRE_STATUS = {
 #: that the axis is free, and a zero-torque axis reads exactly like an idle one
 #: otherwise.  It is not ``"stopped"`` (that is the latched e-stop, which also
 #: disables) and not ``"disabled"`` (the motor is still energised).  They are the
-#: same physical state — the button toggles one, the calibration wizard holds the
-#: other — so they share the wire value.
+#: same physical state, so they share the wire value — but which state you land in
+#: is not a detail a client may guess at:
+#:
+#: * ``ZERO_G`` —— 被**主动**进入的零重力：面板的开关 (`gripper.set_zero_gravity`，
+#:   #119 起按钮走的就是它)、以及手动两点标定的开始。
+#: * ``RELEASE`` —— 想零力矩、**却没有实测位置可持**时的落点：`gripper.release`、
+#:   带 `holdS` 的夹取到点松手、使能后还没读到位置、标定结束后还没读到位置。
+#:
+#: 线上命令里只有 `gripper.release` 直达 ``RELEASE``，而它没有 UI 调用方
+#: (见 `docs/GRIPPER_INTEGRATION.md` §4.2 的规则，issue #138)。
 _MOTION_WIRE = {
     MotionState.IDLE: "ready",
     MotionState.HOLD: "holding",

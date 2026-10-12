@@ -41,11 +41,15 @@ how a gripper gets dropped or keeps squeezing:
 急停       zero torque then disable, and latch           disabled
 ========  =========================================  ==================
 
-The middle one is ``MotionState.RELEASE`` — the button's zero gravity.  The
-calibration wizard has a zero-gravity state of its own (``ZERO_G``, entered by
-``SetZeroGravity``): same physics, and the two are deliberately separate states,
-because the wizard's has to be left again before the manual two-point flow can
-record anything.
+The middle one has two motion states behind it, and both report ``released``.
+``ZERO_G`` is the zero gravity entered *deliberately* — the panel's toggle
+(``SetZeroGravity``, which the button has sent since #119) and the start of a
+manual two-point calibration.  ``RELEASE`` is the same physics without a pose to
+hold, and is where the loop lands whenever it must stop driving but has nothing
+measured to hold instead: after an enable, at the end of a calibration, when a
+timed grasp lets go.  They stay separate states because leaving the deliberate
+one has to hold the pose the jaws are in, which is a measurement only the
+toggle's path has reasons to take.
 
 The latch is what makes the third one different in kind: once tripped, every
 motion command is refused until :class:`~litearm_studio_daemon.gripper.core.commands.ResetEStop`,

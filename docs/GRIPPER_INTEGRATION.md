@@ -170,8 +170,8 @@ progress, so the page can say why it is waiting.
 | `gripper.close` | — | `{"ok":true}` |
 | `gripper.grasp` | `forceN?` (default 20 N, the recommended working force), `holdS?` | `{"ok":true}` |
 | `gripper.move_to` | `targetMm` (0..travel), `speedMmS?` | `{"ok":true}` |
-| `gripper.release` | — | `null` (zero torque, stays enabled, back-drivable) |
-| `gripper.set_zero_gravity` | `on` (bool) | `{"ok":true}` — `on` enters zero gravity (zero torque), `off` leaves it and holds the current pose |
+| `gripper.release` | — | `null` (zero torque, stays enabled, back-drivable) — **no UI caller**: the panel's zero-gravity button sends `gripper.set_zero_gravity` below. Kept as socket surface for scripts and other clients, which reach the same `released` state. |
+| `gripper.set_zero_gravity` | `on` (bool) | `{"ok":true}` — **this is what the panel's zero-gravity button sends**: `on` enters zero gravity (zero torque), `off` leaves it and holds the current pose |
 | `gripper.stop` | — | `null` (E-stop) |
 | `gripper.reset_stop` | — | `null` (release the latch) |
 | `gripper.set_motion` | `speedMmS?`, `forceN?` | the settings now in effect |
@@ -206,6 +206,15 @@ Rules:
   together and are gone. `gripper.import_calibration` still takes a path on the
   control machine, and `gripper.list_calibrations` still reports the files the
   daemon knows about.
+- `gripper.release` and `gripper.set_zero_gravity{on:true}` put the axis in the
+  same physical state and both report `state:"released"`. The live one is
+  `set_zero_gravity`: it is the panel's toggle (since #119 the button presses
+  `on:true` and presses again for `on:false`), and it refuses to enter while the
+  drive is disabled. `gripper.release` has no caller in either the console or the
+  VR bridge; it stays in the table for clients that ask for the released state by
+  name, and it is also the state the daemon falls back to internally whenever it
+  wants zero torque with no measured position to hold instead (after an enable,
+  at the end of a calibration, when a timed grasp lets go).
 
 ### 4.3 Error kinds
 
@@ -293,7 +302,8 @@ reads through `gripper.list_calibrations`.
 | 7 | nothing | — | `missing` |
 
 **Gate.** Motion is allowed only when the provenance is `measured`, or `template`
-for the commands that do not depend on geometry: `open`, `close`, `release`.
+for the commands that do not depend on geometry: `open`, `close` and both
+zero-gravity commands (`gripper.release`, `gripper.set_zero_gravity`).
 Every millimetre target (`gripper.move_to`, `gripper.grasp`) requires `measured`.
 `factory` requires an explicit, persisted operator acknowledgement
 (`gripper.set_allow_factory`). `missing` allows nothing but `zero`.
@@ -439,6 +449,12 @@ The i18n namespace is `locales/{en,zh}/gripper.json`, registered in
   device reports, not what was sent.
 - The E-stop is reachable while a move is running. It maps to `gripper.stop`, and
   the panel shows the latched state until `gripper.reset_stop`.
+- The zero-gravity button is a **toggle** and sends `gripper.set_zero_gravity`
+  (`{on:true}` on the first press, `{on:false}` on the next — the daemon then
+  holds the pose the jaws are in). `gripper.release` reaches the same physical
+  state and is deliberately not what the button sends; the button's state is read
+  back from the daemon's `state:"released"`, never guessed, so a release that
+  came from anywhere else lights the same indicator.
 - The calibration card always shows provenance: source label, path, both rad
   endpoints, the derived travel, and the mounting direction. "Nominal template,
   never measured" must be visible, not implied. The endpoints and the path may sit
