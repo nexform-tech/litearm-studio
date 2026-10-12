@@ -8,6 +8,33 @@
     "cartesian": "笛卡尔"
   },
   "simBanner": "仿真模式 · 纯前端临时模拟：指令不会下发到真机，切回实机后仿真状态全部丢弃",
+  "fault": {
+    "listSeparator": "；",
+    "controllerDetail": "控制器故障：{{detail}}",
+    "controller": "控制器处于故障状态",
+    "jointDriver": "关节 {{joint}} 驱动{{reason}}",
+    "driverFaultUnknown": "故障（状态码 {{code}}）",
+    "jointBitmap": "关节故障位图：0x{{hex}}",
+    "stateHint": "控制器处于 fault 状态：任何安全违例都会置位，而「清除故障」只清驱动的锁存故障、「复位」只复位控制器，都不保证放行它——需失能后重新使能（机械臂会失力下坠，先扶稳），或重启本地程序",
+    "motor": {
+      "overvoltage": "超压",
+      "undervoltage": "欠压",
+      "overcurrent": "过流",
+      "mosOvertemp": "MOS 过温",
+      "coilOvertemp": "线圈过温",
+      "commsLost": "通讯丢失",
+      "overload": "过载"
+    }
+  },
+  "ops": {
+    "enterZeroGravity": "进入零重力模式",
+    "exitZeroGravity": "退出零重力模式",
+    "cartesianJog": "笛卡尔点动",
+    "cartesianMovel": "笛卡尔直线运动 movel",
+    "jointMotion": "关节 {{n}} 运动",
+    "jointMotionAll": "关节运动",
+    "readTcpPose": "获取当前 TCP 位姿"
+  },
   "pose": {
     "title": "状态",
     "jointLabel": "关节 {{n}}"

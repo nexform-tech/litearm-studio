@@ -95,7 +95,10 @@ describe('useSoloState fault recovery', () => {
 
     expect(mocks.toastError).toHaveBeenCalledTimes(1)
     expect(mocks.toastError.mock.calls[0][0]).toContain('boom')
-    expect(mocks.toastError.mock.calls[0][1]).toMatchObject({ id: 'solo-error-清除故障' })
+    // toast 的 id 现在按**词条名**去重（`reportError` 的 opKey），不再是那一句中文
+    expect(mocks.toastError.mock.calls[0][1]).toMatchObject({
+      id: 'solo-error-solo:controlBar.clearFault',
+    })
     consoleError.mockRestore()
   })
 })

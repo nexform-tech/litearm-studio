@@ -8,17 +8,23 @@ import i18n from '@/i18n'
 const mocks = vi.hoisted(() => ({
   getJointParams: vi.fn(),
   getTcpPose: vi.fn(),
+  movej: vi.fn(),
+  toastError: vi.fn(),
   status: 'connected' as string,
   conn: null as unknown,
   armState: null as unknown,
 }))
 
 vi.mock('sonner', () => ({
-  toast: { warning: vi.fn(), error: vi.fn(), success: vi.fn(), info: vi.fn() },
+  toast: { warning: vi.fn(), error: mocks.toastError, success: vi.fn(), info: vi.fn() },
 }))
 
 vi.mock('@/lib/arm', () => ({
-  armClient: { getJointParams: mocks.getJointParams, getTcpPose: mocks.getTcpPose },
+  armClient: {
+    getJointParams: mocks.getJointParams,
+    getTcpPose: mocks.getTcpPose,
+    movej: mocks.movej,
+  },
   formatArmError: (e: unknown) => (e instanceof Error ? e.message : String(e)),
   useArmConnection: () => ({ status: mocks.status, conn: mocks.conn }),
   useArmState: () => mocks.armState,
@@ -64,6 +70,8 @@ describe('useSoloState joint labels follow the interface language', () => {
   beforeEach(() => {
     mocks.getJointParams.mockReset().mockResolvedValue(LIMITS)
     mocks.getTcpPose.mockReset().mockResolvedValue([0.32, 0, 0.45, 0, 1.57, 0])
+    mocks.movej.mockReset().mockResolvedValue(null)
+    mocks.toastError.mockReset()
     mocks.status = 'connected'
     mocks.conn = conn(3)
     mocks.armState = armWith(3)
@@ -103,5 +111,38 @@ describe('useSoloState joint labels follow the interface language', () => {
 
     expect(result.current.joints[0].dotTitle).toBe('Joint 1 · Fault')
     expect(result.current.joints[1].dotTitle).toBe('Joint 2 · Normal')
+  })
+
+  it('describes a driver fault in English', async () => {
+    await i18n.changeLanguage('en')
+    // 逐轴故障码 ≥ 8：故障灯旁边那句话从前写死中文（「关节 1 驱动超压」）
+    mocks.armState = armWith(3, [8, 1, 1])
+
+    const { result } = await renderSolo()
+
+    expect(result.current.faultReason).toBe('Joint 1 driver: overvoltage')
+    expect(result.current.faultReason).not.toMatch(/关节/)
+  })
+
+  it('reports a failed motion, and the fault reason, in English', async () => {
+    await i18n.changeLanguage('en')
+    mocks.movej.mockRejectedValueOnce(new Error('boom'))
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { result } = await renderSolo()
+
+    await act(async () => {
+      result.current.dispatchJoint(0, 60)
+      await Promise.resolve()
+    })
+
+    const expected = i18n.t('common:errors.opFailed', {
+      op: i18n.t('solo:ops.jointMotion', { n: 1 }),
+      message: 'boom',
+    })
+    expect(mocks.toastError.mock.calls[0][0]).toBe(expected)
+    // 故障灯旁边挂的还是同一条记录：`reportError` 存词条名，这里按当前语言再翻一次
+    expect(result.current.faultReason).toBe(expected)
+    expect(expected).not.toMatch(/关节|失败/)
+    consoleError.mockRestore()
   })
 })

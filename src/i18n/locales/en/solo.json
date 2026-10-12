@@ -8,6 +8,33 @@
     "cartesian": "Cartesian"
   },
   "simBanner": "Sim Mode · Local preview only: commands are not sent to the arm, and the simulated pose is discarded when you switch back to Real",
+  "fault": {
+    "listSeparator": "; ",
+    "controllerDetail": "Controller fault: {{detail}}",
+    "controller": "The controller is in a fault state",
+    "jointDriver": "Joint {{joint}} driver: {{reason}}",
+    "driverFaultUnknown": "fault (status code {{code}})",
+    "jointBitmap": "Joint fault bitmap: 0x{{hex}}",
+    "stateHint": "The controller is in its fault state: any safety violation (overspeed, feedback timeout, settle timeout) sets it, and neither Clear Fault (which clears only the drives' latched faults) nor Reset (which only resets the controller) is guaranteed to release it — disable and re-enable the arm (it goes limp, hold it first), or restart the console.",
+    "motor": {
+      "overvoltage": "overvoltage",
+      "undervoltage": "undervoltage",
+      "overcurrent": "overcurrent",
+      "mosOvertemp": "MOS over-temperature",
+      "coilOvertemp": "coil over-temperature",
+      "commsLost": "comms lost",
+      "overload": "overload"
+    }
+  },
+  "ops": {
+    "enterZeroGravity": "Enter zero gravity",
+    "exitZeroGravity": "Leave zero gravity",
+    "cartesianJog": "Cartesian jog",
+    "cartesianMovel": "Cartesian linear move (movel)",
+    "jointMotion": "Joint {{n}} motion",
+    "jointMotionAll": "Joint motion",
+    "readTcpPose": "Read current TCP pose"
+  },
   "pose": {
     "title": "Status",
     "jointLabel": "Joint {{n}}"

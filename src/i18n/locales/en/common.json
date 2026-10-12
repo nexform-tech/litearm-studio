@@ -114,6 +114,7 @@
     "notEnabled": "Robot arm is not enabled — enable it before commanding motion",
     "cartUnsupported": "This firmware was built without cartesian planning: linear motion and cartesian jog are unavailable, use joint space instead",
     "jointLimitsFallback": "Could not read the joint soft limits from the controller; the sliders fell back to built-in ranges",
+    "opFailed": "{{op}} failed: {{message}}",
     "unknownError": "Operation failed: {{message}}",
     "notActivated": "This arm is not activated, so the firmware refuses to enable it: open Settings → Activation, fill in the registration form and submit it",
     "activationMustDisable": "The firmware only accepts the license record while the arm is disarmed: press Disable, then submit again",

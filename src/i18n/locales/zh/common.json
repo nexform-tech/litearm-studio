@@ -114,6 +114,7 @@
     "notEnabled": "机械臂未使能 —— 请先使能再操作",
     "cartUnsupported": "当前固件未编译笛卡尔规划：直线运动与笛卡尔点动不可用，请改用关节空间",
     "jointLimitsFallback": "未能从控制器读取关节软限位，滑条已退回内置默认量程",
+    "opFailed": "{{op}}失败：{{message}}",
     "unknownError": "操作失败：{{message}}",
     "notActivated": "这台机械臂尚未激活，固件拒绝使能：请到「设置 → 授权激活」填写注册信息并提交激活",
     "activationMustDisable": "固件只在失能状态下接受写入授权记录：请先按「失能」，再重新提交",
