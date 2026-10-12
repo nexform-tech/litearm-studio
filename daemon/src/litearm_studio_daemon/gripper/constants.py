@@ -84,7 +84,11 @@ N_TO_NM = 1.0 / NM_TO_N
 
 FORCE_MAX_N = 40.0  # mechanical rating — hard UI cap
 FORCE_SOFT_WARN_N = 35.0
-FORCE_DEFAULT_N = 12.0
+# 20 N: docs/GRIPPER_INTEGRATION.md §6.4 的推荐工作力, 也是面板的初值
+# (``src/features/gripper/useGripperPanel.ts`` 的 ``FORCE_DEFAULT_N``)。这里曾经是 12.0,
+# 而面板每次都把 ``forceN`` 带上, 所以 UI 上看不出差别 —— 省略这个字段的客户端 (脚本、
+# VR 桥) 却会用 12 N 去夹同一个物体, 同一个动作两种力度 (issue #132)。
+FORCE_DEFAULT_N = 20.0
 # tau_max 10 Nm × NM_TO_N.  Display only, as a grey unselectable annotation —
 # never reachable as a setpoint.
 FORCE_THEORETICAL_MAX_N = 100.0

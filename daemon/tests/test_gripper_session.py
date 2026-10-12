@@ -22,9 +22,11 @@ from litearm_studio_daemon.errors import (
     UnknownCommandError,
 )
 from litearm_studio_daemon.gripper import can_link
+from litearm_studio_daemon.gripper import constants
 from litearm_studio_daemon.gripper.config import ChannelConfig, ChannelStore
 from litearm_studio_daemon.gripper.session import GripperSession
 from litearm_studio_daemon.gripper.core import commands as cmd
+from litearm_studio_daemon.gripper.core.motion import MotionParams
 from litearm_studio_daemon.gripper.core.worker import WorkerLoop
 
 
@@ -263,6 +265,27 @@ def test_set_motion_answers_with_what_takes_effect(tmp_path: Path) -> None:
                                {"speedMmS": 33.0, "forceN": 20.0}) == {
             "speedMmS": 33.0, "forceN": 20.0}
         assert wait_for(lambda: abs(session.loop.motion.params.speed_mm_s - 33.0) < 1e-6)
+    finally:
+        session.close()
+
+
+def test_the_default_grasp_force_is_the_documented_twenty_newtons(tmp_path: Path) -> None:
+    """省略 ``forceN`` 时用 20 N —— 文档 §6.4 与面板 `FORCE_DEFAULT_N` 的同一个数。
+
+    这里曾经是 12.0: 面板每次都把 ``forceN`` 带上, 所以界面上看不出来, 但省略这个字段的
+    客户端 (脚本、VR 桥) 会用 12 N 去夹同一个物体, 同一个动作两种力度 (issue #132)。
+    """
+    assert constants.FORCE_DEFAULT_N == 20.0
+    assert MotionParams().force_n == constants.FORCE_DEFAULT_N
+
+    session = make_session(tmp_path)
+    try:
+        connect(session)
+        session.execute("gripper.enable", {})
+        session.execute("gripper.grasp", {})
+        # 不带 `forceN` ⇒ 走 `MotionFSM.grasp` 里 `params.force_n` 那个分支
+        # (`core/motion.py:207`), 也就是上面钉住的那个数。
+        assert wait_for(lambda: abs(session.loop.motion.params.force_n - 20.0) < 1e-9)
     finally:
         session.close()
 

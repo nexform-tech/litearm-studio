@@ -6,7 +6,9 @@ import { gripperClient } from '@/lib/arm/gripperClient'
 import type { GripperState } from '@/lib/arm/gripperClient'
 import { formatArmError } from '@/lib/arm/errors'
 
-/** 速度/夹持力滑条的量程与默认值 —— 与 daemon 的 `gripper/constants.py` 一致。 */
+/** 速度/夹持力滑条的量程与默认值 —— 与 daemon 的 `gripper/constants.py` 一一对应
+ *  (`SPEED_MIN_MM_S` / `SPEED_MAX_MM_S` / `SPEED_DEFAULT_MM_S` / `FORCE_MAX_N` /
+ *  `FORCE_DEFAULT_N`)。差一个数就是"同一个动作在 UI 与其它客户端上力度不同"(issue #132)。 */
 export const SPEED_MIN_MM_S = 5
 export const SPEED_MAX_MM_S = 150
 export const SPEED_DEFAULT_MM_S = 50
