@@ -71,11 +71,6 @@ POLL_PERIOD_S = 0.02
 #: ⚠ **状态串变化 / 故障变化一律立即推** (见 `_poll_loop`), 节流只管"同样内容重复推"。
 STATE_PUSH_INTERVAL_S = 0.02
 
-#: 采样记录的抽稀间隔 (秒)。50Hz 的状态轮询**不是**日志: 每一拍都写一条, 10MB 的
-#: 文件半小时就见底, 而操作员真正要读的是事件。1Hz 足够画出趋势与"那一刻的读数",
-#: 完整的 10Hz 采样仍由页面写在自己的采样表里 (见 `telemetryRecorder`)。
-SAMPLE_RECORD_INTERVAL_S = 1.0
-
 #: 采样记录的抽稀间隔 (秒)。50Hz 的状态轮询**不是**日志: 每一拍都写一条, 5MB 的文件
 #: 几分钟就见底, 而操作员真正要读的是事件。1Hz 足够画出趋势与"那一刻的读数"; 完整的
 #: 10Hz 采样仍由页面写在自己的采样表里 (见 `telemetryRecorder`)。
@@ -332,8 +327,6 @@ class Session:
         self._connected_at = 0.0
         self._last_emit_key: Any = None
         self._last_emit_at = 0.0
-        #: 上一次落采样记录的时刻 (见 `SAMPLE_RECORD_INTERVAL_S`)。
-        self._last_sample_at = 0.0
         #: 上一次落采样记录的时刻 (见 `SAMPLE_RECORD_INTERVAL_S`)。
         self._last_sample_at = 0.0
         self._zero_g_since: Optional[float] = None
