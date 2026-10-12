@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import { Dialog as DialogPrimitive } from "radix-ui"
+import { useTranslation } from "react-i18next"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -55,6 +56,9 @@ function DialogContent({
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean
 }) {
+  // 关闭键的文案也要跟语言走：这条 `sr-only` 是读屏用户唯一能听到的按钮名，中文界面上
+  // 念 "Close" 与屏幕上写的对不上。下面 `DialogFooter` 里那个可见的同名按钮走同一个词条。
+  const { t } = useTranslation('common')
   return (
     <DialogPortal>
       <DialogOverlay />
@@ -81,7 +85,7 @@ function DialogContent({
             >
               <XIcon
               />
-              <span className="sr-only">Close</span>
+              <span className="sr-only">{t('close')}</span>
             </Button>
           </DialogPrimitive.Close>
         )}
@@ -108,6 +112,7 @@ function DialogFooter({
 }: React.ComponentProps<"div"> & {
   showCloseButton?: boolean
 }) {
+  const { t } = useTranslation('common')
   return (
     <div
       data-slot="dialog-footer"
@@ -120,7 +125,7 @@ function DialogFooter({
       {children}
       {showCloseButton && (
         <DialogPrimitive.Close asChild>
-          <Button variant="outline">Close</Button>
+          <Button variant="outline">{t('close')}</Button>
         </DialogPrimitive.Close>
       )}
     </div>

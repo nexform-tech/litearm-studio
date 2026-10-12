@@ -5,6 +5,7 @@
   "saving": "Saving...",
   "reset": "Reset",
   "resetDefault": "Restore Defaults",
+  "close": "Close",
   "refresh": "Refresh",
   "loading": "Loading...",
   "search": "Search",
@@ -73,6 +74,38 @@
     "pause": "Pause",
     "resume": "Resume"
   },
+  "render": {
+    "webglUnsupported": "WebGL is unavailable in this environment, so the arm model cannot be shown. Check the graphics driver, or use a browser that supports WebGL.",
+    "webglContextFailed": "Could not create a WebGL rendering context, so the arm model cannot be shown. Check the graphics driver, or use a browser that supports WebGL.",
+    "webglContextLost": "The 3D rendering context was lost; waiting for the browser to restore it… (the page reloads itself after 15 seconds)",
+    "refreshNow": "Refresh Now",
+    "crashTitle": "The page failed to render",
+    "crashBody": "The app caught an error while drawing this screen. This usually comes from an unexpected arm data state or an empty message from the local program.",
+    "reloadPage": "Reload Page"
+  },
+  "transport": {
+    "notConnected": "The local program is not connected",
+    "disconnected": "The connection was closed",
+    "connectionLost": "The connection to the local program was lost",
+    "noReply": "the local program did not reply within {{seconds}} s",
+    "noReplyMethod": "the local program did not reply within {{seconds}} s ({{method}})",
+    "busy": "The arm is moving; wait for the current motion to finish",
+    "commandFailed": "The command failed"
+  },
+  "storage": {
+    "unsupported": "IndexedDB is not available in this environment",
+    "openFailed": "opening IndexedDB failed",
+    "requestFailed": "the IndexedDB request failed",
+    "txFailed": "the IndexedDB transaction failed",
+    "txAborted": "the IndexedDB transaction was aborted",
+    "samplesQueryFailed": "querying the samples failed",
+    "samplesReadFailed": "reading the samples failed",
+    "samplesTrimFailed": "trimming the samples failed",
+    "logsTrimFailed": "trimming the log cache failed",
+    "logsReadFailed": "reading the log cache failed",
+    "logsHttpStatus": "GET /api/logs returned {{status}}",
+    "sessionMissing": "that session no longer exists"
+  },
   "units": {
     "deg": "°",
     "rad": "rad",
@@ -96,6 +129,7 @@
     "firmwareMismatch": "Firmware version does not match the local daemon, please update the controller firmware or the app",
     "motorFault": "Motor fault: {{message}}, please check power supply or clear faults",
     "commandRejected": "The controller rejected the command{{code}}",
+    "codeSuffix": " (error code {{code}})",
     "motionTimeout": "Motion timed out: the controller did not finish within the expected time, please check robot status",
     "badMessage": "Protocol error talking to the local daemon: {{message}}",
     "portChangeWhileConnected": "The arm is already connected on another serial port: press Disconnect, then connect the new port",
@@ -105,6 +139,7 @@
     "notEnabled": "Robot arm is not enabled — enable it before commanding motion",
     "cartUnsupported": "This firmware was built without cartesian planning: linear motion and cartesian jog are unavailable, use joint space instead",
     "jointLimitsFallback": "Could not read the joint soft limits from the controller; the sliders fell back to built-in ranges",
+    "opFailed": "{{op}} failed: {{message}}",
     "unknownError": "Operation failed: {{message}}",
     "notActivated": "This arm is not activated, so the firmware refuses to enable it: open Settings → Activation, fill in the registration form and submit it",
     "activationMustDisable": "The firmware only accepts the license record while the arm is disarmed: press Disable, then submit again",

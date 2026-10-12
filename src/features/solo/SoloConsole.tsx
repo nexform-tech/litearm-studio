@@ -94,17 +94,13 @@ export function SoloConsole() {
   )
 }
 
-function SimModeBanner() {
-  const { i18n } = useTranslation()
-  const isEn = i18n.language.startsWith('en')
-
+export function SimModeBanner() {
+  const { t } = useTranslation('solo')
   return (
     <div className="flex items-center gap-2 rounded-xl border border-warn-line bg-warn-soft px-3.5 py-2.5">
       <div className="size-2 flex-none rounded-full bg-[#f5a524]" />
       <div className="text-[0.8125rem] font-medium text-warn">
-        {isEn
-          ? 'Simulation Mode · Local preview only: Commands are not sent to the real robot arm.'
-          : '仿真模式 · 纯前端临时模拟：指令不会下发到真机，切回实机后仿真状态全部丢弃'}
+        {t('simBanner')}
       </div>
     </div>
   )

@@ -8,7 +8,6 @@ import { DEFAULT_JOINT_COUNT, resolveJointCount } from '@/lib/arm/axes'
 import { jogPose, rpyToMat3, mat3ToRpy, type Mat3 } from '@/lib/arm/geometry'
 import {
   ARM_OPERATIONAL_STATES,
-  FAULT_STATE_HINT,
   FIRST_SEGMENT_POINTS,
   HOME_JOINTS,
   JOINT_LIMITS,
@@ -161,13 +160,19 @@ export function useSoloState() {
   }, [limitsOf])
 
   // 最近一次失败的机械臂指令。此前这些错误只进 console，界面上只剩一个说不清缘由的故障灯。
-  const [lastError, setLastError] = useState<{ op: string; msg: string } | null>(null)
-  const reportError = useCallback((op: string, err: unknown) => {
-    console.error(`${op} failed`, err)
+  // 存的是**词条名**（`solo:ops.*` / `solo:controlBar.*`），不是翻好的那一句：这条记录会
+  // 一直挂在故障灯旁边，存句子就等于把出错那一刻的语言冻在里面。
+  const [lastError, setLastError] = useState<
+    { opKey: string; opVars?: Record<string, unknown>; msg: string } | null
+  >(null)
+  const reportError = useCallback((opKey: string, err: unknown, vars?: Record<string, unknown>) => {
+    console.error(`${opKey} failed`, err)
     const msg = formatArmError(err)
-    setLastError({ op, msg })
-    toast.error(`${op}失败：${msg}`, { id: `solo-error-${op}` })
-  }, [])
+    setLastError({ opKey, opVars: vars, msg })
+    toast.error(t('common:errors.opFailed', { op: t(opKey, vars), message: msg }), {
+      id: `solo-error-${opKey}`,
+    })
+  }, [t])
 
   const [cartPose, setCartPose] = useState<Pose6 | null>(null)
 
@@ -234,7 +239,7 @@ export function useSoloState() {
         if (jogHoldingRef.current && gen === jogGenRef.current) {
           // ⚠ 之前只 `console.error` —— 点动被拒（运动互斥/未使能/链路故障）时面板
           // 毫无反应，操作员只能反复按。走统一报错（toast id 相同 ⇒ 不会刷屏）。
-          reportError('笛卡尔点动', err)
+          reportError('solo:ops.cartesianJog', err)
           jogHoldingRef.current = false
         }
       } finally {
@@ -321,7 +326,10 @@ export function useSoloState() {
     action
       .then(() => setLastError(null))
       .catch((err) => {
-        reportError(target === '零重力' ? '进入零重力模式' : '退出零重力模式', err)
+        reportError(
+          target === '零重力' ? 'solo:ops.enterZeroGravity' : 'solo:ops.exitZeroGravity',
+          err,
+        )
         setS((p) => ({ ...p, modeIntent: null }))
       })
   }
@@ -375,15 +383,19 @@ export function useSoloState() {
       : !s.enabled
         ? 'off'
         : 'ok'
+    // 关节名与状态提示都走 i18n —— 这里曾经把 `关节 ${i + 1}` 写死，英文界面下
+    // 「关节空间」卡片仍显示中文，而同一张卡上的位姿栏（`solo:pose.jointLabel`）
+    // 早已本地化，两边对不上。
+    const label = t('solo:pose.jointLabel', { n: i + 1 })
     const DOT = {
-      ok: { c: 'var(--ok)', r: 'rgba(18,161,80,0)', t: `关节 ${i + 1} · 正常` },
-      move: { c: '#3b82f6', r: 'rgba(59,130,246,.22)', t: `关节 ${i + 1} · 运动中` },
-      warn: { c: '#f5a524', r: 'rgba(245,165,36,.25)', t: `关节 ${i + 1} · 故障` },
-      off: { c: 'var(--line-strong)', r: 'rgba(0,0,0,0)', t: `关节 ${i + 1} · 未使能` },
+      ok: { c: 'var(--ok)', r: 'rgba(18,161,80,0)', t: `${label} · ${t('solo:jointSpace.dotOk')}` },
+      move: { c: '#3b82f6', r: 'rgba(59,130,246,.22)', t: `${label} · ${t('solo:jointSpace.dotMoving')}` },
+      warn: { c: '#f5a524', r: 'rgba(245,165,36,.25)', t: `${label} · ${t('solo:jointSpace.dotFault')}` },
+      off: { c: 'var(--line-strong)', r: 'rgba(0,0,0,0)', t: `${label} · ${t('solo:jointSpace.dotOff')}` },
     }[st]
     return {
       key: i,
-      name: '关节 ' + (i + 1),
+      name: label,
       val: toRad(pct, i).toFixed(3),
       pct,
       dot: DOT.c,
@@ -485,7 +497,7 @@ export function useSoloState() {
         armClient
           .disable()
           .then(() => setLastError(null))
-          .catch((err) => reportError('失能', err))
+          .catch((err) => reportError('solo:controlBar.disable', err))
         return
       }
       update({ fault: false })
@@ -494,28 +506,32 @@ export function useSoloState() {
         .clearFaults()
         .then(() => armClient.enable())
         .then(() => setLastError(null))
-        .catch((err) => reportError('使能', err))
+        .catch((err) => reportError('solo:controlBar.enable', err))
     },
     fault: s.real ? realJointFault || realStateFault : s.fault,
     // 故障灯旁边说人话。广播里的线索和最近一条指令的报错都要给——前者说“现在是什么
     // 状态”，后者往往才是真正的原因。
     faultReason: s.real
       ? [
-          describeArmFault(armState),
-          lastError && `${lastError.op}失败：${lastError.msg}`,
-          armState?.state === 'fault' ? FAULT_STATE_HINT : null,
+          describeArmFault(armState, t),
+          lastError &&
+            t('common:errors.opFailed', {
+              op: t(lastError.opKey, lastError.opVars),
+              message: lastError.msg,
+            }),
+          armState?.state === 'fault' ? t('solo:fault.stateHint') : null,
         ]
           .filter(Boolean)
-          .join('；') || null
+          .join(t('solo:fault.listSeparator')) || null
       : null,
     /** 清除故障：只清驱动器 RAM 里的锁存故障位（`clear_faults` 0x13）。
      *  过流、过温这类轴级报警恢复后用它点亮不起来的报警灯；它**不保证**放行系统级
-     *  的 fault 状态机（见 `FAULT_STATE_HINT`）。 */
+     *  的 fault 状态机（见 `solo:fault.stateHint`）。 */
     clearFault: () => {
       update({ fault: false })
       if (!connected || !s.real) return
       setLastError(null)
-      armClient.clearFaults().catch((err) => reportError('清除故障', err))
+      armClient.clearFaults().catch((err) => reportError('solo:controlBar.clearFault', err))
     },
     /** 复位：复位控制器（`reset` 0x14）。SDK 的措辞是 "clear faults + re-anchor"
      *  ——比 `clear_faults` 多一步把规划器重新锚定到当前位姿，且**不是**整机重启。 */
@@ -523,7 +539,7 @@ export function useSoloState() {
       update({ fault: false })
       if (!connected || !s.real) return
       setLastError(null)
-      armClient.reset().catch((err) => reportError('复位', err))
+      armClient.reset().catch((err) => reportError('solo:controlBar.reset', err))
     },
     homeJoints: () => {
       // 就绪姿态 Home [0, 0.5, 0, -1, 0, 0.6, 0]（按当前轴数裁剪/补齐）
@@ -534,7 +550,7 @@ export function useSoloState() {
           .setSpeed(s.speed)
           .then(() => armClient.movej(target, s.speed / 100))
           .then(() => setLastError(null))
-          .catch((err) => reportError('就绪姿态', err))
+          .catch((err) => reportError('solo:controlBar.readyPose', err))
       }
     },
     zeroJoints: () => {
@@ -546,7 +562,7 @@ export function useSoloState() {
           .setSpeed(s.speed)
           .then(() => armClient.home())
           .then(() => setLastError(null))
-          .catch((err) => reportError('回零点', err))
+          .catch((err) => reportError('solo:controlBar.home', err))
       }
     },
     // 使能按钮不再单独染色：六颗按钮的图标一律继承按钮文字色，由 ControlBar 统一画。
@@ -571,7 +587,7 @@ export function useSoloState() {
           .movej(target, s.speed / 100)
           // 运动成功即清掉旧错误：被"正在运动"拦下后，下一次成功运动要让提示消失。
           .then(() => setLastError(null))
-          .catch((err) => reportError(`关节 ${key + 1} 运动`, err))
+          .catch((err) => reportError('solo:ops.jointMotion', err, { n: key + 1 }))
       }
     },
 
@@ -587,7 +603,7 @@ export function useSoloState() {
         armClient
           .movej(target, s.speed / 100)
           .then(() => setLastError(null))
-          .catch((err) => reportError('关节运动', err))
+          .catch((err) => reportError('solo:ops.jointMotionAll', err))
       }
     },
 
@@ -608,7 +624,7 @@ export function useSoloState() {
         await armClient.movel([...targetPos, ...targetRpy] as Pose6, s.speed / 100)
         setLastError(null)
       } catch (err) {
-        reportError('笛卡尔直线运动 movel', err)
+        reportError('solo:ops.cartesianMovel', err)
       }
     },
     syncCurrentTcpPose: async () => {
@@ -620,7 +636,7 @@ export function useSoloState() {
           rpy: [pose[3], pose[4], pose[5]] as [number, number, number],
         }
       } catch (err) {
-        reportError('获取当前 TCP 位姿', err)
+        reportError('solo:ops.readTcpPose', err)
         return null
       }
     },

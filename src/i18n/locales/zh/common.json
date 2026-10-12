@@ -5,6 +5,7 @@
   "saving": "正在保存...",
   "reset": "重置",
   "resetDefault": "恢复默认",
+  "close": "关闭",
   "refresh": "刷新",
   "loading": "加载中...",
   "search": "搜索",
@@ -73,6 +74,38 @@
     "pause": "暂停",
     "resume": "继续"
   },
+  "render": {
+    "webglUnsupported": "当前环境不支持 WebGL，无法显示机械臂模型。请检查显卡驱动或使用支持 WebGL 的浏览器。",
+    "webglContextFailed": "无法创建 WebGL 渲染上下文，无法显示机械臂模型。请检查显卡驱动或使用支持 WebGL 的浏览器。",
+    "webglContextLost": "3D 渲染上下文丢失，正在等待浏览器恢复…（15 秒后自动刷新页面）",
+    "refreshNow": "立即刷新",
+    "crashTitle": "页面渲染遇到异常",
+    "crashBody": "应用在渲染界面时捕获到了错误。这通常是由于机械臂数据状态异常或通信数据为空引起的。",
+    "reloadPage": "重新加载页面"
+  },
+  "transport": {
+    "notConnected": "本地程序未连接",
+    "disconnected": "连接已断开",
+    "connectionLost": "本地程序连接已断开",
+    "noReply": "本地程序 {{seconds}} 秒内没有应答",
+    "noReplyMethod": "本地程序 {{seconds}} 秒内没有应答（{{method}}）",
+    "busy": "机械臂正在运动，请等待当前动作完成",
+    "commandFailed": "命令执行失败"
+  },
+  "storage": {
+    "unsupported": "当前环境不支持 IndexedDB",
+    "openFailed": "IndexedDB 打开失败",
+    "requestFailed": "IndexedDB 请求失败",
+    "txFailed": "IndexedDB 事务失败",
+    "txAborted": "IndexedDB 事务中止",
+    "samplesQueryFailed": "查询采样失败",
+    "samplesReadFailed": "读取采样失败",
+    "samplesTrimFailed": "裁剪采样失败",
+    "logsTrimFailed": "裁剪日志缓存失败",
+    "logsReadFailed": "读取日志缓存失败",
+    "logsHttpStatus": "/api/logs 返回 {{status}}",
+    "sessionMissing": "会话不存在"
+  },
   "units": {
     "deg": "°",
     "rad": "rad",
@@ -96,6 +129,7 @@
     "firmwareMismatch": "固件版本与本地程序不匹配，请升级控制器固件或本地程序",
     "motorFault": "电机故障：{{message}}，请检查供电或执行清除故障",
     "commandRejected": "控制器拒绝了该命令{{code}}",
+    "codeSuffix": "（错误码 {{code}}）",
     "motionTimeout": "运动超时：控制器未在预期时间内完成动作，请检查机械臂状态",
     "badMessage": "与本地程序的通信协议错误：{{message}}",
     "portChangeWhileConnected": "机械臂已连接在另一个串口上：换口请先按「断开」，再选新口连接",
@@ -105,6 +139,7 @@
     "notEnabled": "机械臂未使能 —— 请先使能再操作",
     "cartUnsupported": "当前固件未编译笛卡尔规划：直线运动与笛卡尔点动不可用，请改用关节空间",
     "jointLimitsFallback": "未能从控制器读取关节软限位，滑条已退回内置默认量程",
+    "opFailed": "{{op}}失败：{{message}}",
     "unknownError": "操作失败：{{message}}",
     "notActivated": "这台机械臂尚未激活，固件拒绝使能：请到「设置 → 授权激活」填写注册信息并提交激活",
     "activationMustDisable": "固件只在失能状态下接受写入授权记录：请先按「失能」，再重新提交",

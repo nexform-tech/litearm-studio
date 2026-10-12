@@ -78,24 +78,34 @@ export const MODE_INTENT_TIMEOUT_MS = 3000
 // daemon 的派生状态串里表示“已连接且电机使能、可运行”的状态。
 export const ARM_OPERATIONAL_STATES = new Set(['ready', 'moving', 'zero_gravity'])
 
-/** 达妙驱动的状态码（与 dm-motor-tool 的表一致）：0/1 是正常的失能/使能，≥8 才是故障。 */
-export const MOTOR_ERR_LABEL: Record<number, string> = {
-  8: '超压',
-  9: '欠压',
-  0xa: '过流',
-  0xb: 'MOS 过温',
-  0xc: '线圈过温',
-  0xd: '通讯丢失',
-  0xe: '过载',
+/** i18n 查表函数 —— 由调用方从 `useTranslation(...)` 传入。本模块不依赖 React，
+ *  所以只收这个签名，而不是 `TFunction` 类型。 */
+export type Translate = (key: string, options?: Record<string, unknown>) => string
+
+/** 达妙驱动的状态码（与 dm-motor-tool 的表一致）：0/1 是正常的失能/使能，≥8 才是故障。
+ *  值是它在 `solo:fault.motor.*` 下的词条名 —— 中文曾经写死在这里，于是英文界面上
+ *  故障灯旁边冒出的还是「关节 3 驱动过流」。 */
+const MOTOR_ERR_KEY: Record<number, string> = {
+  8: 'overvoltage',
+  9: 'undervoltage',
+  0xa: 'overcurrent',
+  0xb: 'mosOvertemp',
+  0xc: 'coilOvertemp',
+  0xd: 'commsLost',
+  0xe: 'overload',
 }
 
 /** 把广播里的故障线索翻成人话——故障灯只给一个布尔值时，现场只能去翻日志。
  *  daemon 保证字段齐全，但缺失时一律按空处理。 */
-export function describeArmFault(st: RobotState | null): string | null {
+export function describeArmFault(st: RobotState | null, t: Translate): string | null {
   if (!st) return null
   const reasons: string[] = []
   if (st.faulted) {
-    reasons.push(st.faultDetail ? `控制器故障：${st.faultDetail}` : '控制器处于故障状态')
+    reasons.push(
+      st.faultDetail
+        ? t('solo:fault.controllerDetail', { detail: st.faultDetail })
+        : t('solo:fault.controller'),
+    )
   }
   // fault 是 daemon 由 joint_fault 位图 + 逐轴 err 合并后的去重结果；缺失时退回逐轴 err。
   const errs = Array.isArray(st.errs) ? st.errs : []
@@ -104,17 +114,19 @@ export function describeArmFault(st: RobotState | null): string | null {
     ? rawFaults
     : errs.map((errCode, i) => ({ joint: i + 1, errCode })).filter((f) => f.errCode >= 8)
   for (const f of faults) {
-    if (f.errCode >= 8) reasons.push(`关节 ${f.joint} 驱动${MOTOR_ERR_LABEL[f.errCode] ?? `故障（状态码 ${f.errCode}）`}`)
+    if (f.errCode >= 8) {
+      const key = MOTOR_ERR_KEY[f.errCode]
+      const reason = key
+        ? t(`solo:fault.motor.${key}`)
+        : t('solo:fault.driverFaultUnknown', { code: f.errCode })
+      reasons.push(t('solo:fault.jointDriver', { joint: f.joint, reason }))
+    }
   }
-  if (!reasons.length && st.jointFault) reasons.push(`关节故障位图：0x${st.jointFault.toString(16)}`)
-  return reasons.length ? reasons.join('；') : null
+  if (!reasons.length && st.jointFault) {
+    reasons.push(t('solo:fault.jointBitmap', { hex: st.jointFault.toString(16) }))
+  }
+  return reasons.length ? reasons.join(t('solo:fault.listSeparator')) : null
 }
-
-/** 任何安全违例（超速、反馈超时、到位超时）都会把状态机置为 fault，之后所有运动
- *  指令都会被挡掉。而「清除故障」只调 clear_faults——它清的是驱动的锁存故障，
- *  「复位」也只是复位控制器，两者都不保证放行这个状态机，所以必须把恢复方式
- *  直接写在界面上。 */
-export const FAULT_STATE_HINT = '控制器处于 fault 状态：任何安全违例都会置位，而「清除故障」只清驱动的锁存故障、「复位」只复位控制器，都不保证放行它——需失能后重新使能（机械臂会失力下坠，先扶稳），或重启本地程序'
 
 /** 关节滑条的**回退**量程（rad）—— 连上后优先用 daemon `get_joint_params` 报的实际软限位
  *  （见 `useSoloState`），只有那条路拿不到时才用这张表。

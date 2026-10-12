@@ -12,6 +12,7 @@
  */
 import type { LogRecord } from './schema'
 import { normalizeRecord } from './schema'
+import i18n from '@/i18n'
 
 /** 一页多少条。与 daemon 的 `logread.DEFAULT_LIMIT` 一致。 */
 export const HISTORY_PAGE_SIZE = 200
@@ -55,7 +56,9 @@ export async function fetchLogHistory(query: HistoryQuery = {}): Promise<History
   if (query.q) params.set('q', query.q)
 
   const response = await fetch(`/api/logs?${params.toString()}`)
-  if (!response.ok) throw new Error(`/api/logs 返回 ${response.status}`)
+  if (!response.ok) {
+    throw new Error(i18n.t('common:storage.logsHttpStatus', { status: response.status }))
+  }
   const body = (await response.json()) as {
     records?: unknown
     cursor?: unknown

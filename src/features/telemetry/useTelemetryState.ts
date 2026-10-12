@@ -185,7 +185,7 @@ export function useTelemetryState() {
     setExporting(id)
     try {
       const sess = await telemetryDb.getSession(id)
-      if (!sess) throw new Error('会话不存在')
+      if (!sess) throw new Error(t('common:storage.sessionMissing'))
       // 分页流式写入 Blob：每页只保留一页对象与已序列化字符串，
       // 避免大会话一次性载入内存导致 WebView 卡死
       const parts: BlobPart[] = []

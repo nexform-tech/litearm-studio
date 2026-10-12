@@ -5,6 +5,7 @@
  * - sessions：一次臂连接（断线 30s 内重连则延续）对应一个会话
  * - samples：RobotState 采样（10Hz 降采样后的 q/dq/tau/temps/errs/faults）
  */
+import i18n from '@/i18n'
 
 export type TelemetrySample = {
   id?: number
@@ -71,7 +72,7 @@ class TelemetryDb {
   private open(): Promise<IDBDatabase> {
     if (this.dbPromise) return this.dbPromise
     if (typeof indexedDB === 'undefined') {
-      this.dbPromise = Promise.reject(new Error('当前环境不支持 IndexedDB'))
+      this.dbPromise = Promise.reject(new Error(i18n.t('common:storage.unsupported')))
       return this.dbPromise
     }
     this.dbPromise = new Promise((resolve, reject) => {
@@ -125,7 +126,7 @@ class TelemetryDb {
         }
       }
       req.onsuccess = () => resolve(req.result)
-      req.onerror = () => reject(req.error ?? new Error('IndexedDB 打开失败'))
+      req.onerror = () => reject(req.error ?? new Error(i18n.t('common:storage.openFailed')))
     })
     return this.dbPromise
   }
@@ -133,15 +134,15 @@ class TelemetryDb {
   private request<T>(req: IDBRequest<T>): Promise<T> {
     return new Promise((resolve, reject) => {
       req.onsuccess = () => resolve(req.result)
-      req.onerror = () => reject(req.error ?? new Error('IndexedDB 请求失败'))
+      req.onerror = () => reject(req.error ?? new Error(i18n.t('common:storage.requestFailed')))
     })
   }
 
   private done(tx: IDBTransaction): Promise<void> {
     return new Promise((resolve, reject) => {
       tx.oncomplete = () => resolve()
-      tx.onerror = () => reject(tx.error ?? new Error('IndexedDB 事务失败'))
-      tx.onabort = () => reject(tx.error ?? new Error('IndexedDB 事务中止'))
+      tx.onerror = () => reject(tx.error ?? new Error(i18n.t('common:storage.txFailed')))
+      tx.onabort = () => reject(tx.error ?? new Error(i18n.t('common:storage.txAborted')))
     })
   }
 
@@ -284,7 +285,7 @@ class TelemetryDb {
         rows.push(row)
         cursor.continue()
       }
-      req.onerror = () => reject(req.error ?? new Error('查询采样失败'))
+      req.onerror = () => reject(req.error ?? new Error(i18n.t('common:storage.samplesQueryFailed')))
     })
     return rows
   }
@@ -316,7 +317,7 @@ class TelemetryDb {
         rows.push(cursor.value as TelemetrySample)
         cursor.continue()
       }
-      req.onerror = () => reject(req.error ?? new Error('读取采样失败'))
+      req.onerror = () => reject(req.error ?? new Error(i18n.t('common:storage.samplesReadFailed')))
     })
     return rows
   }
@@ -372,7 +373,7 @@ class TelemetryDb {
           deleted += 1
           cursor.continue()
         }
-        req.onerror = () => reject(req.error ?? new Error('裁剪采样失败'))
+        req.onerror = () => reject(req.error ?? new Error(i18n.t('common:storage.samplesTrimFailed')))
       })
       if (trimmedBytes > 0) {
         newest.estimatedBytes = Math.max(0, (newest.estimatedBytes ?? 0) - trimmedBytes)

@@ -1,6 +1,7 @@
 import type { CommandError } from './socket'
 import { DaemonSocket } from './socket'
 import { formatArmError } from './errors'
+import i18n from '@/i18n'
 import {
   fileToBase64,
   normalizeFirmwareProgress,
@@ -824,7 +825,7 @@ export class ArmClient {
    */
   private async _guardMotion<T>(fn: () => Promise<T>): Promise<T> {
     if (this._motionPending) {
-      throw new Error('机械臂正在运动，请等待当前动作完成')
+      throw new Error(i18n.t('common:transport.busy'))
     }
     this._setMotionBusy(true)
     try {

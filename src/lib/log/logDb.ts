@@ -15,6 +15,7 @@
  * 所以这里的库名、容量、淘汰策略都**可以**变, 不许把任何"历史可靠性"的承诺压在上面。
  */
 import { estimateRecordBytes, type LogEntry } from './schema'
+import i18n from '@/i18n'
 
 const DB_NAME = 'litearm-studio-logs'
 const DB_VERSION = 1
@@ -32,7 +33,7 @@ class LogDb {
   private open(): Promise<IDBDatabase> {
     if (this.dbPromise) return this.dbPromise
     if (typeof indexedDB === 'undefined') {
-      this.dbPromise = Promise.reject(new Error('当前环境不支持 IndexedDB'))
+      this.dbPromise = Promise.reject(new Error(i18n.t('common:storage.unsupported')))
       return this.dbPromise
     }
     this.dbPromise = new Promise((resolve, reject) => {
@@ -46,7 +47,7 @@ class LogDb {
         }
       }
       req.onsuccess = () => resolve(req.result)
-      req.onerror = () => reject(req.error ?? new Error('IndexedDB 打开失败'))
+      req.onerror = () => reject(req.error ?? new Error(i18n.t('common:storage.openFailed')))
     })
     return this.dbPromise
   }
@@ -54,15 +55,15 @@ class LogDb {
   private request<T>(req: IDBRequest<T>): Promise<T> {
     return new Promise((resolve, reject) => {
       req.onsuccess = () => resolve(req.result)
-      req.onerror = () => reject(req.error ?? new Error('IndexedDB 请求失败'))
+      req.onerror = () => reject(req.error ?? new Error(i18n.t('common:storage.requestFailed')))
     })
   }
 
   private done(tx: IDBTransaction): Promise<void> {
     return new Promise((resolve, reject) => {
       tx.oncomplete = () => resolve()
-      tx.onerror = () => reject(tx.error ?? new Error('IndexedDB 事务失败'))
-      tx.onabort = () => reject(tx.error ?? new Error('IndexedDB 事务中止'))
+      tx.onerror = () => reject(tx.error ?? new Error(i18n.t('common:storage.txFailed')))
+      tx.onabort = () => reject(tx.error ?? new Error(i18n.t('common:storage.txAborted')))
     })
   }
 
@@ -104,7 +105,7 @@ class LogDb {
         deleted += 1
         cursor.continue()
       }
-      req.onerror = () => reject(req.error ?? new Error('裁剪日志缓存失败'))
+      req.onerror = () => reject(req.error ?? new Error(i18n.t('common:storage.logsTrimFailed')))
     })
     await this.done(tx)
   }
@@ -126,7 +127,7 @@ class LogDb {
         rows.push(cursor.value as LogEntry)
         cursor.continue()
       }
-      req.onerror = () => reject(req.error ?? new Error('读取日志缓存失败'))
+      req.onerror = () => reject(req.error ?? new Error(i18n.t('common:storage.logsReadFailed')))
     })
     return rows.reverse()
   }

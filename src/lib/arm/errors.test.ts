@@ -56,7 +56,7 @@ describe('formatArmError (daemon err.kind → i18n)', () => {
       'Robot arm is busy with another motion, please wait for completion or stop current motion',
     )
     expect(formatArmError(daemonErr('CommandRejectedError', 'x', { code: 9 }))).toBe(
-      'The controller rejected the command（错误码 9）',
+      'The controller rejected the command (error code 9)',
     )
     expect(formatArmError(daemonErr('BadMessage', 'bad json'))).toBe(
       'Protocol error talking to the local daemon: bad json',
