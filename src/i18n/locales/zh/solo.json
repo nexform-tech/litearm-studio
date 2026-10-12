@@ -7,6 +7,7 @@
     "joint": "关节",
     "cartesian": "笛卡尔"
   },
+  "simBanner": "仿真模式 · 纯前端临时模拟：指令不会下发到真机，切回实机后仿真状态全部丢弃",
   "pose": {
     "title": "状态",
     "jointLabel": "关节 {{n}}"

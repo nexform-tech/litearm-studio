@@ -7,6 +7,7 @@
     "joint": "Joint",
     "cartesian": "Cartesian"
   },
+  "simBanner": "Sim Mode · Local preview only: commands are not sent to the arm, and the simulated pose is discarded when you switch back to Real",
   "pose": {
     "title": "Status",
     "jointLabel": "Joint {{n}}"
