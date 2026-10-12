@@ -32,6 +32,9 @@ describe('i18n Internationalization', () => {
     expect(i18n.t('nav:settings')).toBe('设置')
     expect(i18n.t('settings:payload.title')).toBe('末端负载')
     expect(i18n.t('settings:tabs.joints')).toBe('增益与限位')
+    // 拒绝下发时点名的那一步，必须就是控制栏那颗按钮的名字（同
+    // `activationMustDisable` 的理由：照着提示得能找到按钮）。
+    expect(i18n.t('settings:installation.gateArmed')).toContain(i18n.t('solo:controlBar.disable'))
     // 夹爪命名空间（§6.2）：导航、动作、闸门与新增的错误种类都要在两种语言里存在。
     expect(i18n.t('nav:gripper')).toBe('夹爪')
     expect(i18n.t('nav:gripperTitle')).toBe('LiteGrip 夹爪')
@@ -81,6 +84,7 @@ describe('i18n Internationalization', () => {
     expect(i18n.t('settings:header.title')).toBe('Controller Parameters & Calibration')
     expect(i18n.t('settings:tabs.diagnostics')).toBe('Diagnostics')
     expect(i18n.t('settings:joints.factory')).toBe('Restore factory')
+    expect(i18n.t('settings:installation.gateArmed')).toContain(i18n.t('solo:controlBar.disable'))
     expect(i18n.t('nav:gripper')).toBe('Gripper')
     expect(i18n.t('nav:gripperTitle')).toBe('LiteGrip Gripper')
     expect(i18n.t('gripper:actions.open')).toBe('Open')

@@ -52,6 +52,7 @@
   "armedHint": "The drives are enabled, so sending is disabled — disable the arm first (upright↔side is |Δg| = 13.87 m/s² = 1.41 g, and the three components are not atomic: halfway through, the magnitude is 13.87 and the direction is 45° off). This page will not disable the arm for you: disabling removes its holding torque.",
   "gateNotRead": "The firmware's gravity vector has not been read successfully yet — sending and persisting stay greyed out until it has, or the form's default values get written to the device unseen.",
   "gateStateUnknown": "No state frame has arrived yet (state unknown) — not knowing is not the same as being safe, so sending and persisting are disabled.",
+  "gateArmed": "The arm is enabled and this page will not disable it — press Disable on the control bar first (the three components are not atomic: midway through an upright↔side change the magnitude is 13.87 and the direction is 45° off).",
   "magnitudeConfirm": "|g| = {{magnitude}} m/s², more than {{percent}}% away from 9.81.\n\nThe usual cause is editing one component only (upright→side with z left at -9.81 gives ({{vector}}), magnitude 13.87 = 1.41×g).\n\nSend it anyway?",
     "persist": "Persist to flash",
     "persistTitle": "Write the current parameters into flash (the firmware requires a disabled arm here too)",
