@@ -150,7 +150,7 @@ describe('SettingsPage axis scaling', () => {
     expect(screen.getByText('尚未读取到关节参数。')).toBeDefined()
     openTab(/安装方向/)
     // 没连上就没读回值, 装向只能如实说"还没读", 而不是显示一个像模像样的默认装法。
-    expect(screen.getByText(/尚未读取设备装向/)).toBeDefined()
+    expect(screen.getByText(/尚未从固件读取重力向量/)).toBeDefined()
   })
 
   it('opens the renamed installation tab from a legacy ?tab=gravity link', () => {
