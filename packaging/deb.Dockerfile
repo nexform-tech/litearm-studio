@@ -41,14 +41,16 @@ RUN apt-get update -qq \
         ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
-# ⚠ `librsvg2-2` + `librsvg2-common` are here on purpose, and they are not small (they pull
-# libxml2 and libicu, ~45 MB uncompressed, ~16 MB in the package). PyInstaller collects the
-# GTK stack *plus* the Adwaita icon theme, whose icons are SVG — and loading an SVG through
-# GdkPixbuf needs the `libpixbufloader-svg.so` loader that `librsvg2-common` installs. On a
-# build machine without it the package silently ships without SVG icons while the released
-# package (built on a GitHub runner, which has it) does not. Verified by diffing the frozen
-# bundle's table of contents against the release artifact; keep this in step with what the
-# `package` job's runner provides.
+# ⚠ `librsvg2-2` + `librsvg2-common` used to decide what the package carried: PyInstaller
+# collected the GTK stack *plus* the Adwaita icon theme (whose icons are SVG), and loading an
+# SVG through GdkPixbuf needs the `libpixbufloader-svg.so` loader that `librsvg2-common`
+# installs. `packaging/hooks/hook-gi.py` now stops all of that from being collected — the
+# desktop stack, the icon themes and the loaders come from the target machine — so neither
+# of these two changes the artifact any more.
+#
+# They stay so that this image remains step for step with the `package` job's runner: a
+# locally built `.deb` should come off the same machine as the released one. Do not add
+# anything here for the GTK stack's sake again — that is what the hooks are for now.
 RUN apt-get update -qq \
  && apt-get install -y -qq --no-install-recommends \
         librsvg2-2 \

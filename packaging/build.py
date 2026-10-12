@@ -36,6 +36,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 # ⚠ Windows 控制台默认是 cp1252: 打中文会抛 `UnicodeEncodeError`, 让**整个构建步骤**
 # 判失败 —— 实测 CI 上 PyInstaller 已经成功, 却死在后一句 `print` 上。先切 UTF-8。
@@ -60,18 +61,19 @@ EXE_NAME = "litearm-studio-daemon"
 #: 没设就自动：有 GTK 用 GTK，否则 Qt。见 `window_backend()`。
 WINDOW_BACKEND_ENV = "LITEARM_STUDIO_WINDOW_BACKEND"
 
-#: GTK 后端要显式点名的 gi 模块。`Gtk` 那个钩子会把 libgtk-3 及其传递依赖一起收进来；
-#: `WebKit2` **没有** PyInstaller 钩子，它的 typelib 与 `libwebkit2gtk` 必须由 `.deb` 的
-#: `Depends` 提供（见 `deb.control_text`）。
+#: GTK 后端要显式点名的 gi 模块 —— 窗口后端用到它们，而它们**全部**由目标机提供。
+#: 点名只是把这层依赖写下来（`WebKit2` 尤其：它从来没有进过包）；收与不收由
+#: `packaging/hooks/` 决定，见 `hooks_args()`。
 GTK_MODULES = ("Gtk", "Gdk", "GdkPixbuf", "Gio", "GLib", "GObject", "Pango", "Atk")
 # Windows 可执行文件的图标。不传 `--icon` 时 PyInstaller 会用它自带的默认图标 ——
 # 发出去的程序在资源管理器/任务栏里就是那个通用图标，而不是我们的标识。
 # Linux 的 ELF 不嵌图标，这个参数在 Linux 上只是被 PyInstaller 接受后忽略。
 ICON = ROOT / "assets" / "litearm.ico"
 
-#: 我们自己的 PyInstaller 钩子目录（见 `packaging/hooks/`）。目前只有一条：GTK 那条
-#: 图标主题白名单。它**替代**（不是补充）PyInstaller 自带的同名钩子 —— PyInstaller
-#: 每个模块只留一条钩子，同名的用户钩子优先。
+#: 我们自己的 PyInstaller 钩子目录（见 `packaging/hooks/`）。它**替代**（不是补充）
+#: PyInstaller 自带的同名钩子 —— PyInstaller 每个模块只留一条钩子，同名的用户钩子优先。
+#: 里面的几条合起来做一件事：桌面栈（GTK/GLib/GIO 的库、typelib、加载器、模块）由目标机
+#: 提供，产物里一份都不带，因此也不会盖住系统那份。见 `hooks_args()`。
 HOOKS_DIR = ROOT / "packaging" / "hooks"
 
 
@@ -270,16 +272,20 @@ def slimming_args() -> list[str]:
 def hooks_args() -> list[str]:
     """挂上我们自己的 PyInstaller 钩子目录（`packaging/hooks/`）。
 
-    ⚠ 这一条是**体积**参数，只是长得不像。PyInstaller 自带的 `hook-gi.repository.Gtk`
-    在没配 hooksconfig 时执行 `collect_glib_share_files('icons')`，把**构建机**上装着的
-    整套图标主题原样收进产物 —— ubuntu-22.04 上是 Humanity 等，展开后 71 MB，占
-    v0.22.2 那个 `.deb` 安装体积的三分之一还多。
+    ⚠ 这一条**决定产物里有没有一份会盖住系统的桌面栈**，是修 Ubuntu 24.04 打不开窗口
+    （issue #123）的那一半地方。PyInstaller 自带的六十多条 `hook-gi.repository.*` 会把
+    **构建机**的 GTK/GDK/GLib/GIO 共享库、typelib、gdk-pixbuf 加载器、GIO 模块收进产物；
+    它们带着与系统同名的 soname，在进程里盖住目标机的 —— 22.04 的 `libglib-2.0.so.0`
+    盖住 24.04 的，24.04 的 `libgudev`（系统 WebKitGTK 要）于是找不到
+    `g_once_init_enter_pointer`，WebKitGTK 加载失败，窗口开不出来。
 
     `--additional-hooks-dir` 里的目录被放在最前面，而一个模块只有一条钩子生效（优先级
-    高的胜出），所以这一条是**替代**上游那条而不是给它打补丁：我们那条在执行时把上游
-    原样调用一遍，只筛掉多余的图标主题（见 `packaging/hooks/hook-gi.repository.Gtk.py`）。
+    高的胜出），所以这个目录里的同名钩子是**替代**上游那些而不是给它们打补丁：我们把它们
+    的汇合点堵上，让产物里一份桌面栈都不留，改由目标机提供（`docs/INSTALL.md` § 3.4）。
+    完整理由见 `packaging/hooks/hook-gi.py`。
 
-    少了这个参数不会有任何报错 —— 包只是白白大一截。所以 `test_build.py` 里有一条钉住它。
+    少了这个参数不会有任何报错 —— 包只是白白多带一份（还要在 24.04 上坏掉）。
+    所以 `test_build.py` 里有一条钉住它。
     """
     return ["--additional-hooks-dir", str(HOOKS_DIR)]
 
@@ -297,8 +303,9 @@ def window_build_args() -> list[str]:
 
     **两个后端，体积差一个数量级**（Linux）：
 
-    * `gtk`：借系统的 WebKitGTK。产物里只有 Python 侧与 PyGObject，`libwebkit2gtk` 那
-      94 MB 留在系统上、由 `.deb` 的 `Depends` 提供（见 `deb.control_text`）。
+    * `gtk`：整个桌面栈都借系统的（WebKitGTK 那 94 MB、GTK/GLib 的库与 typelib 都在
+      目标机上，由 `.deb` 的 `Depends` 提供，见 `deb.control_text`）。产物里只有 Python
+      侧与 PyGObject。
     * `qt`：把 Qt WebEngine（一整个 Chromium）打进产物，不依赖任何系统库，代价是 `~240 MB`。
 
     选哪个由 `LITEARM_STUDIO_WINDOW_BACKEND` 决定，没设就自动：有 GTK 用 GTK，否则 Qt。
@@ -358,13 +365,17 @@ def gtk_available() -> bool:
 def _gtk_build_args() -> list[str]:
     """GTK 后端的参数。
 
-    ⚠ **WebKit2 没有 PyInstaller 钩子**（自带的 `hook-gi.repository.*` 里有 Gtk/Gdk/Gio…
-    但没有 WebKit2），所以它的 typelib 与 `libwebkit2gtk` 必须由 `.deb` 的 `Depends` 提供。
-    漏掉这条依赖的表现是：装完打开就报"没有可用的 webview 后端"。
+    ⚠ **整个桌面栈都由目标机提供，产物里一份都不带**：`--hidden-import gi.repository.*`
+    点的这几个模块只是把"窗口后端用到它们"写下来，它们的 typelib 与共享库来自系统，
+    这里挂的 `packaging/hooks/` 保证 PyInstaller 不会把构建机那份收进来
+    （见 `hooks_args()` 与 `packaging/hooks/hook-gi.py`）。
 
-    ⚠ `Gtk` 那个钩子会顺带把 `libgtk-3` 及其依赖收进产物（`collect_typelib_data()` 会收
-    typelib 指向的共享库）。这是有意的：GTK 的传递依赖太多，与其在 `Depends` 里逐条列，
-    不如让 PyInstaller 收干净；真正大的是 WebKit，而它不在那条链上。
+    这套依赖由 `.deb` 的 `Depends: gir1.2-webkit2-4.1` 一次要齐（→ `gir1.2-gtk-3.0` →
+    `libgtk-3-0`、`libglib2.0-0`、`adwaita-icon-theme`、`glib-networking`…）；
+    漏掉这条依赖的表现就是装完打开报"没有可用的 webview 后端"。
+
+    便携产物没有包管理器替它要依赖，所以同一套东西要用户自己装 —— `docs/INSTALL.md` § 3.4
+    把这件事写清楚了。
     """
     if not gtk_available():
         # ⚠ 被 `LITEARM_STUDIO_WINDOW_BACKEND=gtk` 强制指定、但机器上其实没有 GTK 时，
@@ -484,6 +495,63 @@ def bundle_size_mb(mode: str) -> float:
     return sum(p.stat().st_size for p in root.rglob("*") if p.is_file()) / 1e6
 
 
+def _stack_rules() -> Any:
+    """`packaging/hooks/litearm_stack.py` —— "哪些名字算桌面栈"的唯一定义。
+
+    ⚠ 与钩子共用同一份名单是有意的：这里的检查是那个"不收"承诺的**验收**，抄一份就等于
+    让两边有机会说不同的话。理由写在那个文件里。
+    """
+    spec = importlib.util.spec_from_file_location(
+        "litearm_stack", HOOKS_DIR / "litearm_stack.py")
+    if spec is None or spec.loader is None:  # pragma: no cover - 只有文件没了才会
+        raise SystemExit(f"读不到 {HOOKS_DIR / 'litearm_stack.py'}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def bundle_members(binary: Path, mode: str) -> list[str]:
+    """产物里所有成员名（相对路径），两种形态都列得出来。
+
+    * `onedir`：走那棵目录树。PyInstaller 把可执行文件以外的东西放在 `_internal/` 下，
+      这里去掉那个前缀，好让两条路给出同一套名字。
+    * `onefile`：读可执行文件里的归档目录。单文件形态在磁盘上没有第二个落点 ——
+      "解包一次再看"意味着把一个刚打出来的产物真的跑起来。
+    """
+    if mode == "onedir":
+        root = binary.parent
+        names = []
+        for path in sorted(root.rglob("*")):
+            if not path.is_file():
+                continue
+            name = path.relative_to(root).as_posix()
+            if name.startswith("_internal/"):
+                name = name[len("_internal/"):]
+            names.append(name)
+        return names
+
+    from PyInstaller.archive.readers import CArchiveReader  # noqa: PLC0415 - 只有单文件形态要
+
+    return list(CArchiveReader(str(binary)).toc)
+
+
+def desktop_stack_members(binary: Path, mode: str) -> list[tuple[str, str]]:
+    """产物里混进来的桌面栈成员：`(名字, 为什么算)`，干净时是空表。
+
+    ⚠ 这一条挡的是**没有任何报错**的那种退化：PyInstaller 换个版本、多出一条我们没堵的
+    收集路径，构建照样"成功"，包却悄悄多带一份。它带着与目标机同名的 soname，于是又在
+    某个没验过的发行版上盖住系统的 —— issue #123 就是这么出去的。单测拦不住这种（单测
+    查的是我们自己的钩子，不是真实产物），只有查产物才拦得住。
+    """
+    rules = _stack_rules()
+    found: list[tuple[str, str]] = []
+    for name in bundle_members(binary, mode):
+        why = rules.strikes(name)
+        if why:
+            found.append((name, why))
+    return found
+
+
 def main() -> int:
     if not (UI_DIST / "index.html").is_file():
         raise SystemExit(
@@ -503,6 +571,9 @@ def main() -> int:
     #   会留下一个只属于这次失败构建的 `_build_*` 文件 (下一条注释解释了它为什么要命)。
     activation_url = resolve_activation_url()
     mode = bundle_mode()
+    # 窗口后端在这里读一次, 供产物检查判断"这次产物该不该带桌面栈" —— 参数由
+    # `window_build_args()` 那边再读一遍 (同一个纯函数, 值一样)。
+    backend = window_backend()
     print(f"[package] version = {version}")
     print(f"[package] 交付形态 = {mode}")
 
@@ -560,6 +631,20 @@ def main() -> int:
         produced = bundle_output(mode)
         if not produced.is_file():
             raise SystemExit(f"打包结束但没找到产物: {produced}")
+
+        # ⚠ 只在 GTK 后端查: 桌面栈只可能从 `gi` 那条链进来 (Windows/macOS 用系统自带内核,
+        #   Qt 自带 Chromium), 别的后端连这些名字都不会出现, 查它只是徒增误报的机会。
+        if backend == "gtk":
+            offenders = desktop_stack_members(produced, mode)
+            if offenders:
+                listing = "\n".join(f"    {name} —— {why}" for name, why in offenders[:20])
+                raise SystemExit(
+                    f"产物里混进了桌面栈的一份副本, 共 {len(offenders)} 项:\n{listing}\n"
+                    "它带着与目标机同名的 soname, 会盖住系统那一份 —— Ubuntu 24.04 上窗口\n"
+                    "打不开就是这么来的 (issue #123)。两条出路: 打包参数/钩子没拦住\n"
+                    "(看 packaging/hooks/hook-gi.py), 或者漏了一类东西, 把那一类加进\n"
+                    "packaging/hooks/litearm_stack.py 的名单里。")
+            print("[package] 产物检查: 没有桌面栈的库/typelib/加载器/数据")
         print(f"[package] 产物: {produced} ({bundle_size_mb(mode):.1f} MB)")
     finally:
         VERSION_FILE.unlink(missing_ok=True)

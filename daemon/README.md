@@ -47,7 +47,7 @@ pip install -e "daemon[test]"
 ```bash
 pip install -e "daemon[ui]"                       # pywebview 本体
 
-# Linux: 借系统的 WebKitGTK。包只有 ~63 MB，因为 libwebkit2gtk 留在系统上。
+# Linux: 借系统的 WebKitGTK。整条 GTK 栈都在目标机上，`.deb` 只有 16 MB（本版实测）。
 sudo apt install python3-gi gir1.2-webkit2-4.1
 
 litearm-studio-daemon             # 开窗口；关掉窗口就是退出
@@ -55,7 +55,8 @@ litearm-studio-daemon --no-open   # 无界面运行；界面用浏览器连它�
 ```
 
   ⚠ Linux 上还有一个**自带内核**的备选：`pip install -e "daemon[ui-qt]"`（Qt WebEngine）。
-  它不需要 apt，但把一整个 Chromium 打进产物 —— 实测 `.deb` 从 **63 MB** 变成 **243 MB**。
+  它不需要 apt，但把一整个 Chromium 打进产物 —— 本版实测 `.deb` 是 **16 MB**，换成它就
+  回到 **~240 MB** 那个量级（见 `packaging/build.py` 的 `window_build_args()`）。
   只在拿不到系统 GTK 时才用它。
 
   Windows 的 WebView2 与 macOS 的 WKWebView 都是系统自带的，两边什么都不用装。
@@ -388,13 +389,14 @@ python packaging/build.py      # 产物：packaging/dist/litearm-studio-daemon[.
   submodule tag 上，全仓只有这一处版本来源 —— 即 `litegrip-python` v0.14.0，含
   `LiteGrip.write_zero()`（"写零位"，CAN `0xFE`）的首个 release；"按名字载入标定模板
   + 每通道标定文件"始于 `v0.4.0`。
-- **只收该收的图标主题**：`--additional-hooks-dir packaging/hooks` 用我们那条同名的 GTK
-  钩子**替掉** PyInstaller 自带的那条 —— 后者会把**构建机**上装着的整套图标主题原样收进
-  产物（ubuntu-22.04 上是 Humanity 54.7 MB、ubuntu-mono-*、HighContrast…）。界面是
-  webview 里的一片 HTML、自己画图标，GTK 侧只有窗口控件与文件对话框用到主题，而目标机
-  的桌面本来就提供它；我们只留 `Adwaita`（GTK 的兜底主题）与 `hicolor`（XDG 的应用图标
-  基准主题）。少了这个参数不会有任何报错，包只是白白大一截：这条是 `.deb` 安装体积里
-  最大的一项，实测 196.2 MB → 129.8 MB。
+- **桌面栈一份都不带**：`--additional-hooks-dir packaging/hooks` 里的那几条钩子**替掉**
+  PyInstaller 自带的 `hook-gi.*` —— 后者会把**构建机**上的 GTK/GLib/GIO 共享库、它们的
+  typelib、gdk-pixbuf 加载器、GIO 模块与 `/usr/share` 下的图标/schema/翻译全收进产物。
+  那些副本带着与系统同名的 soname，在进程里盖住目标机的：22.04 的 `libglib-2.0.so.0`
+  盖住 24.04 的，24.04 的系统 WebKitGTK 于是加载失败、窗口开不出来（issue #123）。
+  窗口后端本来就借目标机的 WebKitGTK（`libwebkit2gtk` 94 MB 从不进包），那套依赖会把
+  整条 GTK 栈一起装上 —— 所以包里那份是纯副本。少了这个参数不会有任何报错，包只是白白
+  多带一份（实测 `.deb` 45.4 MB → 16.0 MB，安装体积 124 MB → 40 MB），还会在 24.04 上坏掉。
 - **版本单一来源**：`LITEARM_STUDIO_VERSION`（CI 传 git tag）> `git describe --tags` >
   `0.0.0+dev`，写进构建时生成的 `_build_version.py`（不入库）。于是 `hello` 帧报的版本
   就是发出去的那个 tag，而不是 `pyproject.toml` 里的占位符。

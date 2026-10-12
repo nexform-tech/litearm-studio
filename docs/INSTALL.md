@@ -59,6 +59,11 @@ Use `apt install ./file.deb` rather than `dpkg -i`: apt resolves the dependencie
 refuses the install on a distribution older than Ubuntu 22.04 / Debian 12 instead of
 leaving you with a program that dies on a missing `GLIBC_2.35`.
 
+The package draws its window with the **system's** GTK 3 and WebKitGTK 4.1: apt installs
+`gir1.2-webkit2-4.1` (and, through it, GTK, GLib, the gdk-pixbuf loaders and the GIO
+modules) as a dependency. Bundling a second copy of that stack is what made the window fail
+to open on Ubuntu 24.04, so there is exactly one copy on the machine and it is the system's.
+
 ### 2.3 Start it
 
 `litearm-studio` is now on `PATH`, and **LiteArm Studio** appears in the application
@@ -150,8 +155,9 @@ opens a window. Use the printed address if that port was taken.
 | Requirement | Why it matters |
 | :--- | :--- |
 | glibc 2.35 or newer | Ubuntu 22.04+, Debian 12+. On Ubuntu 20.04 the program fails to start and the shell reports a missing `GLIBC_2.35` |
-| An executable `$TMPDIR` | Every start unpacks the whole bundle — around 130 MB for this build — into `$TMPDIR` (default `/tmp`) and runs from there. A `/tmp` mounted `noexec` breaks the start; point `TMPDIR` at a normal directory instead |
-| A browser | Any browser works. With Chrome, Chromium, Edge or Brave on `PATH` the window opens without an address bar; otherwise the default browser opens a tab |
+| GTK 3 and WebKitGTK 4.1 | The window is drawn by the system's WebKitGTK, so the executable does not carry one. On Ubuntu or Debian: `sudo apt install gir1.2-webkit2-4.1`. Without it the program prints `没有可用的 webview 后端` / `no usable webview backend` and exits instead of opening a window |
+| An executable `$TMPDIR` | Every start unpacks the whole bundle — around 40 MB for this build — into `$TMPDIR` (default `/tmp`) and runs from there. A `/tmp` mounted `noexec` breaks the start; point `TMPDIR` at a normal directory instead |
+| A browser (optional) | Only if you prefer one over the built-in window: run `litearm-studio --no-open` and open the address it prints |
 | Access to the serial port | Real arm only. See § 5 |
 
 Starting the program takes a few seconds, because of that unpack. That is expected.

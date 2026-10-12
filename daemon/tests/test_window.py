@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import subprocess
 import sys
 import types
@@ -519,3 +520,37 @@ def test_focus_raises_the_window_when_there_is_one() -> None:
     response = TestClient(app).post("/api/focus")
     assert response.json() == {"ok": True, "focused": True}
     assert handle.raised == 1
+
+
+# ---------------------------------------------- 包内那套桌面栈的指针 (issue #123)
+
+def test_a_frozen_directory_that_is_not_there_hands_the_stack_back(monkeypatch,
+                                                                   tmp_path) -> None:
+    """PyInstaller 点向包内桌面栈的变量, 在包内**没有**那个目录时要删掉。
+
+    冻结产物里那些目录由 `packaging/hooks/hook-gi.py` 保证不存在 (桌面栈改由目标机提供),
+    而 GLib 见到变量就不再找自己的编译期默认目录 —— 留着它, `gi.require_version
+    ('WebKit2', '4.1')` 一个 typelib 都找不到, 窗口开不出来。删掉它才回到系统那一份。
+    """
+    missing = tmp_path / "gio_modules"  # 造一个指向不存在目录的值
+    monkeypatch.setenv("GI_TYPELIB_PATH", str(missing))
+    monkeypatch.setenv("GIO_MODULE_DIR", str(missing))
+
+    window._use_the_system_stack()
+
+    assert "GI_TYPELIB_PATH" not in os.environ
+    assert "GIO_MODULE_DIR" not in os.environ
+
+
+def test_a_frozen_directory_that_exists_is_left_alone(monkeypatch, tmp_path) -> None:
+    """目录真的在 (别的形态把桌面栈收进了包) 就别动它 —— 那条路本来就该走包里的。
+
+    同一条规则也保护源码直接运行: 那时这两个变量根本没设, 什么都不该发生。
+    """
+    present = tmp_path / "gi_typelibs"
+    present.mkdir()
+    monkeypatch.setenv("GI_TYPELIB_PATH", str(present))
+
+    window._use_the_system_stack()
+
+    assert os.environ["GI_TYPELIB_PATH"] == str(present)

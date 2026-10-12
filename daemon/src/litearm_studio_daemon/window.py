@@ -135,7 +135,46 @@ def _set_desktop_identity() -> None:
             log.debug("未通过 %s 设置 Qt 应用名", module, exc_info=True)
 
 
+#: PyInstaller 在解释器起来之前指着**包内**桌面栈的那几个环境变量。
+#:
+#: * `GI_TYPELIB_PATH` —— 由 `pyi_rth_gi` 设成 `<包>/gi_typelibs`;
+#: * `GIO_MODULE_DIR` —— 由 `pyi_rth_gio` 设成 `<包>/gio_modules`。
+#:
+#: ⚠ 名字不能改: 它们是 GLib 自己读的变量, 不是我们的约定。
+FROZEN_STACK_ENV = ("GI_TYPELIB_PATH", "GIO_MODULE_DIR")
+
+
+def _use_the_system_stack() -> None:
+    """把上面那几个变量收回来 —— 那些东西改由目标机提供 (见 packaging/hooks/hook-gi.py)。
+
+    PyInstaller 会在解释器起来之前把它们设成**包内目录**, 而 GLib 见到这些变量就
+    **不再**看自己的编译期默认目录。冻结产物里现在没有那些目录, 留着变量等于
+    "一个 typelib 都找不到、一个 GIO 模块都加载不了":
+    `gi.require_version('WebKit2', '4.1')` 当场失败, 窗口开不出来 —— 也就是 issue #123
+    修好之前那个症状换了个成因。
+
+    删掉变量之后 GLib 回到编译期默认目录 (Debian/Ubuntu 上是
+    `/usr/lib/<triplet>/girepository-1.0`), 那里装着 `.deb` 的 `Depends` 带来的那一套;
+    GIO 同理回到 `/usr/lib/<triplet>/gio/modules`。
+
+    ⚠ 只在**那个目录根本不存在**时删: 源码直接运行时这两个变量本来就没设 (什么都不做);
+    而万一将来有哪个形态又把桌面栈收进包, 目录存在、变量就保持原样 —— 两种形态都安全。
+    """
+    for name in FROZEN_STACK_ENV:
+        pointed_at = os.environ.get(name)
+        if pointed_at and not os.path.exists(pointed_at):
+            del os.environ[name]
+            log.debug("%s 指向的包内目录不存在 (%s), 交回系统那一份", name, pointed_at)
+
+
 def _import_webview() -> Any:
+    """导入 pywebview —— 导入之前先把包内那套桌面栈的指针收回来 (见上)。
+
+    ⚠ 顺序要紧: pywebview 的 GTK 后端是在**模块导入时**就 `import gi` 并把 Gtk/WebKit2
+    的 typelib 认下来的 (`platforms/gtk.py` 顶层), 再晚一步 (比如放到窗口创建时)
+    就已经迟了。
+    """
+    _use_the_system_stack()
     try:
         import webview  # noqa: PLC0415 - GUI 依赖必须是软依赖, 见模块 docstring
     except Exception as exc:  # noqa: BLE001 - 缺包之外还可能缺后端
