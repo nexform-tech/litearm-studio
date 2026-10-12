@@ -177,7 +177,6 @@ progress, so the page can say why it is waiting.
 | `gripper.set_motion` | `speedMmS?`, `forceN?` | the settings now in effect |
 | `gripper.load_template` | `mount` (`normal` or `reverse`) | `{"mount":…,"source":"template"}` |
 | `gripper.list_calibrations` | — | `[{"path","source","valid","problems":[],"warnings":[],"closedRad","openRad","fileRadToMm","template","mount"}]` |
-| `gripper.list_dir` | `path?` (on the control machine) | `{"path":…,"parent":…\|null,"truncated":bool,"entries":[{"name","path","type":"dir"\|"file","readable","symlink"}[,"size","mtime", candidate fields…]]}` |
 | `gripper.import_calibration` | `path` (on the control machine) | `{"path":…,"source":"measured"}` |
 | `gripper.zero` | `travelMm` | `{"closedRad":…,"openRad":…,"radToMm":…,"source":…,"warnings":[]}` |
 | `gripper.set_allow_factory` | `allow` (bool) | `{"allowFactory":true}` |
@@ -201,18 +200,12 @@ Rules:
   opens. It is an addition to the table above, needed by §5.3 row 6.
 - `gripper.list_calibrations` needs no connection: it is a filesystem question,
   and the settings page asks it while deciding what to load.
-- `gripper.list_dir` needs no connection. It lists the **control
-  machine's** filesystem: sub-directories plus `*.json` files, directories
-  first, then names case-insensitively. Without `path` (or with an empty one) it
-  starts at the daemon user's home directory. Each `*.json` carries the same
-  fields as a `gripper.list_calibrations` entry (inspected and validated the same
-  way), plus `size`/`mtime`; the `path` it reports is exactly what
-  `gripper.import_calibration` accepts, with unchanged semantics. Listing is
-  capped (`truncated: true` past the limit), and a path that is not a readable
-  directory is refused with `GripperBrowseError`. The settings page no longer
-  drives this from the webview — the import picker is a native dialog raised by
-  the daemon (§6.3) — but the command is kept as a tested, connection-free
-  capability.
+- There is **no** directory-listing command. The import picker is a native dialog
+  raised by the daemon (§6.3), so nothing has to enumerate a directory over the
+  socket; the in-page browser and its `gripper.list_dir` command were retired
+  together and are gone. `gripper.import_calibration` still takes a path on the
+  control machine, and `gripper.list_calibrations` still reports the files the
+  daemon knows about.
 
 ### 4.3 Error kinds
 
@@ -226,7 +219,6 @@ Reuse `{"kind","msg"}`. New kinds map to new `common:errors.*` keys:
 | `GripperCalibrationError` | No usable calibration for the requested motion. |
 | `GripperEstoppedError` | Motion refused while the stop latch is engaged. |
 | `GripperBusyError` | A second long operation (probe) was requested. |
-| `GripperBrowseError` | `gripper.list_dir` pointed at a path that is not a readable directory. |
 
 ## 5. Daemon implementation
 
@@ -464,8 +456,9 @@ The i18n namespace is `locales/{en,zh}/gripper.json`, registered in
   into the import field. Opening it needs no connection (only the eventual
   import does). "No local program" (`no-window`, e.g. a browser against the dev
   server) and "operator cancelled" are distinct answers: the former surfaces as
-  a toast, the latter is silent. The retired in-page `GripperBrowserDialog`
-  (`gripper.list_dir`) path is no longer used by the UI.
+  a toast, the latter is silent. The in-page `GripperBrowserDialog` this replaced
+  — and the `gripper.list_dir` command that fed it — are gone from the code, not
+  merely unused: a reader looking for the listing path will not find one.
 
 ### 6.4 What to reuse from the retired panels
 

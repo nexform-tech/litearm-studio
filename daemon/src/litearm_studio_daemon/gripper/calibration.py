@@ -859,30 +859,6 @@ def _channel_checked(info: CalibrationInfo, channel: str,
     return info
 
 
-def candidate_dict(info: CalibrationInfo, channel: str) -> dict[str, Any]:
-    """One ``*.json`` row of ``gripper.list_dir`` (the file picker).
-
-    ``inUse`` is deliberately absent here: which candidate is *in effect* is the
-    session's answer (it knows what the backend applied), not the resolver's.
-    """
-    limits = info.limits
-    return {
-        "path": info.path,
-        "source": info.wire_source,
-        "provenance": info.provenance,
-        "template": info.template,
-        "channel": channel,
-        "valid": info.usable,
-        "problems": list(info.problems),
-        "warnings": list(info.warnings),
-        "closedRad": None if limits is None else limits.closed_rad,
-        "openRad": None if limits is None else limits.open_rad,
-        "fileRadToMm": file_scale(info.raw),
-        "mount": None if limits is None else (
-            "reverse" if limits.reversed_mount else "normal"),
-    }
-
-
 def sdk_source(info: CalibrationInfo) -> tuple[str, str] | None:
     """How to tell the SDK which calibration to apply: ``("template", name)``.
 
