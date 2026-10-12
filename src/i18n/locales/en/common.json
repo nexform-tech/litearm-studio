@@ -89,6 +89,7 @@
   },
   "errors": {
     "notConnected": "Robot arm not connected: connect the local daemon and the arm from the top bar first",
+    "notConnectedDfu": "A controller is sitting in the bootloader (DFU): it has no application to connect to, so Connect cannot succeed. Flash it from Settings → Firmware update, or power-cycle it",
     "unknownCommand": "The local daemon does not support this command (not in its whitelist)",
     "motionBusy": "Robot arm is busy with another motion, please wait for completion or stop current motion",
     "commandTimeout": "Command execution timed out: the local daemon did not return a response in time, please check robot status",

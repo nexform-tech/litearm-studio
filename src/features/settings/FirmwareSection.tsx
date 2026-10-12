@@ -45,6 +45,11 @@ function hex(n: number): string {
  * - 确认框里那条"机械臂要有支撑"是硬要求 —— 升级会先失能，有重力负载的臂会下垂，
  *   而这是**界面无法验证**的一件事，只能让操作员确认；
  * - 进度条走广播帧，不是这几次命令的应答（见 `useFirmwareUpgrade`）。
+ *
+ * ⚠ 这里有**两条**合法的起点，别把第二条当成异常：连着应用（常规升级），或者
+ * **板子已经停在 ROM bootloader 里**（没有会话 —— 那条路是"救援", 见 issue #152 与
+ * daemon `dfu.job` 的 `from_dfu`）。第二种正是以前无路可走的那种板子：它没有应用态
+ * 可连，而"先连接"的闸门会把唯一能救它的动作锁在外面。
  */
 export function FirmwareSection() {
   const { t } = useTranslation(['common', 'settings'])
@@ -54,7 +59,12 @@ export function FirmwareSection() {
 
   const running = vm.running
   const busy = vm.inspecting || vm.starting
-  const canStart = vm.connected && vm.engineReady && vm.summary !== null
+  /** 走的是"板子已经停在 bootloader 里"那条路：没有会话，只有一块等着被烧的板子。 */
+  const fromDfu = !vm.connected && vm.dfuPresent
+  // ⚠ 两个条件**或**在一起：连着应用（常规升级）**或**板子在 bootloader 里（救援）。
+  //   后者恰恰没有会话 —— 只按 `connected` 把关就是 issue #152 那个死循环：连不上就
+  //   不能烧，而只有烧了才能重新连上。
+  const canStart = (vm.connected || fromDfu) && vm.engineReady && vm.summary !== null
     && supported && !busy && !running
 
   const phaseLabel = vm.progress
@@ -70,7 +80,9 @@ export function FirmwareSection() {
         <div className="flex items-start justify-between gap-3">
           <div>
             <h2 className="text-sm font-bold text-foreground">{t('settings:firmware.title')}</h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">{t('settings:firmware.intro')}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {fromDfu ? t('settings:firmware.introDfu') : t('settings:firmware.intro')}
+            </p>
           </div>
           <Badge
             data-testid="firmware-engine"
@@ -91,7 +103,19 @@ export function FirmwareSection() {
           </p>
         ) : null}
 
-        {!vm.connected ? (
+        {fromDfu ? (
+          // ⚠ 这一句是 issue #152 的落点：**说清是哪种"没连上"**。板子在 bootloader 里
+          //   时顶栏连不上是**正确行为**（它没有应用态），不说清的话操作员就会去查线、
+          //   换口、重装驱动 —— 而它只想被烧一次。
+          <div data-testid="firmware-dfu">
+            <Notice>
+              <span className="flex items-start gap-2 text-foreground">
+                <Cpu className="mt-0.5 size-3.5 flex-none" />
+                <span>{t('settings:firmware.dfuPresent')}</span>
+              </span>
+            </Notice>
+          </div>
+        ) : !vm.connected ? (
           <div data-testid="firmware-offline">
             <Notice>{t('settings:firmware.notConnected')}</Notice>
           </div>
@@ -208,7 +232,13 @@ export function FirmwareSection() {
           <ul className="flex flex-col gap-1">
             <li className="flex items-start gap-1.5 text-[0.6875rem] leading-relaxed text-ink-muted">
               <AlertTriangle className="mt-[0.1875rem] size-3 flex-none" />
-              <span>{t('settings:firmware.safetyDisarm')}</span>
+              {/* ⚠ 这一条要跟着**路径**变：从 bootloader 起跑时不会再失能（应用早已停下、
+                  电机早已松开），照抄"会先失能"会让操作员以为还要再来一次。 */}
+              <span>
+                {fromDfu
+                  ? t('settings:firmware.safetyDisarmDfu')
+                  : t('settings:firmware.safetyDisarm')}
+              </span>
             </li>
             <li className="flex items-start gap-1.5 text-[0.6875rem] leading-relaxed text-ink-muted">
               <Ban className="mt-[0.1875rem] size-3 flex-none" />
@@ -245,7 +275,11 @@ export function FirmwareSection() {
             disabled={!canStart}
             onClick={() => void vm.start()}
           >
-            {vm.starting ? t('settings:firmware.starting') : t('settings:firmware.start')}
+            {vm.starting
+              ? t('settings:firmware.starting')
+              : fromDfu
+                ? t('settings:firmware.startDfu')
+                : t('settings:firmware.start')}
           </Button>
           {running ? (
             <Button

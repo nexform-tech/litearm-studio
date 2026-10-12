@@ -41,7 +41,19 @@ describe('firmware normalize', () => {
 
   it('reports a null job when nothing is running, and keeps engine readiness', () => {
     expect(normalizeFirmwareStatus({ engine: 'pyusb', engineReady: false }))
-      .toEqual({ job: null, engine: 'pyusb', engineReady: false, running: false })
+      .toEqual({ job: null, engine: 'pyusb', engineReady: false,
+                 dfuPresent: false, running: false })
+  })
+
+  it('reads whether a board is sitting in the bootloader', () => {
+    // ⚠ 与 `engineReady` 是两件事：前者是"板子在不在 DFU 里"，后者是"能不能烧"。
+    //   界面靠它把"没插线"与"板子等着被烧"分开说（issue #152）。
+    expect(normalizeFirmwareStatus({ engine: 'e', engineReady: true, dfuPresent: true })
+      .dfuPresent).toBe(true)
+    // 旧守护进程没有这个字段 ⇒ 按旧行为处理（只说"未连接"），不许当成"在 DFU"——
+    // 那会让界面在没有板子时也敢开烧。
+    expect(normalizeFirmwareStatus({ engine: 'e', engineReady: true }).dfuPresent)
+      .toBe(false)
   })
 
   it('nests the result inside a status snapshot', () => {

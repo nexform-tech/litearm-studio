@@ -45,7 +45,8 @@ from . import activation
 from . import dfu
 from . import obs
 from . import ports
-from .errors import (FirmwareUpgradeError, MotionBusyError,
+from .errors import (NOT_CONNECTED_DFU_PRESENT, NOT_CONNECTED_NO_SESSION,
+                     FirmwareUpgradeError, MotionBusyError,
                      NotConnectedCommandError, PortChangeWhileConnectedError,
                      UpgradeBusyError, UnknownCommandError)
 
@@ -696,6 +697,27 @@ class Session:
         except Exception:  # noqa: BLE001 - 收尾失败不该炸掉进程
             log.warning("关闭会话时抛出异常 (已忽略)", exc_info=True)
 
+    def _connect_error_text(self, exc: BaseException) -> str:
+        """连接失败的那句话 —— 检测到板子停在 DFU 里时, 必须把它说出来。
+
+        ⚠ 这是操作员最容易撞上的一次误诊: 板子烧到一半/中途复位, 停在 ROM
+        bootloader 里, 串口自然不枚举 —— 于是界面说"未发现设备", 人就去找线、换口、
+        重装驱动, 而它其实只需要再烧一次 (或断电重上电)。两种情况的下一步动作相反,
+        所以这句话要分开说。
+
+        ⚠ 只在**传输层**失败 (`TransportError`: 口找不到/打不开/握手时链路断) 上补这句
+        —— 那是"USB/端口"这一层的事。协议层或命令导致的失败与 DFU 无关, 补上只会
+        把两种故障混成一句。
+        """
+        text = f"{type(exc).__name__}: {exc}"
+        if not isinstance(exc, litearm.TransportError):
+            return text
+        if not self.dfu_status()["present"]:
+            return text
+        return (f"{text}\n⚠ 检测到一块停在 ROM bootloader (DFU) 的板子 "
+                f"(0483:DF11): 它不在应用态, 所以没有串口。请到「设置 → 固件升级」"
+                f"直接烧录, 或断电重新上电")
+
     def _connect_failed(self, exc: BaseException, arm: Optional[Arm],
                         gen: Optional[int] = None,
                         candidates: Optional[List[str]] = None) -> None:
@@ -710,6 +732,9 @@ class Session:
         """
         if arm is not None:
             self._close_arm(arm)
+        # ⚠ 探测 DFU 要碰 USB, **在锁外**做完再进去写状态 (与 `_execute_command` 里
+        #   "不拿着锁枚举"同一条纪律: 状态轮询线程也在等这把锁)。
+        error_text = self._connect_error_text(exc)
         with self._lock:
             if gen is not None and self._connect_gen != gen:
                 log.info("握手失败时已被断开/关闭, 不上报 error: %s: %s",
@@ -722,7 +747,7 @@ class Session:
                 return
             self._arm = None
             self._status = "error"
-            self._last_error = f"{type(exc).__name__}: {exc}"
+            self._last_error = error_text
             self._resolved_port = None
         log.warning("连接失败: %s", self._last_error)
         # ⚠ 这里是**所有**连接失败的收口 (握手、dial、收尾), 所以终局记录只在这里发一次。
@@ -1159,8 +1184,25 @@ class Session:
             #   降能量动作(急停/失能)例外, 与运动互斥同一条纪律。
             if self._upgrading and m not in ENERGY_DOWN_COMMANDS:
                 raise UpgradeBusyError(m)
-            if arm is None or self._status != "connected":
-                raise NotConnectedCommandError("会话未连接 —— 请先连接设备")
+            connected = arm is not None and self._status == "connected"
+            # ⚠ 连接判定这一段**搬到锁外**: 下一步要问"板子在不在 DFU", 而那要碰 USB
+            #   (枚举)。状态轮询线程与其它命令都在等这把锁, 不能拿着锁去枚举。
+            #   ⚠ 这一搬把下面的判定切成了两个临界区 —— 这不是新引入的窗口: 准入与
+            #   `executor.submit` 本来就不在同一个临界区里 (见下面 dispatch 那一段)。
+        if not connected:
+            present = self.dfu_status()["present"]
+            # ⚠ 唯一一条**没有应用态会话也能开**的硬件命令: 板子已经停在 ROM
+            #   bootloader 里时, "先连接再升级"是个死循环 —— 它根本没有应用态可连,
+            #   而烧录恰恰是唯一能把它弄回来的事 (见 `_begin_upgrade` 的 `from_dfu`)。
+            #   判据必须是"**真的没有会话对象**（`arm is None`）**且**检测到 DFU 设备":
+            #   链路半死（`arm` 还在、`_status` 已落 error）不算 —— 那种情况该走常规
+            #   路径去修链路, 而不是把一块无关的 DFU 板子烧了。
+            if m != "firmware_upgrade" or arm is not None or not present:
+                raise NotConnectedCommandError(
+                    self._no_session_message(present),
+                    reason=(NOT_CONNECTED_DFU_PRESENT if present
+                            else NOT_CONNECTED_NO_SESSION))
+        with self._lock:
             if m not in COMMANDS:
                 raise UnknownCommandError(m, sorted(COMMANDS))
             if m in MOTION_COMMANDS and self._motion_count > 0:
@@ -1491,6 +1533,51 @@ class Session:
                          "base": summary.base})
         return {**summary.to_dict(), "token": token}
 
+    def dfu_status(self) -> dict:
+        """DFU 侧的事实 —— `/api/health` 与 `firmware_status` 的**唯一**来源。
+
+        三个字段各说一件事, 不要混:
+
+        * `engineReady` / `engine` —— **能不能烧**: pyusb 装没装、libusb 后端在不在
+          (`engine.available()`)。与"有没有设备"无关;
+        * `present` —— **板子在不在 ROM bootloader 里**: `0483:DF11` 枚举到了。
+
+        为什么要单独一个 `present`: "连不上"有两种完全不同的原因（没插线 / 板子停在
+        bootloader），而两者的处置相反 —— 前者去查线, 后者去烧录或断电重上电。只看
+        `connected` 分不出来, 界面就只会说"请先连接设备", 而那句话对第二种是错的。
+
+        ⚠ `present` 只代表**枚举到**, 不代表打得开: 内核先建设备节点、udev 随后才
+        chmod, 这个窗口里 `find_device()` 已经成功而 `open()` 会吃 `EACCES`（真机演练
+        抓到过, 见 `_dfu_wait`）。所以它是提示, 不是发令枪 —— 真开烧时 `_dfu_wait`
+        仍要自己开一次并处理那个竞态。
+        ⚠ 引擎不可用时无从枚举, `present` 一律 `False`: 那属于"能不能烧"的问题
+        (`engineReady` 已经在说), 不该在这里冒充成"板子不在"。
+        """
+        out = {"present": False, "engine": self._dfu_engine.backend_status(),
+               "engineReady": bool(self._dfu_engine.available())}
+        if out["engineReady"]:
+            try:
+                out["present"] = self._dfu_engine.find_device() is not None
+            except Exception as e:                             # noqa: BLE001
+                # 枚举本身炸了（libusb 半死 / 后端被拔掉）—— 那是"能不能烧"的事, 由
+                # `engine` / `engineReady` 说。一次状态查询不该把异常抛给调用方。
+                log.warning("DFU 设备枚举失败: %s: %s", type(e).__name__, e)
+        return out
+
+    def _no_session_message(self, present: Optional[bool] = None) -> str:
+        """没有应用态会话时对操作员说的那句话 —— **两种情况, 两种处置**。
+
+        `errors.error_to_dict` 会把这句话原样写进 `res` 的 `err.msg` 与 `conn.error`,
+        所以它必须能独立读懂, 不能只说"未连接"。
+
+        `present` 已经算好时传进来, 免得在命令热路径上重复枚举 (见 `_execute_command`
+        里"不拿着锁枚举"的那条注释)。
+        """
+        if (self.dfu_status()["present"] if present is None else present):
+            return ("未发现应用态设备 —— 检测到一块停在 ROM bootloader (DFU) 的板子: "
+                    "它没有串口。请到「设置 → 固件升级」直接烧录, 或断电重新上电")
+        return "会话未连接 —— 请先连接设备"
+
     def _upgrade_status(self) -> dict:
         """当前升级快照 —— 界面重连之后靠它把进度条接回去。
 
@@ -1498,17 +1585,21 @@ class Session:
         与"上一次已经结束" —— 两者都带着最后一条进度的相位（结束那次是 `done`），
         于是刷新页面会看到"升级进行中 · 完成"这种自相矛盾的话。
         """
-        ready = bool(self._dfu_engine.available())
-        engine = self._dfu_engine.backend_status()
+        # ⚠ 变量名别叫 `dfu`: 那会盖住本模块 import 的 `dfu` 包, 而下面还要用它。
+        dfu_facts = self.dfu_status()
         with self._lock:
             job = self._upgrade_job
             progress = dict(self._upgrade_progress or {})
             result = self._upgrade_result
             running = self._upgrading
         if job is None:
-            return {"job": None, "engine": engine, "engineReady": ready,
+            return {"job": None, "engine": dfu_facts["engine"],
+                    "engineReady": dfu_facts["engineReady"],
+                    "dfuPresent": dfu_facts["present"],
                     "running": False}
-        return {"job": job, "engine": engine, "engineReady": ready,
+        return {"job": job, "engine": dfu_facts["engine"],
+                "engineReady": dfu_facts["engineReady"],
+                "dfuPresent": dfu_facts["present"],
                 "running": running,
                 "phase": progress.get("phase"),
                 "done": progress.get("done", 0),
@@ -1525,9 +1616,15 @@ class Session:
         self._upgrade_cancel.set()
         return {"cancelled": True}
 
-    def _begin_upgrade(self, arm: Arm, p: dict) -> dict:
-        """校验请求 → 起升级线程 → **立刻返回** (进度走广播帧)。"""
+    def _begin_upgrade(self, arm: Optional[Arm], p: dict) -> dict:
+        """校验请求 → 起升级线程 → **立刻返回** (进度走广播帧)。
+
+        `arm is None` 是**正常入口之一**, 不是错误: 板子停在 ROM bootloader 里的时候
+        没有应用态会话, 而那时唯一能救它的事就是烧录 (`from_dfu`, 见 `dfu.job`)。
+        这条请求能被放进来, 唯一依据是**检测到 `0483:DF11`** (见 `_execute_command`)。
+        """
         token = str(p.get("token") or "")
+        from_dfu = arm is None
         with self._lock:
             if self._upgrading:
                 raise UpgradeBusyError("firmware_upgrade")
@@ -1539,13 +1636,23 @@ class Session:
         if p.get("confirm") is not True:
             raise FirmwareUpgradeError(
                 "confirm_required",
-                "缺少确认标记 (p.confirm) —— 升级会先失能, 机械臂失去支撑会下垂")
-        ready = bool(self._dfu_engine.available())
-        if not ready:
+                # ⚠ 确认那句话要跟着**路径**变: 从应用态升级会先失能(臂会下垂), 而从
+                #   DFU 起跑时臂早就没有力矩了 —— 照抄前一句会让操作员以为还要失能一次。
+                ("缺少确认标记 (p.confirm) —— 板子在 bootloader 里, 机械臂此刻没有力矩; "
+                 "烧录完成后它会复位回应用态" if from_dfu else
+                 "缺少确认标记 (p.confirm) —— 升级会先失能, 机械臂失去支撑会下垂"))
+        dfu_facts = self.dfu_status()
+        if not dfu_facts["engineReady"]:
             # ⚠ 在**任何硬件动作之前**说清缺什么。等跳进 DFU 才发现没引擎, 板子
             #   已经停在 bootloader 里了, 那种失败最难收场。
-            raise FirmwareUpgradeError("engine_unavailable",
-                                       self._dfu_engine.backend_status())
+            raise FirmwareUpgradeError("engine_unavailable", dfu_facts["engine"])
+        if from_dfu and not dfu_facts["present"]:
+            # 探测到开跑之间板子可能被拔掉/已经复位回应用 —— 在这里说清, 好过等流水线
+            # 走到 `wait_dfu` 才发现。
+            raise FirmwareUpgradeError(
+                "dfu_device_absent",
+                "没有检测到处于 DFU (0483:DF11) 的板子 —— 它可能刚被拔掉, "
+                "或已经复位回应用态")
 
         blob, summary = entry
         job = f"fw-{secrets.token_hex(4)}"
@@ -1564,7 +1671,7 @@ class Session:
         self._broadcast({"t": "conn", **self.arm_info()})
 
         th = threading.Thread(target=self._run_upgrade,
-                              args=(blob, summary.base, summary, job),
+                              args=(blob, summary.base, summary, job, from_dfu),
                               name="litearm-dfu", daemon=True)
         with self._lock:
             self._upgrade_thread = th
@@ -1577,7 +1684,8 @@ class Session:
                          "version": summary.version or ""})
         return {"job": job, "phase": dfu.PHASE_VALIDATE}
 
-    def _run_upgrade(self, blob: bytes, base: int, summary: Any, job: str) -> None:
+    def _run_upgrade(self, blob: bytes, base: int, summary: Any, job: str,
+                     from_dfu: bool = False) -> None:
         """升级线程主体 —— **不许让异常逃出去** (逃出去就只剩一条 WS 断连)。"""
         def emit(progress: "dfu.Progress") -> None:
             doc = progress.to_dict(job)
@@ -1588,7 +1696,8 @@ class Session:
         try:
             result = dfu.run_upgrade(blob=blob, base=base, summary=summary,
                                      hooks=_DfuHooks(self), emit=emit,
-                                     is_cancelled=self._upgrade_cancel.is_set)
+                                     is_cancelled=self._upgrade_cancel.is_set,
+                                     from_dfu=from_dfu)
         except Exception as e:                                 # noqa: BLE001
             # `run_upgrade` 自己已经把一切折成 `Result`; 这一层是"连兜底都炸了"的
             # 最后一道 —— 宁可报一句笼统的失败, 也不能让线程带着栈死掉。

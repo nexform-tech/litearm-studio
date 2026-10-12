@@ -352,11 +352,27 @@ Get the firmware file (`.hex` or `.bin`) from your supplier first, and check tha
 
 The page then reports that the update finished and shows the device's current version. You can press **Cancel update** before the firmware starts being written; after that it cannot be cancelled.
 
+**If the board is already stuck in the bootloader:**
+
+After a failed flash or a power cut, the controller can end up in the ROM bootloader (DFU). It has
+no application then, so **no serial port appears** and the top bar cannot connect — which looks
+exactly like an unplugged cable or a dead board, although the two need opposite things. The page
+calls this state out separately:
+
+1. Open **Settings → Firmware update**;
+2. the page reports "a controller is sitting in the bootloader (DFU)" instead of "no controller connected";
+3. pick the firmware file, tick the safety confirmation and press **Flash and restart into the application** — **no connection is needed first**, and the board restarts into the application when flashing finishes.
+
+Flashing is optional: power-cycling the board makes it try to boot the application; if the
+application area is incomplete it stays in the bootloader, and then the steps above get it back.
+
 **If something goes wrong:**
 
 | Message | What to do |
 | :--- | :--- |
 | Controller not connected | Connect the arm, then upgrade |
+| A controller is sitting in the bootloader (DFU) | The board has no application, so the top bar not connecting is expected. Flash it with **Flash and restart into the application**; power-cycling is the other option |
+| A controller is sitting in the bootloader (top bar / toast) | Same as above: stop pressing **Connect** (it cannot succeed), flash the board from **Settings → Firmware update**, or power-cycle it |
 | Flashing engine unavailable | This machine has no usable USB flashing engine. pyusb and libusb are required, and Windows also needs ST's WinUSB driver; if they are all present, contact your supplier |
 | This firmware image cannot be used | Wrong file; get the correct one from your supplier |
 | The arm is not disabled; aborted | Press **Disable** on the control bar and retry. The arm will sag under its own weight, so hold it steady |

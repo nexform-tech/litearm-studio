@@ -13,6 +13,15 @@ import {
 } from '@/lib/arm'
 
 /**
+ * "板子在不在 bootloader 里"的复检周期（毫秒）。
+ *
+ * ⚠ 这是**外部事实**（谁插的线、板子什么时候复位进 DFU，守护进程无从知道），所以不能
+ * 只问一次；但也不必追着问 —— 从插上线到界面变样，10 秒是够用的量级，而每次问都会让
+ * 守护进程做一次 USB 枚举。只在"没连上"且"没有升级在跑"时轮询（见下面的 effect）。
+ */
+const DFU_RECHECK_MS = 10_000
+
+/**
  * 固件升级的界面状态机。
  *
  * 与激活（`useActivation`）最大的不同：**升级的结果不来自命令应答**。`firmware_upgrade`
@@ -39,6 +48,13 @@ export function useFirmwareUpgrade() {
   const [result, setResult] = useState<FirmwareResult | null>(null)
   const [job, setJob] = useState<string | null>(null)
   const [engine, setEngine] = useState<{ ready: boolean; label: string } | null>(null)
+  /**
+   * 有没有一块板子停在 ROM bootloader 里。
+   *
+   * ⚠ 它决定两件事：提示语该说"没插线"还是"板子在 bootloader 里"，以及**没有会话也
+   * 允许开烧**（那条近路的正当性见 daemon 的 `dfu.job`）。
+   */
+  const [dfuPresent, setDfuPresent] = useState(false)
 
   // 上一次上传的 `File` —— "重新选择"只在用户换了文件时才动，避免同一份镜像
   // 重复上传（一次几 MB 的 base64 不便宜）。
@@ -49,6 +65,7 @@ export function useFirmwareUpgrade() {
     try {
       const st = await armClient.firmwareStatus()
       setEngine({ ready: st.engineReady, label: st.engine })
+      setDfuPresent(st.dfuPresent === true)
       // ⚠ **只**恢复"还在跑"的那一次。已经结束的 job 一律不恢复 —— 上一次升级的结果
       //   不该在页面打开时冒出来：它不是这次发生的事，露出来只会让人以为刚跑完。
       //   （守护进程会把上一个 job 连同它的 `done` 相位一直留着，所以这里必须自己筛。）
@@ -70,9 +87,30 @@ export function useFirmwareUpgrade() {
     }
   }, [])
 
+  /**
+   * 升级进行中 —— 界面据此把所有入口锁死。
+   *
+   * ⚠ 定义在这个位置（而不是 return 里）：下面的复检 effect 要拿它当依赖。
+   */
+  const running = progress !== null && !result
+
+  /**
+   * 问一次"板子在不在 DFU 里"，以及**什么时候该再问**。
+   *
+   * ⚠ 这是**外部事实**（谁插的线、板子什么时候复位进 DFU，守护进程无从知道），所以不能
+   * 只问一次 —— 否则页面开着时插上的板子永远看不到，操作员对着的还是那句"未连接控制器"，
+   * 而那正是这个功能要消灭的误诊。挂着的那两个时机也是这条的一部分：连接一断就立刻问
+   * （"刚点了连接却失败"正是最需要这句话的时刻，等一个轮询周期才说太迟）。
+   *
+   * ⚠ 已经连着时不留定时器（这个状态没有用处），升级在跑时连这次立即调用也跳过
+   * （界面已被进度条接管，而且那会拿快照去扰动正在走的进度）。
+   */
   useEffect(() => {
-    void refreshEngine()
-  }, [refreshEngine])
+    if (!running) void refreshEngine()
+    if (connected || running) return
+    const id = window.setInterval(() => void refreshEngine(), DFU_RECHECK_MS)
+    return () => window.clearInterval(id)
+  }, [connected, running, refreshEngine])
 
   // 订阅必须**先于** `start()` 建立 —— 见上面的第 1 条。
   useEffect(() => {
@@ -172,6 +210,7 @@ export function useFirmwareUpgrade() {
     armEnabled: armState?.enabled ?? null,
     engine,
     engineReady: engine?.ready ?? false,
+    dfuPresent,
     summary,
     error,
     inspecting,
@@ -180,7 +219,7 @@ export function useFirmwareUpgrade() {
     result,
     job,
     /** 升级进行中 —— 界面据此把所有入口锁死。 */
-    running: progress !== null && !result,
+    running,
     pick,
     rePick,
     start,

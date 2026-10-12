@@ -59,6 +59,17 @@ export type FirmwareStatus = {
   /** 引擎能不能用。**开跑之前**就要能看到，否则跳进 DFU 才发现没引擎最难收场。 */
   engineReady: boolean
   /**
+   * 有没有一块板子**停在 ROM bootloader (DFU) 里**。
+   *
+   * ⚠ 与 `connected` 是两件事：板子在 DFU 里时必然没有串口（`connected === false`），
+   * 而"没插线"与"板子等着被烧"的处置相反 —— 前者查线，后者直接烧录或断电重上电。
+   * 界面靠它把这两种"未连接"分开说，并允许在没有会话时开烧（issue #152）。
+   *
+   * 可选：守护进程比界面旧时没有这个字段，缺省按 `false` 处理（那就是旧行为：
+   * 只能说"未连接"）。
+   */
+  dfuPresent?: boolean
+  /**
    * 这次升级**还在跑**吗。
    *
    * ⚠ 必需字段：没有它，界面分不清"这次还在跑"与"上一次已经结束" —— 两者都带着
@@ -114,12 +125,13 @@ export function normalizeFirmwareStatus(raw: unknown): FirmwareStatus {
   const job = nullableStr(r.job)
   if (!job) {
     return { job: null, engine: str(r.engine), engineReady: r.engineReady === true,
-             running: false }
+             dfuPresent: r.dfuPresent === true, running: false }
   }
   return {
     job,
     engine: str(r.engine),
     engineReady: r.engineReady === true,
+    dfuPresent: r.dfuPresent === true,
     running: r.running === true,
     phase: nullableStr(r.phase),
     done: num(r.done),

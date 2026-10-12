@@ -18,6 +18,8 @@ import time
 
 import pytest
 
+import litearm
+
 from litearm_studio_daemon import dfu
 from litearm_studio_daemon.dfu import fake as fake_engine
 from litearm_studio_daemon.errors import (
@@ -220,12 +222,14 @@ def test_upgrading_without_an_engine_is_refused_before_entering_dfu() -> None:
         s.close()
 
 
-def test_upgrading_needs_a_connected_session() -> None:
-    s = Session(fake=True, dfu_engine=fake_engine.FakeEngine())
+def test_upgrading_needs_a_session_or_a_board_in_dfu() -> None:
+    """没有会话**也**没有 DFU 设备 ⇒ 拒绝 —— 那是普通的"请先连接设备"。"""
+    s = Session(fake=True, dfu_engine=fake_engine.FakeEngine(present=False))
     try:
         with pytest.raises(Exception) as ei:
             s.execute("firmware_upgrade", {"token": "x", "confirm": True})
         assert type(ei.value).__name__ == "NotConnectedCommandError"
+        assert ei.value.reason == "no_session"
     finally:
         s.close()
 
@@ -476,4 +480,158 @@ def test_a_non_permission_open_failure_is_not_reported_as_absent() -> None:
             s._dfu_wait(lambda: False)
     finally:
         s._upgrading = False
+        s.close()
+
+
+# ================================================================== 板子已在 DFU 里
+# 这一组是 issue #152 的那条路：板子停在 ROM bootloader 里（串口不枚举 ⇒ 永远
+# "连不上"）, 而升级又要求先连上 —— 死循环。两件事各自钉住:
+#   **看得出来**（`dfuStatus.present` 与给操作员的那句话）,
+#   **救得回来**（从 `flash` 起跑、跳过 disarm/enter_dfu）。
+
+def test_status_says_a_board_is_sitting_in_the_bootloader() -> None:
+    """`present` 与 `engineReady` 是两件事: 前者是"板子在不在", 后者是"能不能烧"。"""
+    s = Session(fake=True, dfu_engine=fake_engine.FakeEngine(present=True))
+    try:
+        st = s.execute("firmware_status", {})
+        assert st["dfuPresent"] is True and st["engineReady"] is True
+    finally:
+        s.close()
+
+    s = Session(fake=True, dfu_engine=fake_engine.FakeEngine(present=False))
+    try:
+        assert s.execute("firmware_status", {})["dfuPresent"] is False
+    finally:
+        s.close()
+
+    # 引擎都不可用时无从枚举 —— `present` 是 False（"不知道"在这一点上等于"不在"),
+    # 但说"缺什么"的仍是 `engineReady` / `engine`，不能让操作员以为板子不在。
+    s = Session(fake=True, dfu_engine=_NoEngine())
+    try:
+        st = s.execute("firmware_status", {})
+        assert st["dfuPresent"] is False and st["engineReady"] is False
+        assert "pyusb" in st["engine"]
+    finally:
+        s.close()
+
+
+def test_a_normal_command_says_the_board_is_in_the_bootloader() -> None:
+    """⚠ "没插线"与"板子停在 bootloader"的下一步动作相反, 不许说成同一句话。
+
+    判据是短码（界面按它选文案），而 `msg` 本身也要能独立读懂（它同时进 `conn.error`）。
+    """
+    s = Session(fake=True, dfu_engine=fake_engine.FakeEngine(present=True))
+    try:
+        with pytest.raises(Exception) as ei:
+            s.execute("estop", {})
+        assert type(ei.value).__name__ == "NotConnectedCommandError"
+        assert ei.value.reason == "dfu_present", ei.value.reason
+        assert "bootloader" in str(ei.value) and "烧录" in str(ei.value)
+    finally:
+        s.close()
+
+
+def test_a_connect_failure_names_the_board_that_is_sitting_in_dfu() -> None:
+    """连不上时那句话也要分开说: 否则操作员会去换线、重装驱动, 而板子只想被烧一次。"""
+    engine = fake_engine.FakeEngine(present=True)
+    s = Session(fake=True, dfu_engine=engine)
+    try:
+        err = litearm.TransportError("未发现 STM32 CDC 设备 (VID:PID 1d50:606f)")
+        assert "bootloader" in s._connect_error_text(err)
+        # 协议层/命令导致的失败与 DFU 无关 —— 不许把这句补上去, 那会把两种故障混成一句。
+        assert "bootloader" not in s._connect_error_text(ValueError("别的错"))
+    finally:
+        s.close()
+
+    engine = fake_engine.FakeEngine(present=False)
+    s = Session(fake=True, dfu_engine=engine)
+    try:
+        err = litearm.TransportError("未发现 STM32 CDC 设备 (VID:PID 1d50:606f)")
+        assert "bootloader" not in s._connect_error_text(err)
+    finally:
+        s.close()
+
+
+def test_a_board_already_in_dfu_is_flashed_without_entering_it_again() -> None:
+    """从 DFU 起跑: **没有会话**, 相位从 `wait_dfu` 起 —— 不 disarm、不 enter_dfu。
+
+    ⚠ 跳过那两步的正当性只有一条: 应用没在跑 ⇒ 电机早已松力, 没有"要先失能"的东西。
+    """
+    engine = fake_engine.FakeEngine(steps=2)
+    s = Session(fake=True, poll_period=0.02, state_push_interval=0.05, dfu_engine=engine)
+    try:
+        assert s.connected is False
+        frames = []
+        s.add_listener(frames.append)
+        token = _inspect(s)["token"]
+
+        started = s.execute("firmware_upgrade", {"token": token, "confirm": True})
+        job = started["job"]
+        assert _wait(lambda: any(f.get("t") == "firmware_result" for f in frames))
+
+        phases = [f["phase"] for f in frames if f.get("t") == "firmware_progress"]
+        assert phases[0] == dfu.PHASE_VALIDATE
+        assert dfu.PHASE_DISARM not in phases, phases
+        assert dfu.PHASE_ENTER_DFU not in phases, phases
+        assert phases[1] == dfu.PHASE_WAIT_DFU
+        assert phases[-3:] == [dfu.PHASE_DETACH, dfu.PHASE_RECONNECT, dfu.PHASE_DONE]
+
+        result = [f for f in frames if f.get("t") == "firmware_result"][-1]
+        assert result["ok"] is True, result
+        assert result["job"] == job
+        assert engine.last.written is not None
+        assert engine.last.left is True
+        # 烧完接回来了 —— 这条路的**目的**就是让板子重新有应用态。
+        assert s.connected is True
+        assert s._upgrading is False
+    finally:
+        s.close()
+
+
+def test_a_failure_on_the_dfu_path_still_pulls_the_device_out() -> None:
+    """板子本来就在 bootloader 里 —— 失败时更不能把它留在那儿 (见 `job` 的不变量)。"""
+    engine = fake_engine.FakeEngine(steps=2, fail="flash")
+    s = Session(fake=True, poll_period=0.02, state_push_interval=0.05, dfu_engine=engine)
+    try:
+        frames = []
+        s.add_listener(frames.append)
+        token = _inspect(s)["token"]
+        s.execute("firmware_upgrade", {"token": token, "confirm": True})
+        assert _wait(lambda: any(f.get("t") == "firmware_result" for f in frames))
+        result = [f for f in frames if f.get("t") == "firmware_result"][-1]
+        assert result["ok"] is False
+        assert result["reason"] == "flash_failed"
+        assert engine.last.left is True, "失败的板子不许留在 bootloader 里"
+    finally:
+        s.close()
+
+
+def test_the_dfu_path_refuses_when_the_board_vanished_before_the_start() -> None:
+    """探测到开跑之间板子被拔了/已经复位回应用 —— 说清, 而不是白等 10s 枚举超时。"""
+
+    class _Vanishing:
+        """第一次问"在不在"时报在, 之后报不在 —— 复现那道极窄的窗口。"""
+
+        def __init__(self) -> None:
+            self.answers = 0
+
+        def available(self) -> bool:
+            return True
+
+        def backend_status(self) -> str:
+            return "假件 (窗口测试)"
+
+        def find_device(self):
+            self.answers += 1
+            return object() if self.answers == 1 else None
+
+    engine = _Vanishing()
+    s = Session(fake=True, dfu_engine=engine)
+    try:
+        token = _inspect(s)["token"]
+        with pytest.raises(FirmwareUpgradeError) as ei:
+            s.execute("firmware_upgrade", {"token": token, "confirm": True})
+        assert ei.value.reason == "dfu_device_absent"
+        assert s._upgrading is False
+    finally:
         s.close()

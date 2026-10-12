@@ -1132,6 +1132,13 @@ def create_app(session: Session, *, gripper: Optional[Any] = None,
 
 
 def _health(daemon: Daemon) -> dict:
+    """`/api/health` —— 版本、连接状态, 以及**设备侧的两种身份**。
+
+    ⚠ `dfu` 这一段回答的是"有没有一块板子停在 ROM bootloader 里" —— 它与 `connected`
+      是**两个独立的问题**: 板子在 DFU 里时 `connected` 必然是 `False`, 而只看
+      `connected` 分不出"没插线"与"板子等着被烧"(处置相反: 前者查线, 后者烧录或
+      断电重上电)。见 `Session.dfu_status`。
+    """
     info = daemon.session.arm_info()
     out = {
         "ok": True,
@@ -1146,6 +1153,8 @@ def _health(daemon: Daemon) -> dict:
         "ui": (str(daemon.ui_dir) if daemon.ui_dir is not None else None),
         # 连接细节 (与 `conn` 帧同源, 前端不必为"看端口"单开一条 WS)
         "conn": info,
+        # DFU 侧的事实 (与 `firmware_status` 同源, 见 `Session.dfu_status`)。
+        "dfu": daemon.session.dfu_status(),
     }
     # 夹爪与臂并列上报, 判据是"本进程有没有夹爪会话" —— 没有就如实说没有,
     # 而不是编一个 disconnected 出来 (那会让前端以为接上就能用)。

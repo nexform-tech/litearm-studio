@@ -172,4 +172,43 @@ describe('FirmwareSection', () => {
     fireEvent.click(screen.getByTestId('firmware-safety-arm'))
     expect((screen.getByTestId('firmware-start') as HTMLButtonElement).disabled).toBe(true)
   })
+
+  it('calls out a board sitting in the bootloader instead of "not connected"', () => {
+    // ⚠ issue #152：板子停在 ROM bootloader 里时没有串口，以前这里与"没插线"长得
+    //   一模一样 —— 而两者该做的事相反。它要能被认出来，并且**要有入口救它**。
+    mocks.vm = baseVm({ connected: false, dfuPresent: true, summary: SUMMARY })
+    render(<FirmwareSection />)
+
+    expect(screen.queryByTestId('firmware-offline')).toBeNull()
+    const notice = screen.getByTestId('firmware-dfu')
+    expect(notice.textContent).toMatch(/bootloader/i)
+    // 这里说的必须是"它不是没插线"，而不是"去连上再说"。
+    expect(notice.textContent).not.toMatch(/连上之后才能升级|connect before updating/i)
+  })
+
+  it('lets the update start with no session when the board is in the bootloader', () => {
+    // ⚠ 这一条就是"死循环"的破法：没有会话（板子没有应用态可连），但烧录仍然可开 ——
+    //   因为从 DFU 起跑正是唯一能把板子弄回应用态的事。
+    mocks.vm = baseVm({ connected: false, dfuPresent: true, summary: SUMMARY })
+    render(<FirmwareSection />)
+
+    const start = screen.getByTestId('firmware-start') as HTMLButtonElement
+    expect(start.disabled).toBe(true)          // 安全确认还没勾
+    fireEvent.click(screen.getByTestId('firmware-safety-arm'))
+    expect(start.disabled).toBe(false)
+
+    // 安全条款也要跟着路径变：这条路不会再去失能一次（应用早就停了）。
+    expect(screen.getByTestId('firmware-safety').textContent)
+      .toMatch(/早已停下|already stopped/)
+
+    fireEvent.click(start)
+    expect(mocks.start).toHaveBeenCalledTimes(1)
+  })
+
+  it('still refuses to start when nothing is connected and no board is in DFU', () => {
+    mocks.vm = baseVm({ connected: false, dfuPresent: false, summary: SUMMARY })
+    render(<FirmwareSection />)
+    fireEvent.click(screen.getByTestId('firmware-safety-arm'))
+    expect((screen.getByTestId('firmware-start') as HTMLButtonElement).disabled).toBe(true)
+  })
 })

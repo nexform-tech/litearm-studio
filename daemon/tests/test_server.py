@@ -13,6 +13,7 @@ from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 
 from litearm_studio_daemon.__main__ import build_parser, main
+from litearm_studio_daemon.dfu import fake as fake_engine
 from litearm_studio_daemon.server import (
     HTTP_PORT_TRIES,
     _Client,
@@ -407,6 +408,37 @@ def test_health_counts_connected_clients() -> None:
             with client.websocket_connect("/ws"):
                 assert client.get("/api/health").json()["clients"] == 1
             assert client.get("/api/health").json()["clients"] == 0
+    finally:
+        session.close()
+
+
+def test_health_reports_whether_a_board_is_sitting_in_the_bootloader() -> None:
+    """`dfu` 段回答的是"有没有一块板子停在 ROM bootloader 里"。
+
+    ⚠ 它与 `connected` 是**两个独立的问题**: 板子在 DFU 里时 `connected` 必然为
+      `False`, 而只报 `connected` 会让"没插线"与"板子等着被烧"长得一样 —— 这两件事的
+      处置相反 (查线 vs 烧录/断电重上电)。见 `Session.dfu_status`。
+    """
+    session = Session(fake=True, reconnect=False, poll_period=0.05,
+                      state_push_interval=0.05,
+                      dfu_engine=fake_engine.FakeEngine(present=True))
+    app = create_app(session, version=VERSION, repo_dist=Path("/nonexistent-ui"))
+    try:
+        with TestClient(app) as client:
+            dfu = client.get("/api/health").json()["dfu"]
+            assert dfu["present"] is True
+            assert dfu["engineReady"] is True
+            assert dfu["engine"]                       # 后端诊断串非空
+    finally:
+        session.close()
+
+    session = Session(fake=True, reconnect=False, poll_period=0.05,
+                      state_push_interval=0.05,
+                      dfu_engine=fake_engine.FakeEngine(present=False))
+    app = create_app(session, version=VERSION, repo_dist=Path("/nonexistent-ui"))
+    try:
+        with TestClient(app) as client:
+            assert client.get("/api/health").json()["dfu"]["present"] is False
     finally:
         session.close()
 
@@ -960,7 +992,6 @@ def test_ws_receives_firmware_progress_and_result_frames() -> None:
     """
     import base64
 
-    from litearm_studio_daemon.dfu import fake as fake_engine
     from litearm_studio_daemon.session import Session as _Session
 
     def rec(off: int, typ: int, data: bytes) -> str:
