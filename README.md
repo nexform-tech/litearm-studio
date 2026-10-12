@@ -71,19 +71,14 @@ Trajectory teaching/playback, dexterous-hand panels and per-joint impedance or h
   submodules under `sdk/`, pinned by tag. `make sdk` fetches and installs them; there is
   nothing to clone by hand.
 
-- **`litegrip` (the LiteGrip gripper SDK) — Linux only, not on PyPI either**, so clone and install
-  that too:
-
-```bash
-git clone --branch v0.4.0 https://github.com/nexform-tech/litegrip-python.git
-pip install ./litegrip-python
-```
-
-  Running does not strictly require it: on Linux the daemon starts without it and simply offers no
-  gripper. **The tests do** — without it the `python -m pytest daemon/tests -q` from the Common
-  Commands table at the end of this file stops during collection
-  (`ModuleNotFoundError: No module named 'litegrip'`) and not one test runs. Details in the
-  [daemon README](daemon/README.md).
+- **`litegrip` (the LiteGrip gripper SDK) — Linux only**, is the other one of those two
+  submodules (`sdk/litegrip-python`), so `make sdk` above is the whole installation — including
+  the pinned revision (`git submodule status` prints it), which is the one the daemon and the
+  settings page were written against. Running does not strictly require it: on Linux the daemon
+  starts without it and simply offers no gripper. **The tests do** — without it the
+  `python -m pytest daemon/tests -q` from the Common Commands table at the end of this file stops
+  during collection (`ModuleNotFoundError: No module named 'litegrip'`) and not one test runs.
+  Details in the [daemon README](daemon/README.md).
 
 **Do not confuse this with the older product of a similar name**: if `dpkg -l` lists
 `lite-arm-studio` (described as a Tauri desktop app), that is the old product and neither its UI
