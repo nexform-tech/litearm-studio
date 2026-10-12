@@ -166,12 +166,18 @@ class Stop(Command):
 class Release(Command):
     """Zero torque, still enabled and back-drivable.  The jaws can be pushed.
 
-    Named 零重力 on the button and in the log, like :class:`SetZeroGravity`
-    below it — the two are the same physical state and the operator has one word
-    for it.  They stay two commands because they are two different acts: this
-    one is a resting state the button puts the axis in, and
-    :class:`SetZeroGravity` is a step of the calibration wizard that has to be
-    left again to finish.
+    The same physical state as :class:`SetZeroGravity` below it — both are 零重力
+    to the operator and both report ``state:"released"`` — and they stay two
+    commands because they are two different acts.
+
+    :class:`SetZeroGravity` is the one entered **deliberately**: the panel's
+    toggle (issue #119) and the start of a manual two-point calibration both go
+    through it, and it refuses to enter while the drive is disabled.  This one is
+    what ``gripper.release`` sends, and it is what the worker falls back to
+    whenever it wants zero torque but has **no measured position to hold**
+    instead: after an enable, at the end of a calibration, when a timed grasp
+    lets go.  No client sends ``gripper.release`` (issue #138); the state stays
+    live for those automatic paths.
     """
 
     source: str = "release"

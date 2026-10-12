@@ -25,7 +25,7 @@ from litearm_studio_daemon.gripper import constants
 from litearm_studio_daemon.gripper.config import ChannelConfig, ChannelStore
 from litearm_studio_daemon.gripper.session import GripperSession
 from litearm_studio_daemon.gripper.core import commands as cmd
-from litearm_studio_daemon.gripper.core.motion import MotionParams
+from litearm_studio_daemon.gripper.core.motion import MotionParams, MotionState
 from litearm_studio_daemon.gripper.core.worker import WorkerLoop
 
 
@@ -331,6 +331,44 @@ def test_set_zero_gravity_is_a_switch_enter_and_exit(tmp_path: Path) -> None:
             session.execute("gripper.set_zero_gravity", {})
         with pytest.raises(ValueError):
             session.execute("gripper.set_zero_gravity", {"on": "true"})
+    finally:
+        session.close()
+
+
+def test_release_and_the_toggle_are_one_state_on_the_wire(tmp_path: Path) -> None:
+    """#138: 两条零重力命令物理同态, 线上都报 `released` —— 但落点不是同一个状态。
+
+    面板按的是**开关** (`gripper.set_zero_gravity`); `gripper.release` 没有 UI 调用方,
+    留着给按名字要这个状态的脚本/其它客户端。这条用例把三件事钉在一起: 两条命令进的是
+    两个内部状态 (`ZERO_G` / `RELEASE`)、线上都报同一个值、两条路都保持使能。下次再有人
+    想删其中一条, 至少能从这条用例看出删掉的是什么、另一个状态还有谁在用。
+    """
+    session = make_session(tmp_path)
+    try:
+        connect(session)
+        session.execute("gripper.enable", {})
+        assert wait_for(lambda: session.state() and session.state()["enabled"])
+
+        # 开关: 面板走的那条, 落在 ZERO_G。
+        assert session.execute("gripper.set_zero_gravity", {"on": True}) == {"ok": True}
+        assert wait_for(
+            lambda: session.state() and session.state()["state"] == "released"), \
+            session.state()
+        assert session.loop.motion.state is MotionState.ZERO_G
+
+        # 退出开关 → 持位, 换另一条命令进同一个线上状态, 落在 RELEASE。
+        assert session.execute("gripper.set_zero_gravity", {"on": False}) == {"ok": True}
+        assert wait_for(
+            lambda: session.state() and session.state()["state"] == "holding"), \
+            session.state()
+
+        assert session.execute("gripper.release", {}) is None
+        assert wait_for(
+            lambda: session.state() and session.state()["state"] == "released"), \
+            session.state()
+        assert session.loop.motion.state is MotionState.RELEASE
+        # 零重力不是失能: 两条路都仍使能、都能被推。
+        assert session.state()["enabled"] is True
     finally:
         session.close()
 
