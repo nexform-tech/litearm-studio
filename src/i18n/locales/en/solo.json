@@ -73,7 +73,11 @@
     "send": "Send",
     "sendTitle": "Send motion command",
     "releaseOnly": "Send on Release",
-    "releaseOnlyTitle": "Send the command immediately when the slider is released, without pressing Send"
+    "releaseOnlyTitle": "Send the command immediately when the slider is released, without pressing Send",
+    "dotOk": "Normal",
+    "dotMoving": "Moving",
+    "dotFault": "Fault",
+    "dotOff": "Not enabled"
   },
   "preview": {
     "title": "3D Live Preview",

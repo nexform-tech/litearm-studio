@@ -45,6 +45,9 @@ vi.mock('@/lib/arm', () => ({
 
 const { useSoloState } = await import('./useSoloState')
 
+/** 关节名跟着界面语言走（见 `solo:pose.jointLabel`），断言用词条而不是写死中文。 */
+const jointLabel = (n: number) => i18n.t('solo:pose.jointLabel', { n })
+
 /** 已连接、已使能且静止（`ready`）的机械臂 —— `realEnabled` 为真的最小状态。 */
 const armWith = (count: number, q?: number[]) => ({
   q: q ?? Array.from({ length: count }, () => 0),
@@ -97,7 +100,7 @@ describe('useSoloState axis count', () => {
   it('renders exactly the reported number of joint sliders and readouts', async () => {
     const { result } = await renderSolo()
 
-    expect(result.current.joints.map((j) => j.name)).toEqual(['关节 1'])
+    expect(result.current.joints.map((j) => j.name)).toEqual([jointLabel(1)])
     expect(result.current.poseJoint.map((p) => p.k)).toEqual(['J1'])
   })
 
@@ -107,9 +110,9 @@ describe('useSoloState axis count', () => {
 
     const { result } = await renderSolo()
 
-    expect(result.current.joints.map((j) => j.name)).toEqual([
-      '关节 1', '关节 2', '关节 3', '关节 4', '关节 5', '关节 6', '关节 7',
-    ])
+    expect(result.current.joints.map((j) => j.name)).toEqual(
+      [1, 2, 3, 4, 5, 6, 7].map(jointLabel),
+    )
   })
 
   it('follows the broadcast angle into a single slider', async () => {

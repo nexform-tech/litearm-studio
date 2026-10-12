@@ -375,15 +375,19 @@ export function useSoloState() {
       : !s.enabled
         ? 'off'
         : 'ok'
+    // 关节名与状态提示都走 i18n —— 这里曾经把 `关节 ${i + 1}` 写死，英文界面下
+    // 「关节空间」卡片仍显示中文，而同一张卡上的位姿栏（`solo:pose.jointLabel`）
+    // 早已本地化，两边对不上。
+    const label = t('solo:pose.jointLabel', { n: i + 1 })
     const DOT = {
-      ok: { c: 'var(--ok)', r: 'rgba(18,161,80,0)', t: `关节 ${i + 1} · 正常` },
-      move: { c: '#3b82f6', r: 'rgba(59,130,246,.22)', t: `关节 ${i + 1} · 运动中` },
-      warn: { c: '#f5a524', r: 'rgba(245,165,36,.25)', t: `关节 ${i + 1} · 故障` },
-      off: { c: 'var(--line-strong)', r: 'rgba(0,0,0,0)', t: `关节 ${i + 1} · 未使能` },
+      ok: { c: 'var(--ok)', r: 'rgba(18,161,80,0)', t: `${label} · ${t('solo:jointSpace.dotOk')}` },
+      move: { c: '#3b82f6', r: 'rgba(59,130,246,.22)', t: `${label} · ${t('solo:jointSpace.dotMoving')}` },
+      warn: { c: '#f5a524', r: 'rgba(245,165,36,.25)', t: `${label} · ${t('solo:jointSpace.dotFault')}` },
+      off: { c: 'var(--line-strong)', r: 'rgba(0,0,0,0)', t: `${label} · ${t('solo:jointSpace.dotOff')}` },
     }[st]
     return {
       key: i,
-      name: '关节 ' + (i + 1),
+      name: label,
       val: toRad(pct, i).toFixed(3),
       pct,
       dot: DOT.c,
