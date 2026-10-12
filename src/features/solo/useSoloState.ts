@@ -119,7 +119,7 @@ export function useSoloState() {
   const cartUnsupported = s.real && connected && conn?.cart === false
 
   // 滑条 0–100 的弧度映射：优先用 daemon get_joint_params 的实际软限位，
-  // 未连接/拿不到时回退到前端硬编码默认（GENERIC-V4）。
+  // 未连接/拿不到时回退到固件出厂默认那张表（见 `soloUtils.JOINT_LIMITS`）。
   const [jointLimits, setJointLimits] = useState<JointLimits[] | null>(null)
 
   useEffect(() => {

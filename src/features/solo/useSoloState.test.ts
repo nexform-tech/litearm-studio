@@ -78,7 +78,7 @@ describe('radToPct', () => {
   it('clamps out-of-range radians into [0, 100]', () => {
     expect(radToPct(-10, 0)).toBe(0)
     expect(radToPct(10, 0)).toBe(100)
-    // J4 上限只有 +0.647 rad：超过即钳到 100
+    // J4 上限只有 +0.017547 rad（固件软限位）：超过即钳到 100
     expect(radToPct(1, 3)).toBe(100)
     expect(radToPct(-4, 3)).toBe(0)
   })

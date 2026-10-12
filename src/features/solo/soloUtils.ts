@@ -116,17 +116,25 @@ export function describeArmFault(st: RobotState | null): string | null {
  *  直接写在界面上。 */
 export const FAULT_STATE_HINT = '控制器处于 fault 状态：任何安全违例都会置位，而「清除故障」只清驱动的锁存故障、「复位」只复位控制器，都不保证放行它——需失能后重新使能（机械臂会失力下坠，先扶稳），或重启本地程序'
 
-/** 实机控制器默认配置（GENERIC-V4）的关节角度限位，单位 rad。
- *  各关节范围不同，J4 为非对称区间。0–100 滑条按每个关节自己的范围映射。
- *  连上后优先用 daemon `get_joint_params` 的实际软限位覆盖。 */
+/** 关节滑条的**回退**量程（rad）—— 连上后优先用 daemon `get_joint_params` 报的实际软限位
+ *  （见 `useSoloState`），只有那条路拿不到时才用这张表。
+ *
+ *  数字 = 固件出厂默认的 7J 软限位，两份上游拷贝一致：
+ *  `litearm-tool-for-stm32/presets/current_master_defaults.yaml`（由固件 `defaults.c` 的
+ *  7J 表生成）与 `pylitearm/src/pylitearm/config/litearm.yaml`。各轴范围不同，J4 非对称。
+ *
+ *  ⚠ 这张表从前更宽（J4 上限 0.647 rad ≈ 37°，固件在 0.017547 rad ≈ 1° 就停）：滑条推到底
+ *  等于要求一个固件会拒绝或钳住的角度，于是"命令目标"与"读数"从此对不上，而界面上看不出
+ *  哪边错了（issue #133）。刷新时照上面两个文件抄，别凭手感收窄 —— `soloUtils.test.ts`
+ *  逐轴钉着它们。 */
 export const JOINT_LIMITS: JointLimits[] = [
-  { min: -2.82, max: 2.839 },
-  { min: -1.78, max: 1.817 },
-  { min: -2.83, max: 2.87 },
-  { min: -3.1325, max: 0.647 },
-  { min: -2.853, max: 2.8587 },
-  { min: -1.568, max: 1.619 },
-  { min: -1.59, max: 1.623 },
+  { min: -2.809547, max: 2.809547 },
+  { min: -1.727547, max: 1.727547 },
+  { min: -2.809547, max: 2.809547 },
+  { min: -3.071547, max: 0.017547 },
+  { min: -2.809547, max: 2.809547 },
+  { min: -1.553547, max: 1.553547 },
+  { min: -1.553547, max: 1.553547 },
 ]
 
 /** 把关节限位归一化成 {min,max}[]；兼容 daemon get_joint_params 的
