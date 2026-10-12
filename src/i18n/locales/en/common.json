@@ -105,6 +105,7 @@
     "firmwareMismatch": "Firmware version does not match the local daemon, please update the controller firmware or the app",
     "motorFault": "Motor fault: {{message}}, please check power supply or clear faults",
     "commandRejected": "The controller rejected the command{{code}}",
+    "codeSuffix": " (error code {{code}})",
     "motionTimeout": "Motion timed out: the controller did not finish within the expected time, please check robot status",
     "badMessage": "Protocol error talking to the local daemon: {{message}}",
     "portChangeWhileConnected": "The arm is already connected on another serial port: press Disconnect, then connect the new port",

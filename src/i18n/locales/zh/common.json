@@ -105,6 +105,7 @@
     "firmwareMismatch": "固件版本与本地程序不匹配，请升级控制器固件或本地程序",
     "motorFault": "电机故障：{{message}}，请检查供电或执行清除故障",
     "commandRejected": "控制器拒绝了该命令{{code}}",
+    "codeSuffix": "（错误码 {{code}}）",
     "motionTimeout": "运动超时：控制器未在预期时间内完成动作，请检查机械臂状态",
     "badMessage": "与本地程序的通信协议错误：{{message}}",
     "portChangeWhileConnected": "机械臂已连接在另一个串口上：换口请先按「断开」，再选新口连接",

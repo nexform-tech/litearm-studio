@@ -145,6 +145,9 @@ const FALLBACK_ZH: Record<string, string> = {
   firmwareMismatch: '固件版本与本地程序不匹配，请升级控制器固件或本地程序',
   motorFault: '电机故障：{{message}}，请检查供电或执行清除故障',
   commandRejected: '控制器拒绝了该命令{{code}}',
+  /** `commandRejected` 的 `{{code}}` 后缀。单独一条是为了让它也有译文 —— 拼接的中文
+   *  后缀会让英文界面出现「The controller rejected the command（错误码 9）」。 */
+  codeSuffix: '（错误码 {{code}}）',
   motionTimeout: '运动超时：控制器未在预期时间内完成动作，请检查机械臂状态',
   badMessage: '与本地程序的通信协议错误：{{message}}',
   portChangeWhileConnected:
@@ -261,15 +264,25 @@ export function formatArmError(err: unknown): string {
     (info?.reason ? REASON_KEYS[info.reason] : undefined) ??
     (kind ? KIND_KEYS[kind] : undefined)
   if (key) {
+    // CommandRejectedError：固件逐命令错误码（存在时带上）。这句后缀也要跟语言走 —— 主句
+    // 翻成了英文而后缀仍是「（错误码 9）」，操作员看到的就是一句话里两种语言。
+    const translatedSuffix =
+      info?.code == null ? '' : t('codeSuffix', { code: info.code })
     const vars: Record<string, string> = {
       message: msg,
-      // CommandRejectedError：固件逐命令错误码（存在时带上）
-      code: info?.code != null ? `（错误码 ${info.code}）` : '',
+      code:
+        translatedSuffix && !translatedSuffix.startsWith('common:errors.')
+          ? translatedSuffix
+          : '',
     }
     const translated = t(key, vars)
     // i18next 找不到 key 时会原样返回 key，据此回退到内置中文。
     if (translated && !translated.startsWith('common:errors.')) return translated
-    return interpolate(FALLBACK_ZH[key] ?? FALLBACK_ZH.unknownError, vars)
+    // 兜底的中文整句自带中文后缀（`FALLBACK_ZH.codeSuffix`）。
+    return interpolate(FALLBACK_ZH[key] ?? FALLBACK_ZH.unknownError, {
+      message: msg,
+      code: info?.code != null ? interpolate(FALLBACK_ZH.codeSuffix, { code: String(info.code) }) : '',
+    })
   }
 
   if (msg) return msg
