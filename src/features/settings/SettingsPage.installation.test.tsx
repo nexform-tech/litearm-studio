@@ -60,7 +60,7 @@ vi.mock('./GripperSection', () => ({ GripperSection: () => <div /> }))
 const { SettingsPage } = await import('./SettingsPage')
 
 /** 打开「安装方向」页签（用 URL 进，省得跟 Radix 的 tab 点击较劲）。 */
-async function renderInstallation(expected = /已读取设备当前装向（正装）/) {
+async function renderInstallation(expected = /已读取固件重力向量/) {
   render(
     <MemoryRouter initialEntries={['/settings?tab=installation']}>
       <SettingsPage />
@@ -87,12 +87,13 @@ describe('SettingsPage — installation direction', () => {
     mocks.saveParams.mockResolvedValue(undefined)
   })
 
-  it('says which way the device is mounted, in words, from the read-back value', async () => {
+  it('names the preset the firmware\'s gravity vector matches, in words, from the read-back value', async () => {
     await renderInstallation()
 
-    expect(screen.getByText('已读取设备当前装向（正装）')).toBeDefined()
-    // 「设备当前」读的是固件里的值，不是草稿 —— 带符号的 4 位定点。
-    expect(screen.getByText(/设备当前：\(\+0\.0000, \+0\.0000, -9\.8100\) = 正装 \|g\|=9\.8100/)).toBeDefined()
+    expect(screen.getByText(/已读取固件重力向量 —— 与内置预设匹配为「正装」/)).toBeDefined()
+    // 「固件重力参数」读的是固件里的值，不是草稿 —— 带符号的 4 位定点；姿态名是按
+    // 这三个数与预设匹配出来的，那句话不许读成「实测出了安装方向」。
+    expect(screen.getByText(/固件重力参数：\(\+0\.0000, \+0\.0000, -9\.8100\) → 匹配「正装」 \|g\|=9\.8100/)).toBeDefined()
   })
 
   it('offers the six mountings plus the custom marker, in the documented order', async () => {
@@ -160,7 +161,7 @@ describe('SettingsPage — installation direction', () => {
     fireEvent.click(screen.getByRole('button', { name: /读当前/ }))
 
     await waitFor(() => expect(screen.getByDisplayValue('9.8100')).toBeDefined())
-    expect(await screen.findByText(/已读取设备当前装向（侧装\+y）/)).toBeDefined()
+    expect(await screen.findByText(/与内置预设匹配为「侧装\+y」/)).toBeDefined()
     // 只读重力向量：载荷与逐轴参数的读回各只有挂载时那一次。
     expect(mocks.readPayload).toHaveBeenCalledTimes(1)
   })
@@ -185,9 +186,9 @@ describe('SettingsPage — installation direction', () => {
 
   it('says nothing has been read yet when the read-back is all zeros', async () => {
     mocks.readGravityVector.mockResolvedValue([0, 0, 0])
-    await renderInstallation(/尚未读取设备装向/)
+    await renderInstallation(/尚未从固件读取重力向量/)
 
-    expect(screen.queryByText(/已读取设备当前装向/)).toBeNull()
+    expect(screen.queryByText(/已读取固件重力向量/)).toBeNull()
   })
 
   it('blocks the write until the device direction has been read back', async () => {
@@ -198,7 +199,7 @@ describe('SettingsPage — installation direction', () => {
         <SettingsPage />
       </MemoryRouter>,
     )
-    await screen.findByText(/尚未成功读取设备当前装向/)
+    await screen.findByText(/尚未成功读取固件的重力向量/)
 
     expect((screen.getByRole('button', { name: /下发/ }) as HTMLButtonElement).disabled).toBe(true)
     expect((screen.getByRole('button', { name: /固化到 Flash/ }) as HTMLButtonElement).disabled).toBe(true)
