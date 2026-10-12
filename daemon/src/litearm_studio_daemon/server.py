@@ -30,6 +30,7 @@ import socket
 import sys
 import threading
 import time
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, List, Optional
@@ -838,8 +839,29 @@ def create_app(session: Session, *, gripper: Optional[Any] = None,
     resolved = resolve_ui_dir(ui_dir, repo_dist=repo_dist)
     daemon = Daemon(session, gripper=gripper, version=version, ui_dir=resolved,
                     allow_origins=allow_origins)
+
+    @asynccontextmanager
+    async def _lifespan(_app: FastAPI):     # pragma: no cover - 由 TestClient 覆盖
+        """启动/收尾 —— 两件事都在这里, 顺序与语义与旧的两个 on_event 钩子逐条相同。
+
+        启动: 记下事件循环 (`broadcast_threadsafe` 要从别的线程投递), 再拉起日志元信息
+        与夹爪看门狗两个后台任务。收尾: 取消这两个任务并清空引用。
+        """
+        daemon.loop = asyncio.get_running_loop()
+        daemon.log_meta_task = asyncio.create_task(daemon._log_meta_loop())
+        if daemon.gripper is not None:
+            daemon.heartbeat_task = asyncio.create_task(daemon._gripper_heartbeat_loop())
+        try:
+            yield
+        finally:
+            for name in ("heartbeat_task", "log_meta_task"):
+                task = getattr(daemon, name)
+                if task is not None:
+                    task.cancel()
+                    setattr(daemon, name, None)
+
     app = FastAPI(title="LiteArm Studio Daemon", version=version, docs_url=None,
-                  redoc_url=None, openapi_url=None)
+                  redoc_url=None, openapi_url=None, lifespan=_lifespan)
     # 让 `handle_ws` 拿得到事件循环 (会话事件要从别的线程投递进来)。
     app.state.daemon = daemon
 
@@ -963,21 +985,6 @@ def create_app(session: Session, *, gripper: Optional[Any] = None,
     @app.websocket("/ws")
     async def _ws(ws: WebSocket) -> None:      # pragma: no cover - 由 TestClient 覆盖
         await daemon.handle_ws(ws)
-
-    @app.on_event("startup")
-    async def _remember_loop() -> None:        # pragma: no cover - 生命周期钩子
-        daemon.loop = asyncio.get_running_loop()
-        daemon.log_meta_task = asyncio.create_task(daemon._log_meta_loop())
-        if daemon.gripper is not None:
-            daemon.heartbeat_task = asyncio.create_task(daemon._gripper_heartbeat_loop())
-
-    @app.on_event("shutdown")
-    async def _stop_heartbeat() -> None:       # pragma: no cover - 生命周期钩子
-        for name in ("heartbeat_task", "log_meta_task"):
-            task = getattr(daemon, name)
-            if task is not None:
-                task.cancel()
-                setattr(daemon, name, None)
 
     if resolved is not None:
         # ⚠ 挂在**最后**: 路由 (含 `/ws`) 优先于静态目录的兜底匹配。
