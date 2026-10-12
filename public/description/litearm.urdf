@@ -3,7 +3,7 @@
      Commit Version: 1.6.0-4-g7f85cfe  Build Version: 1.6.7995.38578
      For more information, please see http://wiki.ros.org/sw_urdf_exporter -->
 <robot
-  name="litearm_urdf">
+  name="litearm_description">
   <link
     name="base_link">
     <inertial>
@@ -26,7 +26,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://litearm_urdf/meshes/base_link.STL" />
+          filename="package://litearm_description/meshes/base_link.STL" />
       </geometry>
       <material
         name="">
@@ -40,7 +40,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://litearm_urdf/meshes/base_link.STL" />
+          filename="package://litearm_description/meshes/base_link.STL" />
       </geometry>
     </collision>
   </link>
@@ -66,7 +66,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://litearm_urdf/meshes/Link1.STL" />
+          filename="package://litearm_description/meshes/Link1.STL" />
       </geometry>
       <material
         name="">
@@ -80,7 +80,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://litearm_urdf/meshes/Link1.STL" />
+          filename="package://litearm_description/meshes/Link1.STL" />
       </geometry>
     </collision>
   </link>
@@ -124,7 +124,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://litearm_urdf/meshes/Link2.STL" />
+          filename="package://litearm_description/meshes/Link2.STL" />
       </geometry>
       <material
         name="">
@@ -138,7 +138,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://litearm_urdf/meshes/Link2.STL" />
+          filename="package://litearm_description/meshes/Link2.STL" />
       </geometry>
     </collision>
   </link>
@@ -182,7 +182,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://litearm_urdf/meshes/Link3.STL" />
+          filename="package://litearm_description/meshes/Link3.STL" />
       </geometry>
       <material
         name="">
@@ -196,7 +196,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://litearm_urdf/meshes/Link3.STL" />
+          filename="package://litearm_description/meshes/Link3.STL" />
       </geometry>
     </collision>
   </link>
@@ -240,7 +240,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://litearm_urdf/meshes/Link4.STL" />
+          filename="package://litearm_description/meshes/Link4.STL" />
       </geometry>
       <material
         name="">
@@ -254,7 +254,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://litearm_urdf/meshes/Link4.STL" />
+          filename="package://litearm_description/meshes/Link4.STL" />
       </geometry>
     </collision>
   </link>
@@ -298,7 +298,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://litearm_urdf/meshes/Link5.STL" />
+          filename="package://litearm_description/meshes/Link5.STL" />
       </geometry>
       <material
         name="">
@@ -312,7 +312,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://litearm_urdf/meshes/Link5.STL" />
+          filename="package://litearm_description/meshes/Link5.STL" />
       </geometry>
     </collision>
   </link>
@@ -356,7 +356,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://litearm_urdf/meshes/Link6.STL" />
+          filename="package://litearm_description/meshes/Link6.STL" />
       </geometry>
       <material
         name="">
@@ -370,7 +370,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://litearm_urdf/meshes/Link6.STL" />
+          filename="package://litearm_description/meshes/Link6.STL" />
       </geometry>
     </collision>
   </link>
@@ -414,7 +414,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://litearm_urdf/meshes/Link7.STL" />
+          filename="package://litearm_description/meshes/Link7.STL" />
       </geometry>
       <material
         name="">
@@ -428,7 +428,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://litearm_urdf/meshes/Link7.STL" />
+          filename="package://litearm_description/meshes/Link7.STL" />
       </geometry>
     </collision>
   </link>
@@ -472,7 +472,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://litearm_urdf/meshes/ee_frame_link.STL" />
+          filename="package://litearm_description/meshes/ee_frame_link.STL" />
       </geometry>
       <material
         name="">
@@ -486,7 +486,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://litearm_urdf/meshes/ee_frame_link.STL" />
+          filename="package://litearm_description/meshes/ee_frame_link.STL" />
       </geometry>
     </collision>
   </link>

@@ -549,7 +549,7 @@ export const RobotViewport = forwardRef<RobotViewportHandle, RobotViewportProps>
     }
 
     const loader = new URDFLoader()
-    loader.packages = { litearm_urdf: WORKING_PATH.replace(/\/$/, '') }
+    loader.packages = { litearm_description: WORKING_PATH.replace(/\/$/, '') }
     loader.workingPath = WORKING_PATH
     loader.load(URDF_URL, onModelLoad, undefined, onModelError)
 
