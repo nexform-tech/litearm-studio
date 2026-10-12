@@ -581,6 +581,40 @@ def test_a_connect_failure_names_the_board_that_is_sitting_in_dfu() -> None:
         s.close()
 
 
+def test_a_connect_failure_settles_the_status_before_it_probes_usb(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚠ 落 `error` 必须排在探 DFU **之前** —— 探 DFU 是一次真正的 USB 枚举 (几十毫秒起)。
+
+    `connect()` 在 `connecting` 期间一律拒绝, 所以"这次失败还没收尾"与"下一次重试"之间
+    的窗口就是那次枚举的长度: 界面在这个窗口里点「连接」会被判成"正在连接中", 点了什么都
+    不发生 (`test_ports` 的"界面选的口是一次性的"正是被这个窗口顶掉的)。
+    """
+    seen = []
+    engine = fake_engine.FakeEngine(present=True)
+
+    def probe():
+        # 判据就是**这一刻**的状态: `_connect_error_text` 走的正是这条枚举路径。
+        seen.append(session.arm_info()["status"])
+        return fake_engine.FakeHandle()
+
+    monkeypatch.setattr(engine, "find_device", probe)
+    session = Session(fake=True, dfu_engine=engine)
+
+    def fail(target: str):
+        raise litearm.TransportError(f"打不开 {target} (测试桩)")
+
+    monkeypatch.setattr(session, "_dial", fail)
+    try:
+        assert session.connect("/dev/ttyACM9") is True
+        assert _wait(lambda: session.arm_info()["status"] == "error")
+        assert seen == ["error"], f"探 DFU 时会话还停在 {seen}: 落状态排在枚举后面了"
+        # 只是把顺序换了, 细节一点不能少 —— 那句 DFU 仍要补进连接失败的原因里。
+        assert "bootloader" in (session.arm_info()["error"] or "")
+    finally:
+        session.close()
+
+
 def test_a_board_already_in_dfu_is_flashed_without_entering_it_again() -> None:
     """从 DFU 起跑: **没有会话**, 相位从 `wait_dfu` 起 —— 不 disarm、不 enter_dfu。
 

@@ -729,12 +729,17 @@ class Session:
 
         ⚠ `gen` 对不上说明这次握手已被 `disconnect()`/`close()` 作废: 此时**不能**把
         状态改写成 `error` —— 用户按的是「断开」, 不是「连接失败」。
+
+        ⚠ **落状态排在探 DFU 之前**。探 DFU 是一次真正的 USB 枚举 (几十毫秒起), 而
+        `connect()` 在 `connecting` 期间一律拒绝 (`if self._status == "connecting":
+        return False`)。把枚举排在落状态之前, 就是让"这次失败还没收尾"与"下一次重试"
+        之间多出一个**长达一次枚举**的窗口 —— 界面在那里点「连接」会被判成"正在连接中",
+        点了什么都不发生 (而那个窗口在旧实现里只够覆盖几次赋值)。
         """
         if arm is not None:
             self._close_arm(arm)
-        # ⚠ 探测 DFU 要碰 USB, **在锁外**做完再进去写状态 (与 `_execute_command` 里
-        #   "不拿着锁枚举"同一条纪律: 状态轮询线程也在等这把锁)。
-        error_text = self._connect_error_text(exc)
+        # 先落状态 (短临界区), 再出锁枚举, 最后回填细节 —— 顺序的理由见上面的 ⚠。
+        provisional = f"{type(exc).__name__}: {exc}"
         with self._lock:
             if gen is not None and self._connect_gen != gen:
                 log.info("握手失败时已被断开/关闭, 不上报 error: %s: %s",
@@ -747,8 +752,23 @@ class Session:
                 return
             self._arm = None
             self._status = "error"
-            self._last_error = error_text
+            self._last_error = provisional
             self._resolved_port = None
+        # ⚠ 探测 DFU 要碰 USB, **在锁外**做 (与 `_execute_command` 里"不拿着锁枚举"同一条
+        #   纪律: 状态轮询线程也在等这把锁)。回填的只是**细节**: 这段窗口里读到
+        #   `_last_error` 的人 (一次 `/api/health`、一次握手快照) 拿到的是没有 DFU 那句话
+        #   的版本 —— 仍然是真话, 只是不够具体; 而界面那条 `conn` 在下面发, 已经完整。
+        error_text = self._connect_error_text(exc)
+        with self._lock:
+            # 枚举这段时间里可能已经有人发了新的一次连接 (或按了「断开」): 状态归它,
+            # 这条失败只配留在日志里 —— 更不许把过期的文案盖上去。
+            superseded = gen is not None and self._connect_gen != gen
+            if not superseded:
+                self._last_error = error_text
+        if superseded:
+            log.info("失败收尾期间已被新的一次连接/断开取代: %s: %s",
+                     type(exc).__name__, exc)
+            return
         log.warning("连接失败: %s", self._last_error)
         # ⚠ 这里是**所有**连接失败的收口 (握手、dial、收尾), 所以终局记录只在这里发一次。
         # 调用方若再补一条, 一条失败的连接会留下两条 `session.connect.failed` ——
