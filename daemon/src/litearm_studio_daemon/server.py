@@ -831,6 +831,18 @@ def _reserved_path(path: str) -> bool:
     return "." in parts[-1]
 
 
+#: 唯一一类"URL 里就带着内容"的静态文件: Vite 把每个 chunk/样式表写成
+#: `assets/<名字>-<内容哈希>.<扩展名>` (`build.assetsDir`, 默认 `assets`, 本仓没有
+#: 覆盖它)。同名必同字节, 所以这些 URL 一直留在缓存里是安全的。
+_CONTENT_ADDRESSED_DIR = "assets"
+
+
+def _is_content_addressed(full_path: str, root: str) -> bool:
+    """这个文件在不在 `assets/` 下 —— 即它的 URL 是否已经由文件名编码了内容。"""
+    rel = os.path.relpath(str(full_path), str(root))
+    return rel.split(os.sep, 1)[0] == _CONTENT_ADDRESSED_DIR
+
+
 class _SpaStaticFiles(StaticFiles):
     """静态目录挂载 + SPA 兜底: 磁盘上不存在的前端路由回落到 `index.html`。
 
@@ -855,6 +867,34 @@ class _SpaStaticFiles(StaticFiles):
             if exc.status_code != 404 or _reserved_path(path):
                 raise
             return await super().get_response("index.html", scope)
+
+    def file_response(self, full_path: str, stat_result: os.stat_result,
+                      scope: Scope, status_code: int = 200) -> Response:
+        """`FileResponse` 的钩子 —— 给"名字固定、内容会变"的 URL 挂上 `no-cache`。
+
+        ⚠ **除 `assets/` 外的一切静态文件都必须在每次加载时重新验证, 一个都不能漏。**
+        窗口用持久化的 webview 存储 (`window.run_window` 的 `private_mode=False` +
+        `storage_path`), WebKit 顺手把整包界面也写进磁盘缓存。`/description/litearm.urdf`
+        与 `/description/meshes/*.stl`、`/favicon.svg` 这些 URL **不随内容变** —— 没有
+        `Cache-Control` 时它按启发式新鲜度 (距取回时长的 10%) 直接复用旧字节, 连一条
+        请求都不发。于是升级后 3D 预览拿到的还是上一版的 URDF: `package://` 的名字一
+        对不上, 网格一个都挂不上, 画面只剩地面和底座坐标轴 (issue #150)。
+
+        带上 `no-cache` 后每次加载都会带 `If-None-Match` / `If-Modified-Since` 回来问
+        一次: 没变就是 304 (11 KB 的 URDF 与 6.8 MB 的网格都不重传), 变了就是新字节。
+        入口文档另外还有 `_window_entry_url` 的构建令牌 —— 令牌管"上一版的入口 URL 不再
+        命中", 这里管"**同一个** URL 也必须回来问一遍", 两道缺一不可。
+
+        ⚠ **必须挂在这个方法上, 不能等 `get_response` 返回后再加。** 条件请求的 304 是
+        Starlette 在 `file_response` 内部由 200 的头裁出来的 (`NotModifiedResponse` 只
+        保留 `etag` / `cache-control` 这几个), 在外面加的话 304 上就没有 `cache-control`
+        —— 而 304 恰恰是"缓存里已经躺着旧字节"的客户端唯一一次回来的机会; 那一次不告诉
+        它以后要重新验证, 它就继续按启发式新鲜度拿旧的。
+        """
+        response = super().file_response(full_path, stat_result, scope, status_code)
+        if not _is_content_addressed(full_path, self.directory or ""):
+            response.headers.setdefault("cache-control", "no-cache")
+        return response
 
 
 def export_filename(suggested: str) -> str:

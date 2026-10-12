@@ -250,12 +250,21 @@ def test_explicit_ui_dir_beats_the_bundle(tmp_path: Path, monkeypatch) -> None:
 # ------------------------------------------------------------------ SPA 兜底
 
 def _spa_client(tmp_path: Path):
-    """带静态目录的会话 —— 前端路由 (`/control` …) 在磁盘上没有对应文件。"""
+    """带静态目录的会话 —— 前端路由 (`/control` …) 在磁盘上没有对应文件。
+
+    目录里同时放一份打包模型 (`description/`): 它是"URL 不随内容变"的那一类, 见下面的
+    `test_fixed_url_files_are_revalidated` (issue #150)。
+    """
     ui = tmp_path / "dist"
     (ui / "assets").mkdir(parents=True)
     (ui / "index.html").write_text("<!doctype html><title>liteart-ui</title>",
                                    encoding="utf-8")
     (ui / "assets" / "app.js").write_text("// app\n", encoding="utf-8")
+    (ui / "description" / "meshes").mkdir(parents=True)
+    (ui / "description" / "litearm.urdf").write_text(
+        '<robot name="litearm"><link name="base_link"/></robot>', encoding="utf-8")
+    (ui / "description" / "meshes" / "base_link.stl").write_bytes(b"solid base\n")
+    (ui / "favicon.svg").write_text("<svg/>", encoding="utf-8")
     session = Session(port_finder=lambda: None)
     app = create_app(session, version=VERSION, ui_dir=str(ui))
     return session, app
@@ -304,6 +313,69 @@ def test_non_route_paths_keep_their_404(tmp_path: Path, path: str) -> None:
         with TestClient(app) as client:
             assert client.get(path).status_code == 404
             assert client.get("/api/health").status_code == 200   # 真接口不受影响
+    finally:
+        session.close()
+
+
+# ------------------------------------------------- 静态资源的缓存指令 (issue #150)
+
+@pytest.mark.parametrize("path", [
+    "/description/litearm.urdf",       # 打包的模型本体
+    "/description/meshes/base_link.stl",   # 模型引用的网格
+    "/favicon.svg",                    # dist/ 根下同类的固定名字文件
+    "/index.html",                     # 入口文档
+    "/control",                        # SPA 兜底回来的还是那个入口文档
+])
+def test_fixed_url_files_are_revalidated(tmp_path: Path, path: str) -> None:
+    """URL 不随内容变的文件, 必须每次加载都回来重新验证 (issue #150)。
+
+    ⚠ 缺了这一句的实测后果: 窗口的 webview 磁盘缓存里留着升级前的
+    `/description/litearm.urdf`, 重启后**一条静态请求都不发**, 3D 预览用旧模板的
+    `package://` 名字去解析网格, 一个都挂不上 —— 画面上只剩地面与底座坐标轴。没有
+    `Cache-Control` 时 WebKit 按启发式新鲜度复用旧字节, ETag 再准也没机会被问到。
+    """
+    session, app = _spa_client(tmp_path)
+    try:
+        with TestClient(app) as client:
+            r = client.get(path)
+            assert r.status_code == 200
+            assert r.headers["cache-control"] == "no-cache"
+    finally:
+        session.close()
+
+
+def test_content_addressed_assets_stay_cacheable(tmp_path: Path) -> None:
+    """`assets/` 的文件名自带内容哈希 —— 别顺手把它的长缓存也废掉。
+
+    45 个 chunk 每次加载都回来问一遍也"能跑", 但那是白花的; URL 已经编码了内容,
+    同名必同字节, 缓存它不会骗人。判据因此是"在不在 `assets/` 下", 不是"要不要缓存"。
+    """
+    session, app = _spa_client(tmp_path)
+    try:
+        with TestClient(app) as client:
+            r = client.get("/assets/app.js")
+            assert r.status_code == 200
+            assert "cache-control" not in r.headers
+    finally:
+        session.close()
+
+
+def test_a_revalidation_learns_to_revalidate_again(tmp_path: Path) -> None:
+    """304 上也要带 `cache-control` —— 那是旧缓存唯一的补救点 (issue #150)。
+
+    ⚠ 这条用例专门盯着实现位置: 304 是 Starlette 在 `file_response` 内部由 200 的头
+    裁出来的, 只在 `get_response` 外面加头的话 304 上就没有它。而 304 恰恰是"缓存里
+    已经躺着旧字节"的客户端唯一一次回来的机会 —— 那一次不把 `no-cache` 交给它, 它就
+    继续按启发式新鲜度拿旧的, 修了等于没修。
+    """
+    session, app = _spa_client(tmp_path)
+    try:
+        with TestClient(app) as client:
+            first = client.get("/description/litearm.urdf")
+            again = client.get("/description/litearm.urdf",
+                               headers={"if-none-match": first.headers["etag"]})
+            assert again.status_code == 304
+            assert again.headers["cache-control"] == "no-cache"
     finally:
         session.close()
 
