@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { SEED_JOINT_PCT, describeArmFault, fitJointPct, fitJoints, jointRangeLabel } from './soloUtils'
+import {
+  JOINT_LIMITS,
+  SEED_JOINT_PCT,
+  describeArmFault,
+  fitJointPct,
+  fitJoints,
+  jointRangeLabel,
+  pctToRadNum,
+} from './soloUtils'
 
 describe('fitting per-axis values to the reported joint count', () => {
   it('trims a longer list and pads a shorter one', () => {
@@ -26,6 +34,41 @@ describe('jointRangeLabel', () => {
     expect(jointRangeLabel(1)).toBe('J1')
     expect(jointRangeLabel(2)).toBe('J1–J2')
     expect(jointRangeLabel(7)).toBe('J1–J7')
+  })
+})
+
+describe('fallback joint limits', () => {
+  //: 固件出厂默认的 7J 软限位。抄自 `litearm-tool-for-stm32/presets/current_master_defaults.yaml`
+  //: （由固件 `defaults.c` 的 7J 表生成）与 `pylitearm/src/pylitearm/config/litearm.yaml` ——
+  //: 就是说，回退量程必须**不比固件允许的范围宽**，否则滑条推到底就是在要求一个固件会拒绝
+  //: 或钳住的角度（issue #133）。
+  const FIRMWARE_SOFT_LIMITS: [number, number][] = [
+    [-2.809547, 2.809547],
+    [-1.727547, 1.727547],
+    [-2.809547, 2.809547],
+    [-3.071547, 0.017547],
+    [-2.809547, 2.809547],
+    [-1.553547, 1.553547],
+    [-1.553547, 1.553547],
+  ]
+
+  it('is the firmware default table, axis by axis', () => {
+    expect(JOINT_LIMITS).toHaveLength(FIRMWARE_SOFT_LIMITS.length)
+    JOINT_LIMITS.forEach((range, i) => {
+      expect([range.min, range.max]).toEqual(FIRMWARE_SOFT_LIMITS[i])
+    })
+  })
+
+  it('maps a slider at 100% onto the firmware limit, not past it', () => {
+    // 最坏的一轴：旧表给到 0.647 rad（37°），而固件在 0.017547 rad（1°）就停下。
+    JOINT_LIMITS.forEach((_range, i) => {
+      expect(pctToRadNum(0, i)).toBeCloseTo(FIRMWARE_SOFT_LIMITS[i][0], 9)
+      expect(pctToRadNum(100, i)).toBeCloseTo(FIRMWARE_SOFT_LIMITS[i][1], 9)
+      // 端点用浮点算出来会差最后一位（`min + (max - min)` 不保证退回 max），所以给个容差。
+      expect(pctToRadNum(100, i)).toBeLessThanOrEqual(FIRMWARE_SOFT_LIMITS[i][1] + 1e-9)
+      expect(pctToRadNum(0, i)).toBeGreaterThanOrEqual(FIRMWARE_SOFT_LIMITS[i][0] - 1e-9)
+    })
+    expect(JOINT_LIMITS[3].max).toBeLessThan(0.02)
   })
 })
 
