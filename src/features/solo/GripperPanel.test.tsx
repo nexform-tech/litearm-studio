@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { toast } from 'sonner'
-import '@/i18n'
+import i18n from '@/i18n'
 
 // vitest 未开 globals：RTL 的自动 cleanup 不会注册。
 afterEach(cleanup)
@@ -234,6 +234,23 @@ describe('GripperPanel', () => {
       expect((screen.getByTestId(id) as HTMLButtonElement).disabled).toBe(true)
     }
     expect(screen.getByTestId('gripper-disabled-reason').textContent).toBeTruthy()
+  })
+
+  it('explains a non-READY gate in the interface language, not with the daemon\'s text', async () => {
+    // daemon 的 `gateReason` 是中文写死的；英文界面上把它接在英文标签后面就是混排
+    // ("Nominal template：只声明了方向…")。解释要用翻译过的那条 `_why` (issue #128)。
+    await i18n.changeLanguage('en')
+    connected({
+      conn: { gate: 'TEMPLATE', gateReason: '标称模板（从未实测）' },
+      state: { gate: 'TEMPLATE', gateReason: '标称模板（从未实测）' },
+    })
+    render(<GripperPanel />)
+
+    const reason = screen.getByTestId('gripper-disabled-reason').textContent ?? ''
+    expect(reason).toContain('Nominal template')
+    expect(reason).toContain('Only the direction is declared')
+    expect(reason).not.toMatch(/标称模板|从未实测/)
+    await i18n.changeLanguage('zh')
   })
 
   it('does not cry "no calibration" before the gripper is even connected', () => {

@@ -6,13 +6,20 @@ import { gripperClient } from '@/lib/arm/gripperClient'
 import type { GripperState } from '@/lib/arm/gripperClient'
 import { formatArmError } from '@/lib/arm/errors'
 
-/** 速度/夹持力滑条的量程与默认值 —— 与 daemon 的 `gripper/constants.py` 一致。 */
+/** 速度/夹持力滑条的量程与默认值 —— 与 daemon 的 `gripper/constants.py` 一一对应
+ *  (`SPEED_MIN_MM_S` / `SPEED_MAX_MM_S` / `SPEED_DEFAULT_MM_S` / `FORCE_MAX_N` /
+ *  `FORCE_DEFAULT_N`)。差一个数就是"同一个动作在 UI 与其它客户端上力度不同"(issue #132)。 */
 export const SPEED_MIN_MM_S = 5
 export const SPEED_MAX_MM_S = 150
 export const SPEED_DEFAULT_MM_S = 50
 /** ⚠ 40 N 是机械上限，但推荐工作力是 20 N（§6.4）。 */
 export const FORCE_MAX_N = 40
 export const FORCE_DEFAULT_N = 20
+
+/** daemon 会报的闸门取值 (`gripper/core/worker.py` 的 `GateState`) —— 每一个都有
+ *  `gripper:gate.<值>` 与 `gripper:gate.<值>_why` 两条文案。用它判断有没有**翻译过的**
+ *  解释可用（见 `disabledReason`）。 */
+const GATE_VALUES: readonly string[] = ['READY', 'TEMPLATE', 'FACTORY', 'BLOCKED']
 
 const SPEED_STORAGE_KEY = 'litearm.gripper.speedMmS'
 const FORCE_STORAGE_KEY = 'litearm.gripper.forceN'
@@ -157,7 +164,14 @@ export function useGripperPanel() {
     if (!enabled) return t('common:errors.gripperNotEnabled')
     if (gate && gate !== 'READY') {
       // 模板也要说：它只挡毫米目标，但操作员必须知道为什么「夹取」是灰的（§6.3）。
-      return `${t(`gripper:gate.${gate}`)}：${state?.gateReason || conn?.gateReason || ''}`
+      //
+      // ⚠ 解释用**翻译过的** `_why`，不用 daemon 的 `gateReason`：那串字是 daemon 用中文
+      //   写死的，英文界面下会夹在英文里混排（issue #128）。认不出的 gate 值才退回原文，
+      //   免得把一句解释丢成空白。
+      const why = GATE_VALUES.includes(gate)
+        ? t(`gripper:gate.${gate}_why`)
+        : (state?.gateReason || conn?.gateReason || '')
+      return why ? `${t(`gripper:gate.${gate}`)}：${why}` : t(`gripper:gate.${gate}`)
     }
     return ''
   }, [present, connected, estopped, enabled, gate, state?.gateReason, conn?.gateReason, t])

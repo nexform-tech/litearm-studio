@@ -168,7 +168,7 @@ progress, so the page can say why it is waiting.
 | `gripper.clear_fault` | — | `null` |
 | `gripper.open` | — | `{"ok":true}` |
 | `gripper.close` | — | `{"ok":true}` |
-| `gripper.grasp` | `forceN?`, `holdS?` | `{"ok":true}` |
+| `gripper.grasp` | `forceN?` (default 20 N, the recommended working force), `holdS?` | `{"ok":true}` |
 | `gripper.move_to` | `targetMm` (0..travel), `speedMmS?` | `{"ok":true}` |
 | `gripper.release` | — | `null` (zero torque, stays enabled, back-drivable) |
 | `gripper.set_zero_gravity` | `on` (bool) | `{"ok":true}` — `on` enters zero gravity (zero torque), `off` leaves it and holds the current pose |
