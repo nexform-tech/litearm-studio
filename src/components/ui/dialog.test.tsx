@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
+import i18n from '@/i18n'
 import { Dialog, DialogContent, DialogTitle } from './dialog'
 
 /**
@@ -43,5 +44,27 @@ describe('DialogContent', () => {
     const content = screen.getByRole('dialog')
     expect(content.className).toContain('grid-cols-1')
     expect(content.className).toContain('max-w-lg')
+  })
+})
+
+// 关闭键的名字从前写死成英文：读屏用户在中文界面上听到的是 "Close"。
+describe('DialogContent close label', () => {
+  afterEach(async () => {
+    await i18n.changeLanguage('zh')
+  })
+
+  it('names the close button in the interface language', async () => {
+    await i18n.changeLanguage('en')
+
+    render(
+      <Dialog open>
+        <DialogContent>
+          <DialogTitle>Pick a calibration file</DialogTitle>
+        </DialogContent>
+      </Dialog>,
+    )
+
+    expect(screen.getByText(i18n.t('common:close'))).toBeTruthy()
+    expect(i18n.t('common:close')).toBe('Close')
   })
 })
