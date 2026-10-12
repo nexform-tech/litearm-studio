@@ -1,6 +1,8 @@
 """`statemap` 的纯函数单测 —— 派生状态串与状态帧归一化。"""
 from __future__ import annotations
 
+import json
+
 import pytest
 from litearm.state import JointState, RobotState
 
@@ -218,3 +220,23 @@ def test_jsonable_falls_back_to_repr_instead_of_raising() -> None:
             return "<weird>"
 
     assert statemap.jsonable(Weird()) == "<weird>"
+
+
+def test_non_finite_floats_are_folded_so_a_frame_still_serialises() -> None:
+    """NaN/inf 折成 0.0 (issue #134)。
+
+    它们过 `json.dumps(..., allow_nan=False)` 会抛, 而抛的位置是客户端的推送任务或命令
+    worker ⇒ 一条坏数值让那个客户端从此收不到任何状态帧 / 做不了任何命令, 而 socket 还
+    开着、界面还显示已连接。0.0 与这里"认不出的输入"是同一个口径。
+    """
+    assert statemap._r6(float("nan")) == 0.0
+    assert statemap._r6(float("inf")) == 0.0
+    assert statemap._r6(float("-inf")) == 0.0
+    assert statemap.jsonable(float("nan")) == 0.0
+    assert statemap.jsonable([float("inf"), {"x": float("-inf")}]) == [0.0, {"x": 0.0}]
+    # 有限值照旧 (收窄到 6 位仍然生效)。
+    assert statemap._r6(1.23456789) == 1.234568
+    # 端到端: 拿它拼出来的帧必须真的过得了允许-不合法-NaN 的那个序列化器。
+    json.dumps({"q": [statemap._r6(float("nan"))],
+                "v": statemap.jsonable({"t": float("inf")})},
+               allow_nan=False)

@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import math
 from dataclasses import fields, is_dataclass
 from typing import Any, List, Optional
 
@@ -23,11 +24,18 @@ MODE_ZERO_G = 7
 
 
 def _r6(x: Any) -> float:
-    """浮点收窄到 6 位小数 —— 只为让 50Hz 推送的可读性与帧大小可控, 不改判据。"""
+    """浮点收窄到 6 位小数 —— 只为让 50Hz 推送的可读性与帧大小可控, 不改判据。
+
+    ⚠ 非有限值 (NaN / ±inf) 折成 0.0。它们过 `json.dumps(..., allow_nan=False)` 会**抛**,
+    而抛的位置在客户端的推送任务里: 一条坏数值就让那个客户端从此收不到任何状态帧, 而
+    socket 还开着、界面还显示已连接 (issue #134)。0.0 与"认不出的输入"是同一个口径, 也是
+    这个模块对"这一拍不可信"的既有定义值。
+    """
     try:
-        return round(float(x), 6)
+        value = float(x)
     except (TypeError, ValueError):
         return 0.0
+    return round(value, 6) if math.isfinite(value) else 0.0
 
 
 def state_of(*, faulted: bool, enabled: bool, mode: int,
@@ -149,7 +157,9 @@ def jsonable(value: Any) -> Any:
     if value is None or isinstance(value, (bool, int, str)):
         return value
     if isinstance(value, float):
-        return value
+        # 非有限值同 `_r6`: 序列化器会抛, 而它在应答路径上抛会带走那条命令 worker
+        # (issue #134)。命令层收到的读数不该是 NaN, 真收到了也得先能发出去。
+        return value if math.isfinite(value) else 0.0
     if isinstance(value, (list, tuple)):
         return [jsonable(v) for v in value]
     if isinstance(value, dict):

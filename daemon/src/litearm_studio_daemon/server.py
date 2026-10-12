@@ -107,6 +107,21 @@ def _hostname_of(netloc: str) -> str:
     return text.rsplit(":", 1)[0] if ":" in text else text
 
 
+def _encode_frame(message: dict) -> Optional[str]:
+    """帧 → 线上 JSON; **不抛**, 编不出来就丢这一条。
+
+    `allow_nan=False` 是刻意的 (NaN/Inf 不是合法 JSON, 前端 `JSON.parse` 也接不住),
+    但异常**不许冒到调用它的那条任务里**: 那是客户端的推送泵或命令 worker, 死了以后
+    socket 照开、界面照显示已连接, 而这边一条帧也发不出去 (issue #134)。`_r6` 与
+    `jsonable` 已经把非有限浮点折成 0.0, 这里是最后一道兜底 (认不出的怪值)。
+    """
+    try:
+        return json.dumps(message, ensure_ascii=False, allow_nan=False, default=str)
+    except (TypeError, ValueError) as e:
+        log.warning("丢弃一条无法序列化的 %s 帧: %s", message.get("t"), e)
+        return None
+
+
 def origin_allowed(origin: str, host: str, extra: Iterable[str] = ()) -> bool:
     """跨源 WebSocket 的准入判据 —— 浏览器不做同源限制, 所以判据只能在这里。
 
@@ -347,26 +362,83 @@ class Daemon:
     def broadcast(self, message: dict) -> None:
         """给**每个**客户端入队一条帧 (在事件循环线程上调用)。"""
         for c in list(self.clients):
+            self._enqueue(c, message)
+
+    def _enqueue(self, client: _Client, message: dict) -> bool:
+        """入队一条帧; 队列满时按帧的类型让路。返回是否入队成功。"""
+        kind = message.get("t")
+        try:
+            client.q.put_nowait(message)
+            return True
+        except asyncio.QueueFull:
+            pass
+
+        # 慢客户端丢**状态**帧就好 (下一拍就有新的)。
+        if kind not in ("conn", "res", "log"):
+            return False
+
+        if kind == "log":
+            # ⚠ 日志帧丢了**要留下痕迹**: 文件里那条记录仍然在, 但页面上会出现一段
+            # 空白, 而"空白"与"什么都没发生"长得一模一样。计数同时落在客户端与全局上,
+            # 由 `log_meta` 如实上报。
+            #
+            # ⚠ **不许在这里 emit 一条记录**: 队列满时再发一条会走同一条路, 于是自己
+            # 把自己再丢一次, 变成死循环。
+            self._count_dropped_log(client)
+            return False
+
+        # conn / res 丢了会让前端一直转圈 (应答那头在等一个永远不来的 promise), 所以
+        # 这两类宁可挤掉队列里最旧的一条**非 res** 帧 —— 它可能是 logs/state, 也可能
+        # 是另一条 res, 后者不许动 (见 `_evict_one`)。
+        dropped = self._evict_one(client)
+        if dropped is None:
+            # 256 条全是应答: 让路无处可让。丢新的这条 (客户端那条命令由自己的超时兜底,
+            # 见 `src/lib/arm/socket.ts`), 但要留下痕迹。
+            log.warning("客户端队列已被应答帧占满, 丢弃一条 %s 帧", kind)
+            return False
+        if dropped.get("t") == "log":
+            # 让路挤掉的是一条日志帧 ⇒ 与上面丢日志同一条口径地计数, 否则页面上的
+            # 空白会被当成"什么都没发生"。
+            self._count_dropped_log(client)
+        try:
+            client.q.put_nowait(message)
+            return True
+        except asyncio.QueueFull:      # 不在事件循环线程上时可能又满了
+            log.warning("让路后仍放不下一条 %s 帧", kind)
+            return False
+
+    def _count_dropped_log(self, client: _Client) -> None:
+        client.dropped_logs += 1
+        self._log_dropped += 1
+
+    @staticmethod
+    def _evict_one(client: _Client) -> Optional[dict]:
+        """从满队列里挤出**一条**帧的位置, 返回被挤掉的那条; 没得挤返回 `None`。
+
+        只挤非 `res` 的帧, 最旧的 `state` 优先 (`state` 下一拍就有新的; `log` 有记录的
+        代价, 由调用方计数)。
+
+        ⚠ **`res` 不许挤**: `sendRequest` 只在收到同 id 的应答或 socket 关闭时才落地,
+        被挤掉的那条 promise 永远不 settle —— 组件从此停在忙碌态, 而 daemon 已经答过了
+        (issue #135)。
+
+        `asyncio.Queue` 没有"按条件删一条"的接口, 所以整队倒出来再按原顺序放回去: 上限
+        256, 只在满时做一次, 且倒出与放回之间**没有 await** (原子的) —— 队列满也意味着
+        `_pump` 此刻没有待取的帧。
+        """
+        held: List[dict] = []
+        while True:
             try:
-                c.q.put_nowait(message)
-            except asyncio.QueueFull:
-                # 慢客户端丢**状态**帧就好 (下一拍就有新的); conn/res 丢了会让前端
-                # 一直转圈, 所以那两类宁可挤掉队列里最旧的一条状态。
-                if message.get("t") in ("conn", "res"):
-                    try:
-                        c.q.get_nowait()
-                        c.q.put_nowait(message)
-                    except Exception:  # noqa: BLE001
-                        pass
-                elif message.get("t") == "log":
-                    # ⚠ 日志帧丢了**要留下痕迹**: 文件里那条记录仍然在, 但页面上会
-                    # 出现一段空白, 而"空白"与"什么都没发生"长得一模一样。计数同时落在
-                    # 客户端与全局上, 由 `log_meta` 如实上报。
-                    #
-                    # ⚠ **不许在这里 emit 一条记录**: 队列满时再发一条会走同一条路,
-                    # 于是自己把自己再丢一次, 变成死循环。
-                    c.dropped_logs += 1
-                    self._log_dropped += 1
+                held.append(client.q.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+        index = next((i for i, f in enumerate(held) if f.get("t") == "state"), None)
+        if index is None:
+            index = next((i for i, f in enumerate(held) if f.get("t") != "res"), None)
+        dropped = None if index is None else held.pop(index)
+        for frame in held:
+            client.q.put_nowait(frame)
+        return dropped
 
     # ------------------------------------------------------------ WS 单客户端
     async def handle_ws(self, ws: WebSocket) -> None:
@@ -529,9 +601,25 @@ class Daemon:
             await self._on_upstream(ws, client, raw, trace_id, execute)
 
     async def _send_direct(self, ws: WebSocket, client: _Client, message: dict) -> None:
+        payload = _encode_frame(message)
+        if payload is None:
+            if message.get("t") == "res":
+                # 应答请求是**唯一**不能静默丢的帧: 那一头正等着它落地, 兜底超时
+                # (75s, 见 `src/lib/arm/socket.ts`) 太慢也太难解释。回一条最小的
+                # 失败应答, 让"编不出来"变成操作员看得见的一条错误。
+                payload = _encode_frame({
+                    "t": "res", "id": message.get("id"), "ok": False,
+                    "err": {"kind": "BadMessage", "msg": "应答里有无法序列化的值"},
+                })
+            if payload is None:
+                return
         async with client.lock:
-            await ws.send_text(json.dumps(message, ensure_ascii=False,
-                                          allow_nan=False, default=str))
+            try:
+                await ws.send_text(payload)
+            except Exception as e:  # noqa: BLE001
+                # 客户端在这两条帧之间断了。这里不抛: 抛出去会带走在跑它的那条任务
+                # (命令 worker / 握手), 而这一条帧本来也没人收了。
+                log.debug("直发 %s 帧失败 (客户端可能已断开): %s", message.get("t"), e)
 
     async def _pump(self, ws: WebSocket, client: _Client) -> None:
         while True:
@@ -540,9 +628,17 @@ class Daemon:
                 seq = message.get("seq")
                 if isinstance(seq, int):
                     client.last_log_seq = seq
-            async with client.lock:
-                await ws.send_text(json.dumps(message, ensure_ascii=False,
-                                              allow_nan=False, default=str))
+            payload = _encode_frame(message)
+            if payload is None:
+                continue       # 坏帧只丢它自己, 这个客户端下一拍照收 (issue #134)
+            try:
+                async with client.lock:
+                    await ws.send_text(payload)
+            except Exception as e:  # noqa: BLE001
+                # 客户端断了 ⇒ 这条推送泵到此为止, 不再空转; 队列与监听器的摘除由
+                # `handle_ws` 的 finally 负责 (断开不杀会话)。
+                log.debug("推送 %s 帧失败, 停止该客户端的推送: %s", message.get("t"), e)
+                return
 
     async def _on_upstream(self, ws: WebSocket, client: _Client, raw: str,
                            trace_id: Optional[str] = None,
