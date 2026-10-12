@@ -549,7 +549,13 @@ export const RobotViewport = forwardRef<RobotViewportHandle, RobotViewportProps>
     }
 
     const loader = new URDFLoader()
-    loader.packages = { litearm_description: WORKING_PATH.replace(/\/$/, '') }
+    // ⚠ 用**函数**而不是按名字查表。查表就等于把 URDF 里 `package://` 的包名抄了
+    // 一份到前端: 上游描述包改名那次 (`litearm_urdf` → `litearm_description`, #126)
+    // 两边同时改才没事, 而只要有一边没跟上 —— 比如升级后窗口缓存里还是旧模板 ——
+    // 每个网格都解析成 null (urdf-loader 只留一句 `not found in provided package
+    // list`), 画面上只剩地面与底座坐标轴, 看着像"模型坏了" (issue #150)。
+    // 这里只可能加载打包进来的那一份模型, 所以任何包名都指向它所在的目录即可。
+    loader.packages = () => WORKING_PATH.replace(/\/$/, '')
     loader.workingPath = WORKING_PATH
     loader.load(URDF_URL, onModelLoad, undefined, onModelError)
 
