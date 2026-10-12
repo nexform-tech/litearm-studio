@@ -73,6 +73,15 @@
     "pause": "Pause",
     "resume": "Resume"
   },
+  "render": {
+    "webglUnsupported": "WebGL is unavailable in this environment, so the arm model cannot be shown. Check the graphics driver, or use a browser that supports WebGL.",
+    "webglContextFailed": "Could not create a WebGL rendering context, so the arm model cannot be shown. Check the graphics driver, or use a browser that supports WebGL.",
+    "webglContextLost": "The 3D rendering context was lost; waiting for the browser to restore it… (the page reloads itself after 15 seconds)",
+    "refreshNow": "Refresh Now",
+    "crashTitle": "The page failed to render",
+    "crashBody": "The app caught an error while drawing this screen. This usually comes from an unexpected arm data state or an empty message from the local program.",
+    "reloadPage": "Reload Page"
+  },
   "units": {
     "deg": "°",
     "rad": "rad",

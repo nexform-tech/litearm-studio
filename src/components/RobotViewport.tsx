@@ -1,4 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import URDFLoader from 'urdf-loader'
@@ -177,7 +178,10 @@ export const RobotViewport = forwardRef<RobotViewportHandle, RobotViewportProps>
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement | null>(null)
-  const [webglError, setWebglError] = useState('')
+  const { t } = useTranslation('common')
+  // 存的是**词条名**而不是渲染好的句子：这条消息在挂载时写下，而挂载 effect 是空依赖的
+  // （重建 3D 场景代价太大），存句子就等于把当时的语言冻在状态里。渲染时再翻。
+  const [webglError, setWebglError] = useState<'' | 'unsupported' | 'context'>('')
   const [contextLost, setContextLost] = useState(false)
   const scheduleRenderRef = useRef<() => void>(() => {})
 
@@ -252,7 +256,7 @@ export const RobotViewport = forwardRef<RobotViewportHandle, RobotViewportProps>
     if (!container) return
 
     if (!isWebGLAvailable()) {
-      setWebglError('当前环境不支持 WebGL，无法显示机械臂模型。请检查显卡驱动或使用支持 WebGL 的浏览器。')
+      setWebglError('unsupported')
       return
     }
 
@@ -274,7 +278,7 @@ export const RobotViewport = forwardRef<RobotViewportHandle, RobotViewportProps>
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
     } catch (error) {
       console.error('WebGL renderer creation failed:', error)
-      setWebglError('无法创建 WebGL 渲染上下文，无法显示机械臂模型。请检查显卡驱动或使用支持 WebGL 的浏览器。')
+      setWebglError('context')
       return
     }
 
@@ -632,7 +636,7 @@ export const RobotViewport = forwardRef<RobotViewportHandle, RobotViewportProps>
             color: 'var(--color-destructive, #dc2626)',
           }}
         >
-          {webglError}
+          {webglError === 'unsupported' ? t('common:render.webglUnsupported') : t('common:render.webglContextFailed')}
         </div>
       </div>
     )
@@ -659,7 +663,7 @@ export const RobotViewport = forwardRef<RobotViewportHandle, RobotViewportProps>
             background: 'var(--background)',
           }}
         >
-          <div>3D 渲染上下文丢失，正在等待浏览器恢复…（15 秒后自动刷新页面）</div>
+          <div>{t('common:render.webglContextLost')}</div>
           <button
             type="button"
             onClick={() => window.location.reload()}
@@ -672,7 +676,7 @@ export const RobotViewport = forwardRef<RobotViewportHandle, RobotViewportProps>
               cursor: 'pointer',
             }}
           >
-            立即刷新
+            {t('common:render.refreshNow')}
           </button>
         </div>
       ) : null}

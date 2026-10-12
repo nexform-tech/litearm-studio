@@ -15,6 +15,7 @@
  */
 import { render, screen } from '@testing-library/react'
 import { beforeEach, expect, it, vi } from 'vitest'
+import i18n from '@/i18n'
 
 // `vi.mock` factories are hoisted above the imports, so the spy has to be hoisted too.
 const { constructedRenderers } = vi.hoisted(() => ({ constructedRenderers: vi.fn() }))
@@ -52,7 +53,8 @@ it('keeps the page alive when the renderer cannot be created', () => {
   expect(constructedRenderers).toHaveBeenCalled()
 
   // The viewport says what is wrong, in its own panel.
-  expect(screen.getByText(/无法显示机械臂模型/)).toBeTruthy()
+  // 词条而不是写死的中文：jsdom 的 navigator 语言决定这里的默认语言，写死会在英文环境下翻车。
+  expect(screen.getByText(i18n.t('common:render.webglContextFailed'))).toBeTruthy()
 })
 
 it('still reports a missing WebGL context as a message, not a crash', () => {
@@ -61,5 +63,5 @@ it('still reports a missing WebGL context as a message, not a crash', () => {
 
   expect(() => render(<RobotViewport />)).not.toThrow()
   expect(constructedRenderers).not.toHaveBeenCalled()
-  expect(screen.getByText(/无法显示机械臂模型/)).toBeTruthy()
+  expect(screen.getByText(i18n.t('common:render.webglUnsupported'))).toBeTruthy()
 })

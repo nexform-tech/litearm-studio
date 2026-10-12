@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 import { AlertTriangle, RefreshCw } from 'lucide-react'
+import i18n from '@/i18n'
 import { Button } from './ui/button'
 
 interface Props {
@@ -38,9 +39,9 @@ export class ErrorBoundary extends Component<Props, State> {
               <AlertTriangle className="size-6" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold">页面渲染遇到异常</h2>
+              <h2 className="text-lg font-semibold">{i18n.t('common:render.crashTitle')}</h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                应用在渲染界面时捕获到了错误。这通常是由于机械臂数据状态异常或通信数据为空引起的。
+                {i18n.t('common:render.crashBody')}
               </p>
             </div>
             {this.state.error && (
@@ -51,7 +52,7 @@ export class ErrorBoundary extends Component<Props, State> {
             <div className="flex gap-3">
               <Button size="sm" onClick={this.handleReload}>
                 <RefreshCw className="mr-1.5 size-4" />
-                重新加载页面
+                {i18n.t('common:render.reloadPage')}
               </Button>
             </div>
           </div>

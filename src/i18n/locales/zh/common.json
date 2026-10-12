@@ -73,6 +73,15 @@
     "pause": "暂停",
     "resume": "继续"
   },
+  "render": {
+    "webglUnsupported": "当前环境不支持 WebGL，无法显示机械臂模型。请检查显卡驱动或使用支持 WebGL 的浏览器。",
+    "webglContextFailed": "无法创建 WebGL 渲染上下文，无法显示机械臂模型。请检查显卡驱动或使用支持 WebGL 的浏览器。",
+    "webglContextLost": "3D 渲染上下文丢失，正在等待浏览器恢复…（15 秒后自动刷新页面）",
+    "refreshNow": "立即刷新",
+    "crashTitle": "页面渲染遇到异常",
+    "crashBody": "应用在渲染界面时捕获到了错误。这通常是由于机械臂数据状态异常或通信数据为空引起的。",
+    "reloadPage": "重新加载页面"
+  },
   "units": {
     "deg": "°",
     "rad": "rad",
