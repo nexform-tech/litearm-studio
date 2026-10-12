@@ -91,9 +91,12 @@ HOMEPAGE = "https://github.com/nexform-tech/litearm-studio"
 MAINTAINER = "Laurence Young <yangdong@nexform.tech>"
 SYNOPSIS = "Operator console for LiteArm 7-DoF collaborative robotic arms"
 
-#: The GTK build leaves `libwebkit2gtk` on the system (94 MB) and asks for it here.
-#: `gir1.2-webkit2-4.1` is the idiomatic request: it brings the typelib and, through
-#: `gir1.2-gtk-3.0`, the rest of the stack that `libwebkit2gtk` links against.
+#: The GTK build runs on the target's own desktop stack — WebKitGTK 4.1 and everything it
+#: links against — and asks for it here. `gir1.2-webkit2-4.1` is the idiomatic request: it
+#: brings the WebKit typelib and `libwebkit2gtk`, and through `gir1.2-gtk-3.0` the GTK/GLib
+#: libraries, typelibs, gdk-pixbuf loaders, GIO modules and Adwaita icon theme that go with
+#: them. Nothing of that stack is bundled any more (see `packaging/hooks/hook-gi.py`),
+#: which is why this line went from a size promise to the program's actual runtime.
 WEBKIT_DEPENDS = "gir1.2-webkit2-4.1"
 
 #: Same variable `build.py` reads, so one setting drives both the artifact and what the
@@ -133,10 +136,13 @@ def control_text(*, version: str, arch: str, installed_size_kb: int,
 
     `window_backend` decides whether the package borrows the system's WebKitGTK.
 
-    The GTK build ships PyGObject and GTK inside the executable but deliberately leaves
-    `libwebkit2gtk` on the system: that shared library is 94 MB, and pulling it in would
-    put the package back at Qt's size. `gir1.2-webkit2-4.1` is the idiomatic way to ask
-    for it — it brings the typelib and, through `gir1.2-gtk-3.0`, the rest of the stack.
+    The GTK build runs on the target's own GTK/WebKitGTK stack: the package ships PyGObject
+    (the Python side) but none of the libraries or typelibs behind it, because bundling the
+    build machine's copies both doubles the install and shadows the target's — which is
+    exactly what stopped the window from opening on Ubuntu 24.04 (issue #123). The request
+    below is therefore the program's runtime, not just a size trick: `gir1.2-webkit2-4.1`
+    brings `libwebkit2gtk` and, through `gir1.2-gtk-3.0`, GTK, GLib, the gdk-pixbuf loaders,
+    the GIO modules and the Adwaita icon theme.
 
     The Qt build bundles everything and needs no system library beyond `libc6`.
     """

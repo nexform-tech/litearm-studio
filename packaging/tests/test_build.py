@@ -262,97 +262,102 @@ def test_the_directory_shape_reports_the_size_of_the_whole_tree(monkeypatch, tmp
     assert build.bundle_size_mb("onedir") == pytest.approx(0.01)
 
 
-# ------------------------------------------- 图标主题 (安装体积里最大的一项, 可控)
+# ----------------------------- 桌面栈: 包不带, 由目标机提供 (修 Ubuntu 24.04, issue #123)
 
 
 def test_our_hook_directory_is_handed_to_pyinstaller() -> None:
     """`--additional-hooks-dir` 必须挂在构建参数上，而且指向真实存在的钩子目录。
 
-    少了它**不会有任何报错**：PyInstaller 自带的 `hook-gi.repository.Gtk` 又把构建机上的
-    整套图标主题收进产物，`.deb` 白白大 66 MB。这种"没有反馈的退化"只能靠测试钉住。
+    少了它**不会有任何报错**：PyInstaller 自带的六十多条 `hook-gi.repository.*` 又把构建机
+    那一整套桌面栈收进产物 —— `.deb` 白白大几十 MB，而且在 Ubuntu 24.04 上那份
+    `libglib-2.0.so.0`(2.72) 会盖住系统的 (2.80)，系统 WebKitGTK 加载失败、窗口开不出来
+    (issue #123)。这种"没有反馈的退化"只能靠测试钉住。
     """
     args = build.hooks_args()
 
     assert args[0] == "--additional-hooks-dir"
     hooks_dir = pathlib.Path(args[1])
     assert hooks_dir == build.HOOKS_DIR
-    assert hooks_dir.is_dir(), "钩子目录不见了 —— 包会悄悄变大"
-    assert (hooks_dir / "hook-gi.repository.Gtk.py").is_file()
+    assert hooks_dir.is_dir(), "钩子目录不见了 —— 桌面栈会回到产物里"
+    # 那件事的全部: `hook-gi` 堵住汇合点, 另外两条换掉"除了汇合点还会多塞东西"的上游钩子。
+    for name in ("hook-gi.py", "hook-gi.repository.Gio.py", "hook-gi.repository.GdkPixbuf.py"):
+        assert (hooks_dir / name).is_file(), f"{name} 不见了"
 
 
-def _load_gtk_hook():
-    """按路径加载我们那条钩子 —— 文件名带 `.`，不是个能 import 的名字。
+def _load_hook(name: str):
+    """按路径加载 `packaging/hooks/` 里的一条钩子。
 
-    PyInstaller 不在测试环境里（CI 只装 `daemon[test]`），所以调用方会让这个函数
-    `importorskip`，在 CI 上跳过 —— 它跑的地方是打包/发布环境。
+    路径加载而不是 `import`：`hook-gi.repository.Gio` 不是个能 import 的名字（gi 的钩子都
+    按 `hook-<模块名>.py` 命名，PyInstaller 自己也是按路径读的）。PyInstaller 不在测试环境
+    里（CI 只装 `daemon[test]`），所以这里 `importorskip` —— 这几条跑在打包/发布环境。
     """
     pytest.importorskip("PyInstaller")
     spec = importlib.util.spec_from_file_location(
-        "litearm_gtk_hook", ROOT / "packaging" / "hooks" / "hook-gi.repository.Gtk.py")
+        "litearm_probe_" + name.replace(".", "_"), ROOT / "packaging" / "hooks" / name)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-def test_the_gtk_hook_collects_only_the_icon_themes_we_can_justify() -> None:
-    """图标主题只留 Adwaita 与 hicolor，其余（构建机的桌面主题）一律拦下。
+def test_the_gi_hook_stops_the_whole_desktop_stack() -> None:
+    """`hook-gi.py` 堵住那三条"桌面栈进产物"的路 —— 库、typelib、构建机的运行期数据。
 
-    ⚠ 拦的只有图标主题：typelib、fontconfig、mime、翻译这些是 GTK 真需要的运行期数据，
-    少一条就是冻结产物里少一个能力，所以逐条钉住"放行"。
+    ⚠ 加载它会给本进程里的 PyInstaller 打上全局补丁（打包时正是这个效果），所以这是一条
+    "副作用型"的测试；别的测试都不碰 PyInstaller 那几个收集函数。
     """
-    hook = _load_gtk_hook()
+    hook = _load_hook("hook-gi.py")
+    from PyInstaller.depend import dylib
+    from PyInstaller.utils.hooks import gi as gi_hooks
 
-    assert hook.KEEP_ICON_THEMES == ("Adwaita", "hicolor")
+    # 1. typelib 与它引用的共享库 —— 那六十多条 `hook-gi.repository.*` 的唯一出口。
+    assert gi_hooks.GiModuleInfo.collect_typelib_data(object()) == ([], [], [])
 
-    for entry in (
-        # (来源, 目的) —— `hook_api.add_datas` 交出去时两头会被对调，两种顺序都要认。
-        ("share/icons/Adwaita/16/x.svg", "/usr/share/icons/Adwaita/16/x.svg"),
-        ("/usr/share/icons/hicolor/16/x.svg", "share/icons/hicolor/16/x.svg"),
-        ("share/fontconfig/fonts.conf", "/usr/share/fontconfig/fonts.conf"),
-        ("share/mime/globs", "/usr/share/mime/globs"),
-        ("share/glib-2.0/schemas/gschemas.compiled", "/usr/share/glib-2.0/schemas/x"),
-        ("gi_typelibs/Gtk-3.0.typelib", "/usr/share/gi_typelibs/Gtk-3.0.typelib"),
-    ):
-        assert hook.keeps(entry), f"这条不该被拦: {entry}"
+    # 2. 构建机 `/usr/share`、`/etc` 下抄下来的运行期数据（图标主题、GIO schema、翻译…）。
+    assert gi_hooks.collect_system_data_files("/usr/share/icons") == []
+    assert gi_hooks.collect_glib_share_files("icons") == []
+    assert gi_hooks.collect_glib_translations("gtk30") == []
 
-    for entry in (
-        ("share/icons/Humanity/16/x.svg", "/usr/share/icons/Humanity/16/x.svg"),
-        ("share/icons/Humanity-Dark/16/x.svg", "/usr/share/icons/Humanity-Dark/16/x.svg"),
-        ("share/icons/ubuntu-mono-dark/16/x.svg", "/usr/share/icons/ubuntu-mono-dark/16/x.svg"),
-        # `share/icons` 整棵树本身（连主题名都没有）也算"要拦的那一类"。
-        ("share/icons/icon-theme.cache", "/usr/share/icons/icon-theme.cache"),
-    ):
-        assert not hook.keeps(entry), f"这条该被拦: {entry}"
+    # 3. `gi/_gi*.so` 自己的 DT_NEEDED —— 它绕过所有钩子，只有排除表拦得住。
+    for soname in ("libglib-2.0.so.0", "libgobject-2.0.so.0", "libgtk-3.so.0",
+                   "libgdk-3.so.0", "libgdk_pixbuf-2.0.so.0", "libcairo.so.2",
+                   "libpango-1.0.so.0"):
+        assert dylib.exclude_list.check_library(soname), f"{soname} 没被排除 —— 它会盖住系统的"
+
+    # ⚠ 只排桌面栈。两条边界:
+    #   * 顺手排掉 Python 自己要用的库, 等于让产物在最小安装上起不来;
+    #   * `libgirepository-1.0.so.1` 是我们**包内**那份 PyGObject 的加载器 (桌面栈不消费它),
+    #     目标机上它只跟着 `python3-gi` 或某条 Recommends 来 —— 排掉它, 用
+    #     `--no-install-recommends` 装 GTK 的机器会在 `import gi` 就起不来。
+    for soname in ("libssl.so.3", "libz.so.1", "libbz2.so.1.0", "libffi.so.8",
+                   "libgirepository-1.0.so.1"):
+        assert not dylib.exclude_list.check_library(soname), f"{soname} 不该被排除"
 
 
-def test_the_gtk_hook_runs_upstream_and_then_filters(monkeypatch) -> None:
-    """我们的钩子是把上游那条**跑一遍**再筛，而不是自己重写一遍它的收集逻辑。
+def test_the_gdk_pixbuf_hook_drops_the_builders_loaders(monkeypatch) -> None:
+    """gdk-pixbuf 的加载器与为它们生成的缓存不进产物 —— 它们的依赖正是被排除的那些库。
 
-    这条盯住那条转发链：上游收的东西进得来（binaries / imports 原样转交），被拦的只有
-    图标主题；`hook_config` 之类的属性也要能从筛子里读出来（gi 的版本就是那么读的）。
+    这条同时盯住转发链：上游收的 `binaries`/`datas` 收下不发，`hiddenimports` 与
+    `hook_config` 之类的属性照旧穿过去（上游要读 hook 配置）。
     """
-    hook = _load_gtk_hook()
+    hook = _load_hook("hook-gi.repository.GdkPixbuf.py")
     seen: dict = {}
 
     class FakeUpstream:
         @staticmethod
-        def hook(sieve) -> None:
-            seen["hook_config"] = sieve.hook_config
-            sieve.add_datas([
-                ("share/icons/Adwaita/16/x.svg", "/usr/share/icons/Adwaita/16/x.svg"),
-                ("share/icons/Humanity/16/x.svg", "/usr/share/icons/Humanity/16/x.svg"),
-                ("share/mime/globs", "/usr/share/mime/globs"),
-            ])
-            sieve.add_binaries([("/usr/lib/libgtk-3.so.0", ".")])
-            sieve.add_imports("gi.repository.Gdk")
+        def hook(sink) -> None:
+            seen["hook_config"] = sink.hook_config
+            sink.add_datas([("lib/gdk-pixbuf/loaders.cache", "/usr/share/loaders.cache")])
+            sink.add_binaries([("/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders/"
+                                "libpixbufloader-svg.so", "lib/gdk-pixbuf/loaders")])
+            sink.add_imports("gi.repository.GdkPixbuf")
 
     class FakeApi:
         def __init__(self) -> None:
             self.datas: list = []
             self.binaries: list = []
             self.imports: list = []
-            self.hook_config = {"icons": ["IGNORED"]}
+            self.hook_config = {"languages": ["en"]}
 
         def add_datas(self, datas) -> None:
             self.datas += list(datas)
@@ -367,14 +372,17 @@ def test_the_gtk_hook_runs_upstream_and_then_filters(monkeypatch) -> None:
     api = FakeApi()
     hook.hook(api)
 
-    assert api.datas == [
-        ("share/icons/Adwaita/16/x.svg", "/usr/share/icons/Adwaita/16/x.svg"),
-        ("share/mime/globs", "/usr/share/mime/globs"),
-    ]
-    assert api.binaries == [("/usr/lib/libgtk-3.so.0", ".")]
-    assert api.imports == ["gi.repository.Gdk"]
-    assert seen["hook_config"] is api.hook_config
-    assert hook.dropped_themes([
-        ("share/icons/Humanity/16/x.svg", "/usr/share/icons/Humanity/16/x.svg"),
-        ("share/icons/Adwaita/16/x.svg", "/usr/share/icons/Adwaita/16/x.svg"),
-    ]) == ["Humanity"]
+    assert api.datas == [], "构建机的加载器缓存不该进产物"
+    assert api.binaries == [], "构建机的加载器不该进产物"
+    assert api.imports == ["gi.repository.GdkPixbuf"]  # Python 侧照旧
+    assert seen["hook_config"] is api.hook_config  # 属性读取要能穿过去
+
+
+def test_the_gio_hook_only_keeps_the_platform_module() -> None:
+    """GIO 模块与构建机的 mime.cache 由目标机提供，只留下运行时按名字取的那个 hiddenimport。
+
+    上游那条钩子是在**模块级**算这些的（没有 `hook()`），所以替身也只在模块级声明一件事。
+    """
+    hook = _load_hook("hook-gi.repository.Gio.py")
+
+    assert hook.hiddenimports == ["gi.repository.GioUnix"]

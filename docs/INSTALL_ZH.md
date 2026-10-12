@@ -48,6 +48,8 @@ sudo apt install ./litearm-studio_0.12.0_amd64.deb
 
 请使用 `apt install ./文件名.deb`，不要用 `dpkg -i`。apt 会自动处理依赖，并在系统低于 Ubuntu 22.04 / Debian 12 时拒绝安装，避免装好后因缺少 `GLIBC_2.35` 无法启动。
 
+窗口由**系统自带**的 GTK 3 与 WebKitGTK 4.1 绘制：apt 会把 `gir1.2-webkit2-4.1`（以及随之而来的 GTK、GLib、gdk-pixbuf 加载器、GIO 模块）作为依赖装上。包里再带一份同样的库曾经导致 Ubuntu 24.04 上窗口打不开，所以机器上只有一份，就是系统那一份。
+
 ### 2.3 启动
 
 安装后 `litearm-studio` 命令可直接使用，应用列表中也会出现 **LiteArm Studio**。两种方式都可以启动程序。
@@ -123,8 +125,9 @@ chmod +x litearm-studio-0.12.0-linux-amd64
 | 要求 | 说明 |
 | :--- | :--- |
 | glibc 2.35 及以上 | 即 Ubuntu 22.04+、Debian 12+。在 Ubuntu 20.04 上程序无法启动，终端提示缺少 `GLIBC_2.35` |
-| `$TMPDIR` 可执行 | 每次启动都会把整包（这一版约 130 MB）解压到 `$TMPDIR`（默认 `/tmp`）并从中运行。`/tmp` 以 `noexec` 挂载时无法启动，请把 `TMPDIR` 指向普通目录 |
-| 浏览器 | 任意浏览器均可。`PATH` 中有 Chrome、Chromium、Edge 或 Brave 时，窗口不带地址栏；否则用默认浏览器打开标签页 |
+| GTK 3 与 WebKitGTK 4.1 | 窗口由系统自带的 WebKitGTK 绘制，可执行文件里不带它。Ubuntu / Debian 上执行 `sudo apt install gir1.2-webkit2-4.1` 即可。缺了它会打印"没有可用的 webview 后端"并退出，而不是打开窗口 |
+| `$TMPDIR` 可执行 | 每次启动都会把整包（这一版约 40 MB）解压到 `$TMPDIR`（默认 `/tmp`）并从中运行。`/tmp` 以 `noexec` 挂载时无法启动，请把 `TMPDIR` 指向普通目录 |
+| 浏览器（可选） | 仅当你想用浏览器代替内置窗口时：用 `litearm-studio --no-open` 启动，再打开它打印出的地址 |
 | 串口访问权限 | 仅连接真实机械臂时需要，见 § 5 |
 
 启动需要几秒钟，这是解压造成的，属于正常现象。
