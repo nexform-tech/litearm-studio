@@ -1546,6 +1546,10 @@ class Session:
         bootloader），而两者的处置相反 —— 前者去查线, 后者去烧录或断电重上电。只看
         `connected` 分不出来, 界面就只会说"请先连接设备", 而那句话对第二种是错的。
 
+        `location` 是**它插在哪儿**（`1-3.2` 这样的总线-端口链, 见 `dfu.device_location`）:
+        这台机器上可能不止一块 STM32, 而"我们找到的是哪一块"光靠 `present` 说不出来 ——
+        界面上把它显示出来, 操作员才能自己核对, 免得烧错板子。
+
         ⚠ `present` 只代表**枚举到**, 不代表打得开: 内核先建设备节点、udev 随后才
         chmod, 这个窗口里 `find_device()` 已经成功而 `open()` 会吃 `EACCES`（真机演练
         抓到过, 见 `_dfu_wait`）。所以它是提示, 不是发令枪 —— 真开烧时 `_dfu_wait`
@@ -1553,15 +1557,20 @@ class Session:
         ⚠ 引擎不可用时无从枚举, `present` 一律 `False`: 那属于"能不能烧"的问题
         (`engineReady` 已经在说), 不该在这里冒充成"板子不在"。
         """
-        out = {"present": False, "engine": self._dfu_engine.backend_status(),
+        out = {"present": False, "location": "",
+               "engine": self._dfu_engine.backend_status(),
                "engineReady": bool(self._dfu_engine.available())}
         if out["engineReady"]:
             try:
-                out["present"] = self._dfu_engine.find_device() is not None
+                dev = self._dfu_engine.find_device()
             except Exception as e:                             # noqa: BLE001
                 # 枚举本身炸了（libusb 半死 / 后端被拔掉）—— 那是"能不能烧"的事, 由
                 # `engine` / `engineReady` 说。一次状态查询不该把异常抛给调用方。
                 log.warning("DFU 设备枚举失败: %s: %s", type(e).__name__, e)
+                dev = None
+            if dev is not None:
+                out["present"] = True
+                out["location"] = dfu.device_location(dev)
         return out
 
     def _no_session_message(self, present: Optional[bool] = None) -> str:
@@ -1596,10 +1605,12 @@ class Session:
             return {"job": None, "engine": dfu_facts["engine"],
                     "engineReady": dfu_facts["engineReady"],
                     "dfuPresent": dfu_facts["present"],
+                    "dfuLocation": dfu_facts["location"],
                     "running": False}
         return {"job": job, "engine": dfu_facts["engine"],
                 "engineReady": dfu_facts["engineReady"],
                 "dfuPresent": dfu_facts["present"],
+                "dfuLocation": dfu_facts["location"],
                 "running": running,
                 "phase": progress.get("phase"),
                 "done": progress.get("done", 0),

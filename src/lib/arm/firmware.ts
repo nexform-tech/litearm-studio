@@ -70,6 +70,14 @@ export type FirmwareStatus = {
    */
   dfuPresent?: boolean
   /**
+   * 那块 DFU 板子**插在哪儿**（`1-3.2` 这样的总线-端口链，取不到时为空串）。
+   *
+   * 用途只有一个：让操作员核对"我们找到的这块，是不是我插的那块"。这台机器上可能
+   * 不止一块 STM32 在 DFU 里，而 `0483:DF11` 是整个 STM32 系列共用的编号 —— 认错了
+   * 就是把控制器固件写进别人的板子。它是**插口位置**，换个插口就变（不是枚举号）。
+   */
+  dfuLocation?: string
+  /**
    * 这次升级**还在跑**吗。
    *
    * ⚠ 必需字段：没有它，界面分不清"这次还在跑"与"上一次已经结束" —— 两者都带着
@@ -125,13 +133,15 @@ export function normalizeFirmwareStatus(raw: unknown): FirmwareStatus {
   const job = nullableStr(r.job)
   if (!job) {
     return { job: null, engine: str(r.engine), engineReady: r.engineReady === true,
-             dfuPresent: r.dfuPresent === true, running: false }
+             dfuPresent: r.dfuPresent === true, dfuLocation: str(r.dfuLocation),
+             running: false }
   }
   return {
     job,
     engine: str(r.engine),
     engineReady: r.engineReady === true,
     dfuPresent: r.dfuPresent === true,
+    dfuLocation: str(r.dfuLocation),
     running: r.running === true,
     phase: nullableStr(r.phase),
     done: num(r.done),

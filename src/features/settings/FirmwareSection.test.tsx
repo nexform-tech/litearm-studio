@@ -186,6 +186,25 @@ describe('FirmwareSection', () => {
     expect(notice.textContent).not.toMatch(/连上之后才能升级|connect before updating/i)
   })
 
+  it('says where the board it found is plugged in, so the operator can check it', () => {
+    // ⚠ `0483:DF11` 是整个 STM32 系列共用的编号: 这台机器上若有第二块 STM32 也在 DFU 里,
+    //   我们可能找到的是它。位置是唯一能让操作员核对"是不是我插的那块"的东西。
+    mocks.vm = baseVm({ connected: false, dfuPresent: true, dfuLocation: '1-3.2',
+                        summary: SUMMARY })
+    render(<FirmwareSection />)
+    const line = screen.getByTestId('firmware-dfu-location')
+    expect(line.textContent).toContain('1-3.2')
+  })
+
+  it('says nothing about a location the daemon could not determine', () => {
+    // 编一个位置比不说更糟：操作员会拿着一个假的插口名去核对，然后以为对上了。
+    mocks.vm = baseVm({ connected: false, dfuPresent: true, dfuLocation: '',
+                        summary: SUMMARY })
+    render(<FirmwareSection />)
+    expect(screen.getByTestId('firmware-dfu')).toBeTruthy()
+    expect(screen.queryByTestId('firmware-dfu-location')).toBeNull()
+  })
+
   it('lets the update start with no session when the board is in the bootloader', () => {
     // ⚠ 这一条就是"死循环"的破法：没有会话（板子没有应用态可连），但烧录仍然可开 ——
     //   因为从 DFU 起跑正是唯一能把板子弄回应用态的事。

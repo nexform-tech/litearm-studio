@@ -461,8 +461,11 @@ litearm-studio-daemon --fake --fake-unactivated
 | `firmware_status` | 不要 | 当前快照（界面重开/重连后据此把进度条接回去），带 `dfuPresent` |
 | `firmware_cancel` | 不要 | 请求取消（进入擦写相位后无效） |
 
-`/api/health` 里多一段 `dfu`：`{present, engine, engineReady}` —— 它与 `connected` 是
-**两个独立的问题**，见下面「板子停在 bootloader 里」。
+`/api/health` 里多一段 `dfu`：`{present, location, engine, engineReady}` —— `present`
+与 `connected` 是**两个独立的问题**（见下面「板子停在 bootloader 里」）。
+`location` 是**板子插在哪儿**（`1-3.2` 这样的总线-端口链：取 `bus` / `port_numbers`，
+不发任何 `GET_DESCRIPTOR`，见 `dfu.device_location`）—— 这台机器上可能不止一块 STM32，
+而 `0483:DF11` 整个系列共用，所以界面把它显示出来让操作员核对是哪一块。
 
 下行新增两类帧：`firmware_progress {job, phase, done, total, detail}` 与
 `firmware_result {job, ok, reason, msg, version, port, warning}`。`reason` 是短码，

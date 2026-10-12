@@ -495,12 +495,15 @@ def test_status_says_a_board_is_sitting_in_the_bootloader() -> None:
     try:
         st = s.execute("firmware_status", {})
         assert st["dfuPresent"] is True and st["engineReady"] is True
+        # 还得说清是**哪一块** —— 这台机器上可能不止一块 STM32, 操作员要能核对。
+        assert st["dfuLocation"] == "1-3"
     finally:
         s.close()
 
     s = Session(fake=True, dfu_engine=fake_engine.FakeEngine(present=False))
     try:
-        assert s.execute("firmware_status", {})["dfuPresent"] is False
+        st = s.execute("firmware_status", {})
+        assert st["dfuPresent"] is False and st["dfuLocation"] == ""
     finally:
         s.close()
 
@@ -510,9 +513,35 @@ def test_status_says_a_board_is_sitting_in_the_bootloader() -> None:
     try:
         st = s.execute("firmware_status", {})
         assert st["dfuPresent"] is False and st["engineReady"] is False
+        assert st["dfuLocation"] == ""
         assert "pyusb" in st["engine"]
     finally:
         s.close()
+
+
+def test_device_location_names_the_physical_socket() -> None:
+    """`location` 的用途只有一个: 让操作员核对"是不是我插的那块板子"。
+
+    ⚠ 所以它必须是**插在哪儿**（总线 + 端口链, 换个插口就变), 而不是"这次枚举成几号"
+      (`address` 每次重枚举都变, 对不上人眼看见的东西)。
+    ⚠ 只用枚举时白拿的字段: 读字符串描述符会发 `GET_DESCRIPTOR`, 而那条路上多打一次
+      就会把 DFU 设备的状态搞乱（见 `engine` 的实测教训）。
+    """
+
+    class _Dev:
+        def __init__(self, **kw) -> None:
+            for key, value in kw.items():
+                setattr(self, key, value)
+
+    assert dfu.device_location(_Dev(bus=1, port_numbers=(3, 2))) == "1-3.2"
+    assert dfu.device_location(_Dev(bus=1, port_number=4)) == "1-4"
+    # 只有总线号也是可核对的信息（比编一个假的端口号诚实）。
+    assert dfu.device_location(_Dev(bus=2)) == "2"
+    # 端口链里有读不懂的项 ⇒ 退到单跳, 而不是报一个半截的链。
+    assert dfu.device_location(_Dev(bus=1, port_numbers=(3, None), port_number=7)) == "1-7"
+    # 拿不到总线号 ⇒ 说不出可核对的位置, 回空串（界面据此只显示"检测到一块"）。
+    assert dfu.device_location(_Dev(port_number=4)) == ""
+    assert dfu.device_location(None) == ""
 
 
 def test_a_normal_command_says_the_board_is_in_the_bootloader() -> None:

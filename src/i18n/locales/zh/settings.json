@@ -175,6 +175,7 @@
     "holesValue": "{{count}} 段（按 0xFF 填充）",
     "notConnected": "未连接控制器 —— 连上之后才能升级。若板子停在 DFU 里，这里会单独提示。",
     "dfuPresent": "检测到控制器停在 bootloader（DFU）里：它不在应用态，所以顶栏连不上它 —— 这不是没插线。点下面的「烧录并复位回应用」把它写回来。",
+    "dfuLocation": "找到的控制器位于 USB {{location}}，请确认这就是你要烧录的控制器。",
     "connectedHint": "当前固件：{{firmware}} · 端口：{{port}}",
     "safetyTitle": "开始之前必须确认",
     "safetyDisarm": "升级会先让机械臂失能 —— 中途电机会松开，有重力负载就会下垂",

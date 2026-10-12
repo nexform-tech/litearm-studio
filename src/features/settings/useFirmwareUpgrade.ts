@@ -55,6 +55,13 @@ export function useFirmwareUpgrade() {
    * 允许开烧**（那条近路的正当性见 daemon 的 `dfu.job`）。
    */
   const [dfuPresent, setDfuPresent] = useState(false)
+  /**
+   * 那块 DFU 板子插在哪儿（`1-3.2`；守护进程说不出时为空串）。
+   *
+   * ⚠ 界面**不解释**它，只如实显示 —— 它是给操作员核对"是不是我插的那块"用的。这台
+   * 机器上可能不止一块 STM32 在 DFU 里，而那个编号整个系列共用（见 `dfuPresent`）。
+   */
+  const [dfuLocation, setDfuLocation] = useState('')
 
   // 上一次上传的 `File` —— "重新选择"只在用户换了文件时才动，避免同一份镜像
   // 重复上传（一次几 MB 的 base64 不便宜）。
@@ -66,6 +73,7 @@ export function useFirmwareUpgrade() {
       const st = await armClient.firmwareStatus()
       setEngine({ ready: st.engineReady, label: st.engine })
       setDfuPresent(st.dfuPresent === true)
+      setDfuLocation(st.dfuLocation ?? '')
       // ⚠ **只**恢复"还在跑"的那一次。已经结束的 job 一律不恢复 —— 上一次升级的结果
       //   不该在页面打开时冒出来：它不是这次发生的事，露出来只会让人以为刚跑完。
       //   （守护进程会把上一个 job 连同它的 `done` 相位一直留着，所以这里必须自己筛。）
@@ -211,6 +219,7 @@ export function useFirmwareUpgrade() {
     engine,
     engineReady: engine?.ready ?? false,
     dfuPresent,
+    dfuLocation,
     summary,
     error,
     inspecting,

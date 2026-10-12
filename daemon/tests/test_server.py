@@ -429,6 +429,8 @@ def test_health_reports_whether_a_board_is_sitting_in_the_bootloader() -> None:
             assert dfu["present"] is True
             assert dfu["engineReady"] is True
             assert dfu["engine"]                       # 后端诊断串非空
+            # 位置也要过 HTTP —— 不带界面时（脚本/排障）同样要能核对是哪一块板子。
+            assert dfu["location"] == "1-3"
     finally:
         session.close()
 

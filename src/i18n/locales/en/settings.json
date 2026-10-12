@@ -175,6 +175,7 @@
     "holesValue": "{{count}} gap(s), filled with 0xFF",
     "notConnected": "No controller connected — connect before updating. A board stuck in DFU is called out separately here.",
     "dfuPresent": "A controller is sitting in the bootloader (DFU): it is not running the application, so the top bar cannot connect to it — this is not a loose cable. Press “Flash and restart into the application” below to write it back.",
+    "dfuLocation": "The controller we found is at USB {{location}} — confirm this is the one you want to flash.",
     "connectedHint": "Current firmware: {{firmware}} · port: {{port}}",
     "safetyTitle": "Confirm before you start",
     "safetyDisarm": "The update disarms the arm first — the motors release mid-way, so a gravity-loaded arm will sag",

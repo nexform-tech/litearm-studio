@@ -111,7 +111,21 @@ export function FirmwareSection() {
             <Notice>
               <span className="flex items-start gap-2 text-foreground">
                 <Cpu className="mt-0.5 size-3.5 flex-none" />
-                <span>{t('settings:firmware.dfuPresent')}</span>
+                <span>
+                  {t('settings:firmware.dfuPresent')}
+                  {/* ⚠ 位置是给操作员**核对**用的，所以单独一行：`0483:DF11` 是整个
+                      STM32 系列共用的编号，认错了就是把控制器固件写进别人的板子。
+                      说不出位置时（旧守护进程 / 拿不到总线号）这一行整个不出现 ——
+                      编一个出来比不说更糟。 */}
+                  {vm.dfuLocation ? (
+                    <span
+                      data-testid="firmware-dfu-location"
+                      className="mt-1 block text-[0.6875rem] text-muted-foreground"
+                    >
+                      {t('settings:firmware.dfuLocation', { location: vm.dfuLocation })}
+                    </span>
+                  ) : null}
+                </span>
               </span>
             </Notice>
           </div>

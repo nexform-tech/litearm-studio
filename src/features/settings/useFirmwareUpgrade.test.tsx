@@ -84,10 +84,11 @@ describe('useFirmwareUpgrade', () => {
     //   **"要不要在没有会话的情况下也开烧"**，以及那句提示该怎么说（issue #152）。
     mocks.firmwareStatus.mockResolvedValue({
       job: null, engine: 'libusb-package: /x/libusb-1.0.so', engineReady: true,
-      dfuPresent: true, running: false,
+      dfuPresent: true, dfuLocation: '1-3', running: false,
     })
     const { result } = renderHook(() => useFirmwareUpgrade())
     await waitFor(() => expect(result.current.dfuPresent).toBe(true))
+    expect(result.current.dfuLocation).toBe('1-3')
   })
 
   it('never claims a board is in the bootloader unless the daemon says so', async () => {
@@ -96,6 +97,7 @@ describe('useFirmwareUpgrade', () => {
     const { result } = renderHook(() => useFirmwareUpgrade())
     await waitFor(() => expect(result.current.engine).not.toBeNull())
     expect(result.current.dfuPresent).toBe(false)
+    expect(result.current.dfuLocation).toBe('')
   })
 
   it('uploads the file and shows the summary the daemon returns', async () => {

@@ -29,6 +29,18 @@ class FakePermissionError(Exception):
         self.errno = 13
 
 
+class FakeHandle:
+    """`find_device()` 的返回物 —— 真件是 pyusb 的 `Device`。
+
+    ⚠ 它只带**位置**要用的两个属性 (`bus` / `port_numbers`), 因为 `device_location()`
+      只读这两样, 而"读到位置"是操作员核对板子时唯一要看的东西（见 `dfu.device_location`）。
+      `DfuDevice` 忽略这个对象, 所以它可以是任何形状。
+    """
+
+    bus = 1
+    port_numbers = (3,)
+
+
 class FakeDfuDevice:
     """一个假 DFU 设备：按 `steps` 推进度，可选在某一步失败。"""
 
@@ -120,7 +132,7 @@ class FakeEngine:
         return "假件 (--fake / 测试)"
 
     def find_device(self):
-        return object() if self.present else None
+        return FakeHandle() if self.present else None
 
     def DfuDevice(self, dev=None, transfer_size=None) -> FakeDfuDevice:  # noqa: N802
         deny = self._denied < self.deny_open_times

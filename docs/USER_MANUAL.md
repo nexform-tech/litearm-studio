@@ -360,7 +360,7 @@ exactly like an unplugged cable or a dead board, although the two need opposite 
 calls this state out separately:
 
 1. Open **Settings → Firmware update**;
-2. the page reports "a controller is sitting in the bootloader (DFU)" instead of "no controller connected";
+2. the page reports "a controller is sitting in the bootloader (DFU)" instead of "no controller connected", together with the **USB location** it found (e.g. `1-3.2`) — check that this is the board you plugged in: a second STM32 in DFU on the same computer would be found instead, and flashing it writes the controller firmware into the wrong board;
 3. pick the firmware file, tick the safety confirmation and press **Flash and restart into the application** — **no connection is needed first**, and the board restarts into the application when flashing finishes.
 
 Flashing is optional: power-cycling the board makes it try to boot the application; if the
