@@ -260,3 +260,121 @@ def test_the_directory_shape_reports_the_size_of_the_whole_tree(monkeypatch, tmp
     (tree / "_internal" / "libpython.so").write_bytes(b"y" * 3000)
 
     assert build.bundle_size_mb("onedir") == pytest.approx(0.01)
+
+
+# ------------------------------------------- 图标主题 (安装体积里最大的一项, 可控)
+
+
+def test_our_hook_directory_is_handed_to_pyinstaller() -> None:
+    """`--additional-hooks-dir` 必须挂在构建参数上，而且指向真实存在的钩子目录。
+
+    少了它**不会有任何报错**：PyInstaller 自带的 `hook-gi.repository.Gtk` 又把构建机上的
+    整套图标主题收进产物，`.deb` 白白大 66 MB。这种"没有反馈的退化"只能靠测试钉住。
+    """
+    args = build.hooks_args()
+
+    assert args[0] == "--additional-hooks-dir"
+    hooks_dir = pathlib.Path(args[1])
+    assert hooks_dir == build.HOOKS_DIR
+    assert hooks_dir.is_dir(), "钩子目录不见了 —— 包会悄悄变大"
+    assert (hooks_dir / "hook-gi.repository.Gtk.py").is_file()
+
+
+def _load_gtk_hook():
+    """按路径加载我们那条钩子 —— 文件名带 `.`，不是个能 import 的名字。
+
+    PyInstaller 不在测试环境里（CI 只装 `daemon[test]`），所以调用方会让这个函数
+    `importorskip`，在 CI 上跳过 —— 它跑的地方是打包/发布环境。
+    """
+    pytest.importorskip("PyInstaller")
+    spec = importlib.util.spec_from_file_location(
+        "litearm_gtk_hook", ROOT / "packaging" / "hooks" / "hook-gi.repository.Gtk.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_gtk_hook_collects_only_the_icon_themes_we_can_justify() -> None:
+    """图标主题只留 Adwaita 与 hicolor，其余（构建机的桌面主题）一律拦下。
+
+    ⚠ 拦的只有图标主题：typelib、fontconfig、mime、翻译这些是 GTK 真需要的运行期数据，
+    少一条就是冻结产物里少一个能力，所以逐条钉住"放行"。
+    """
+    hook = _load_gtk_hook()
+
+    assert hook.KEEP_ICON_THEMES == ("Adwaita", "hicolor")
+
+    for entry in (
+        # (来源, 目的) —— `hook_api.add_datas` 交出去时两头会被对调，两种顺序都要认。
+        ("share/icons/Adwaita/16/x.svg", "/usr/share/icons/Adwaita/16/x.svg"),
+        ("/usr/share/icons/hicolor/16/x.svg", "share/icons/hicolor/16/x.svg"),
+        ("share/fontconfig/fonts.conf", "/usr/share/fontconfig/fonts.conf"),
+        ("share/mime/globs", "/usr/share/mime/globs"),
+        ("share/glib-2.0/schemas/gschemas.compiled", "/usr/share/glib-2.0/schemas/x"),
+        ("gi_typelibs/Gtk-3.0.typelib", "/usr/share/gi_typelibs/Gtk-3.0.typelib"),
+    ):
+        assert hook.keeps(entry), f"这条不该被拦: {entry}"
+
+    for entry in (
+        ("share/icons/Humanity/16/x.svg", "/usr/share/icons/Humanity/16/x.svg"),
+        ("share/icons/Humanity-Dark/16/x.svg", "/usr/share/icons/Humanity-Dark/16/x.svg"),
+        ("share/icons/ubuntu-mono-dark/16/x.svg", "/usr/share/icons/ubuntu-mono-dark/16/x.svg"),
+        # `share/icons` 整棵树本身（连主题名都没有）也算"要拦的那一类"。
+        ("share/icons/icon-theme.cache", "/usr/share/icons/icon-theme.cache"),
+    ):
+        assert not hook.keeps(entry), f"这条该被拦: {entry}"
+
+
+def test_the_gtk_hook_runs_upstream_and_then_filters(monkeypatch) -> None:
+    """我们的钩子是把上游那条**跑一遍**再筛，而不是自己重写一遍它的收集逻辑。
+
+    这条盯住那条转发链：上游收的东西进得来（binaries / imports 原样转交），被拦的只有
+    图标主题；`hook_config` 之类的属性也要能从筛子里读出来（gi 的版本就是那么读的）。
+    """
+    hook = _load_gtk_hook()
+    seen: dict = {}
+
+    class FakeUpstream:
+        @staticmethod
+        def hook(sieve) -> None:
+            seen["hook_config"] = sieve.hook_config
+            sieve.add_datas([
+                ("share/icons/Adwaita/16/x.svg", "/usr/share/icons/Adwaita/16/x.svg"),
+                ("share/icons/Humanity/16/x.svg", "/usr/share/icons/Humanity/16/x.svg"),
+                ("share/mime/globs", "/usr/share/mime/globs"),
+            ])
+            sieve.add_binaries([("/usr/lib/libgtk-3.so.0", ".")])
+            sieve.add_imports("gi.repository.Gdk")
+
+    class FakeApi:
+        def __init__(self) -> None:
+            self.datas: list = []
+            self.binaries: list = []
+            self.imports: list = []
+            self.hook_config = {"icons": ["IGNORED"]}
+
+        def add_datas(self, datas) -> None:
+            self.datas += list(datas)
+
+        def add_binaries(self, binaries) -> None:
+            self.binaries += list(binaries)
+
+        def add_imports(self, *module_names) -> None:
+            self.imports += list(module_names)
+
+    monkeypatch.setattr(hook, "_load_upstream", lambda: FakeUpstream)
+    api = FakeApi()
+    hook.hook(api)
+
+    assert api.datas == [
+        ("share/icons/Adwaita/16/x.svg", "/usr/share/icons/Adwaita/16/x.svg"),
+        ("share/mime/globs", "/usr/share/mime/globs"),
+    ]
+    assert api.binaries == [("/usr/lib/libgtk-3.so.0", ".")]
+    assert api.imports == ["gi.repository.Gdk"]
+    assert seen["hook_config"] is api.hook_config
+    assert hook.dropped_themes([
+        ("share/icons/Humanity/16/x.svg", "/usr/share/icons/Humanity/16/x.svg"),
+        ("share/icons/Adwaita/16/x.svg", "/usr/share/icons/Adwaita/16/x.svg"),
+    ]) == ["Humanity"]

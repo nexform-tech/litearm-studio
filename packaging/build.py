@@ -69,6 +69,11 @@ GTK_MODULES = ("Gtk", "Gdk", "GdkPixbuf", "Gio", "GLib", "GObject", "Pango", "At
 # Linux 的 ELF 不嵌图标，这个参数在 Linux 上只是被 PyInstaller 接受后忽略。
 ICON = ROOT / "assets" / "litearm.ico"
 
+#: 我们自己的 PyInstaller 钩子目录（见 `packaging/hooks/`）。目前只有一条：GTK 那条
+#: 图标主题白名单。它**替代**（不是补充）PyInstaller 自带的同名钩子 —— PyInstaller
+#: 每个模块只留一条钩子，同名的用户钩子优先。
+HOOKS_DIR = ROOT / "packaging" / "hooks"
+
 
 def resolve_version() -> str:
     """tag > git describe > 兜底。统一的去 `v` 前缀口径由调用方决定。"""
@@ -260,6 +265,23 @@ def slimming_args() -> list[str]:
         "--exclude-module", "setuptools",
         "--exclude-module", "pkg_resources",
     ]
+
+
+def hooks_args() -> list[str]:
+    """挂上我们自己的 PyInstaller 钩子目录（`packaging/hooks/`）。
+
+    ⚠ 这一条是**体积**参数，只是长得不像。PyInstaller 自带的 `hook-gi.repository.Gtk`
+    在没配 hooksconfig 时执行 `collect_glib_share_files('icons')`，把**构建机**上装着的
+    整套图标主题原样收进产物 —— ubuntu-22.04 上是 Humanity 等，展开后 71 MB，占
+    v0.22.2 那个 `.deb` 安装体积的三分之一还多。
+
+    `--additional-hooks-dir` 里的目录被放在最前面，而一个模块只有一条钩子生效（优先级
+    高的胜出），所以这一条是**替代**上游那条而不是给它打补丁：我们那条在执行时把上游
+    原样调用一遍，只筛掉多余的图标主题（见 `packaging/hooks/hook-gi.repository.Gtk.py`）。
+
+    少了这个参数不会有任何报错 —— 包只是白白大一截。所以 `test_build.py` 里有一条钉住它。
+    """
+    return ["--additional-hooks-dir", str(HOOKS_DIR)]
 
 
 def window_build_args() -> list[str]:
@@ -526,6 +548,7 @@ def main() -> int:
             *activation_build_args(activation_url),
             *uvicorn_build_args(),
             *slimming_args(),
+            *hooks_args(),
             "--distpath", str(OUT_DIST),
             "--workpath", str(WORK),
             "--specpath", str(WORK),

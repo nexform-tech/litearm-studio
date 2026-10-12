@@ -150,7 +150,7 @@ opens a window. Use the printed address if that port was taken.
 | Requirement | Why it matters |
 | :--- | :--- |
 | glibc 2.35 or newer | Ubuntu 22.04+, Debian 12+. On Ubuntu 20.04 the program fails to start and the shell reports a missing `GLIBC_2.35` |
-| An executable `$TMPDIR` | Every start unpacks about 87 MB into `$TMPDIR` (default `/tmp`) and runs from there. A `/tmp` mounted `noexec` breaks the start; point `TMPDIR` at a normal directory instead |
+| An executable `$TMPDIR` | Every start unpacks the whole bundle — around 130 MB for this build — into `$TMPDIR` (default `/tmp`) and runs from there. A `/tmp` mounted `noexec` breaks the start; point `TMPDIR` at a normal directory instead |
 | A browser | Any browser works. With Chrome, Chromium, Edge or Brave on `PATH` the window opens without an address bar; otherwise the default browser opens a tab |
 | Access to the serial port | Real arm only. See § 5 |
 
