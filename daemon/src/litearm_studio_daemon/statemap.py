@@ -94,9 +94,14 @@ def state_to_dict(state: Any, *, enabled: Optional[bool] = None,
                   motion_in_flight: bool = False) -> dict:
     """`RobotState` → 3.3 节那张表的 JSON 对象 (纯转换, 不做任何判断以外的加工)。
 
-    `enabled` / `zero_g_active` / `motion_in_flight` 三个量来自**会话**而不是状态帧:
-    固件那一位 (flags bit9) 只从 1.5.0 起上报, 老固件恒 0 ⇒ 不能只依赖它; 会话自己的
-    记录更可靠 (与 `state_of` 的口径一致)。
+    三个参数各有各的来源, 别把它们当成同一个口径:
+
+    * `enabled` —— 传进来就用它; 传 `None` 才回落到状态帧的 flags bit9。**帧外没有更
+      权威的记录**: 会话只是把同一个 bit 原样传进来 (`_poll_once` / `_note_zero_g`),
+      这个参数在那边只当测试缝用。bit9 只从 1.5.0 起上报, 而 `MIN_FW` 就是 (1, 5, 0),
+      所以本守护进程接受的固件都会报它。
+    * `zero_g_active` / `motion_in_flight` —— 这两个状态帧里没有对应的位, 只能由会话
+      按自己记的账传进来 (与 `state_of` 的口径一致)。
     """
     joints = list(getattr(state, "joints", []) or [])
     cart_busy = bool(getattr(state, "cart_busy", False))

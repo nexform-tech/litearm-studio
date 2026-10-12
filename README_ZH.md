@@ -62,15 +62,11 @@ litearm-python  ──USB CDC (1d50:606f)──>  STM32  ──CAN──>  电�
   submodule 的形式随本仓（`sdk/`）发布，版本由 tag 钉住。`make sdk` 一次取回并安装，
   不需要手工 clone。
 
-- **`litegrip`（LiteGrip 夹爪 SDK）—— 仅 Linux，不在 PyPI 上**，也要克隆后本地安装：
-
-```bash
-git clone --branch v0.4.0 https://github.com/nexform-tech/litegrip-python.git
-pip install ./litegrip-python
-```
-
-  运行本身不强制要它：Linux 上没装，守护进程照常启动，只是不提供夹爪。但**测试要** ——
-  不装它，文末「常用命令」表里的 `python -m pytest daemon/tests -q` 会在收集阶段直接中断
+- **`litegrip`（LiteGrip 夹爪 SDK）—— 仅 Linux**，就是上面那两个 submodule 里的
+  `sdk/litegrip-python`，所以 `make sdk` 一次装完就够了 —— 装的正是钉住的那个版本
+  （`git submodule status` 打印它），也是守护进程与设置页对着写的那一版。运行本身不强制
+  要它：Linux 上没装，守护进程照常启动，只是不提供夹爪。但**测试要** —— 不装它，文末
+  「常用命令」表里的 `python -m pytest daemon/tests -q` 会在收集阶段直接中断
   （`ModuleNotFoundError: No module named 'litegrip'`），一个用例都跑不了。细节见
   [本地程序说明](daemon/README.md)。
 
