@@ -280,7 +280,9 @@ def test_our_hook_directory_is_handed_to_pyinstaller() -> None:
     assert hooks_dir == build.HOOKS_DIR
     assert hooks_dir.is_dir(), "钩子目录不见了 —— 桌面栈会回到产物里"
     # 那件事的全部: `hook-gi` 堵住汇合点, 另外两条换掉"除了汇合点还会多塞东西"的上游钩子。
-    for name in ("hook-gi.py", "hook-gi.repository.Gio.py", "hook-gi.repository.GdkPixbuf.py"):
+    # `litearm_stack.py` 是同一件事的名单 —— 拦 (钩子) 与查 (build.py) 共用它。
+    for name in ("hook-gi.py", "hook-gi.repository.Gio.py", "hook-gi.repository.GdkPixbuf.py",
+                 "litearm_stack.py"):
         assert (hooks_dir / name).is_file(), f"{name} 不见了"
 
 
@@ -321,7 +323,11 @@ def test_the_gi_hook_stops_the_whole_desktop_stack() -> None:
     # 3. `gi/_gi*.so` 自己的 DT_NEEDED —— 它绕过所有钩子，只有排除表拦得住。
     for soname in ("libglib-2.0.so.0", "libgobject-2.0.so.0", "libgtk-3.so.0",
                    "libgdk-3.so.0", "libgdk_pixbuf-2.0.so.0", "libcairo.so.2",
-                   "libpango-1.0.so.0"):
+                   "libpango-1.0.so.0",
+                   # glib 自己的依赖: PyInstaller 用 ldd 拿的是整条传递闭包, 这几条就是这么
+                   # 混进来的 —— 挡掉 libglib 之后它们成了孤儿, 却照样同名盖住系统的。
+                   "libpcre.so.3", "libpcre2-8.so.0", "libmount.so.1", "libblkid.so.1",
+                   "libselinux.so.1"):
         assert dylib.exclude_list.check_library(soname), f"{soname} 没被排除 —— 它会盖住系统的"
 
     # ⚠ 只排桌面栈。两条边界:
@@ -332,6 +338,86 @@ def test_the_gi_hook_stops_the_whole_desktop_stack() -> None:
     for soname in ("libssl.so.3", "libz.so.1", "libbz2.so.1.0", "libffi.so.8",
                    "libgirepository-1.0.so.1"):
         assert not dylib.exclude_list.check_library(soname), f"{soname} 不该被排除"
+
+
+def _load_stack_rules():
+    """`packaging/hooks/litearm_stack.py` —— 名单与判定都在那里, 且**不**依赖 PyInstaller。
+
+    所以这一条在普通测试环境里也跑（CI 只装 `daemon[test]`），不像上面那几条要
+    `importorskip`。
+    """
+    spec = importlib.util.spec_from_file_location(
+        "litearm_stack_rules", ROOT / "packaging" / "hooks" / "litearm_stack.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_stack_rules_flag_a_copy_and_leave_our_own_files_alone() -> None:
+    """同一份名单要能分开"桌面栈的一份"和"我们自己的东西"。
+
+    ⚠ 认错的代价是不对称的: 漏认 ⇒ 包又在某个发行版上坏掉（这条名单存在的理由）;
+    错认 ⇒ 构建直接失败在无关的文件上。所以两边都钉住。
+    """
+    rules = _load_stack_rules()
+
+    for name in (
+        "libglib-2.0.so.0",                       # 顶层共享库
+        "lib/libgtk-3.so.0",                      # 带目录的
+        "libgdk_pixbuf-2.0.so.0",
+        "libmount.so.1",                          # glib 的依赖, 见名单里的说明
+        "gi_typelibs/Gtk-3.0.typelib",            # typelib 及其目录
+        "elsewhere/Gtk-3.0.typelib",              # 换个目录也算
+        "gio_modules/libgiognutls.so",
+        "lib/gdk-pixbuf/loaders/libpixbufloader-svg.so",
+        "share/icons/Adwaita/index.theme",
+        "share/glib-2.0/schemas/gschemas.compiled",
+        "share/locale/zh_CN/LC_MESSAGES/gtk30.mo",
+    ):
+        assert rules.strikes(name), f"这条该被认出来: {name}"
+
+    for name in (
+        # Python 侧与 PyGObject 自己的扩展 —— 这些是**我们**的, 必须留下。
+        "gi/_gi.cpython-310-x86_64-linux-gnu.so",
+        "gi/overrides/Gtk.py",
+        # ⚠ 有意留的那一个: 包内 PyGObject 的加载器, 目标机上它只跟着一条 Recommends 来。
+        "libgirepository-1.0.so.1",
+        "libpython3.10.so.1.0",
+        "libffi.so.8",
+        "libssl.so.3",
+        "libusb-1.0.so.0",
+        "base_library.zip",
+        "webview/platforms/gtk.py",
+        "dist/index.html",
+        "dist/icons.svg",        # 界面自己的图标: 名字带 icons, 但不在 share/ 下
+        "litearm_studio_daemon/window.py",
+    ):
+        assert rules.strikes(name) is None, f"这条不该被认成桌面栈: {name}"
+
+
+def test_the_product_check_reads_a_frozen_tree(tmp_path, monkeypatch) -> None:
+    """产物检查要能在**目录形态**上认出混进来的桌面栈，干净时一声不吭。
+
+    这条用一棵假树跑，因为真产物要跑一遍 PyInstaller（那是打包环境的事）。它挡的是最阴的
+    那种退化: 上游多出一条收集路径, 构建照样"成功", 包又悄悄多带一份。
+    """
+    monkeypatch.setattr(build, "HOOKS_DIR", ROOT / "packaging" / "hooks")
+    tree = tmp_path / "litearm-studio-daemon" / "_internal"
+    (tree / "gi").mkdir(parents=True)
+    (tree / "gi" / "_gi.cpython-310-x86_64-linux-gnu.so").write_bytes(b"ours")
+
+    assert build.desktop_stack_members(tmp_path / "litearm-studio-daemon"
+                                       / build.EXE_NAME, "onedir") == []
+
+    (tree / "libglib-2.0.so.0").write_bytes(b"the system's, copied")
+    (tree / "gi_typelibs").mkdir()
+    (tree / "gi_typelibs" / "Gtk-3.0.typelib").write_bytes(b"the system's, copied")
+
+    found = dict(build.desktop_stack_members(tmp_path / "litearm-studio-daemon"
+                                             / build.EXE_NAME, "onedir"))
+    assert set(found) == {"libglib-2.0.so.0", "gi_typelibs/Gtk-3.0.typelib"}
+    assert "盖住" in found["libglib-2.0.so.0"]
 
 
 def test_the_gdk_pixbuf_hook_drops_the_builders_loaders(monkeypatch) -> None:

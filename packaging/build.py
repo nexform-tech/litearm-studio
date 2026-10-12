@@ -36,6 +36,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 # ⚠ Windows 控制台默认是 cp1252: 打中文会抛 `UnicodeEncodeError`, 让**整个构建步骤**
 # 判失败 —— 实测 CI 上 PyInstaller 已经成功, 却死在后一句 `print` 上。先切 UTF-8。
@@ -494,6 +495,63 @@ def bundle_size_mb(mode: str) -> float:
     return sum(p.stat().st_size for p in root.rglob("*") if p.is_file()) / 1e6
 
 
+def _stack_rules() -> Any:
+    """`packaging/hooks/litearm_stack.py` —— "哪些名字算桌面栈"的唯一定义。
+
+    ⚠ 与钩子共用同一份名单是有意的：这里的检查是那个"不收"承诺的**验收**，抄一份就等于
+    让两边有机会说不同的话。理由写在那个文件里。
+    """
+    spec = importlib.util.spec_from_file_location(
+        "litearm_stack", HOOKS_DIR / "litearm_stack.py")
+    if spec is None or spec.loader is None:  # pragma: no cover - 只有文件没了才会
+        raise SystemExit(f"读不到 {HOOKS_DIR / 'litearm_stack.py'}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def bundle_members(binary: Path, mode: str) -> list[str]:
+    """产物里所有成员名（相对路径），两种形态都列得出来。
+
+    * `onedir`：走那棵目录树。PyInstaller 把可执行文件以外的东西放在 `_internal/` 下，
+      这里去掉那个前缀，好让两条路给出同一套名字。
+    * `onefile`：读可执行文件里的归档目录。单文件形态在磁盘上没有第二个落点 ——
+      "解包一次再看"意味着把一个刚打出来的产物真的跑起来。
+    """
+    if mode == "onedir":
+        root = binary.parent
+        names = []
+        for path in sorted(root.rglob("*")):
+            if not path.is_file():
+                continue
+            name = path.relative_to(root).as_posix()
+            if name.startswith("_internal/"):
+                name = name[len("_internal/"):]
+            names.append(name)
+        return names
+
+    from PyInstaller.archive.readers import CArchiveReader  # noqa: PLC0415 - 只有单文件形态要
+
+    return list(CArchiveReader(str(binary)).toc)
+
+
+def desktop_stack_members(binary: Path, mode: str) -> list[tuple[str, str]]:
+    """产物里混进来的桌面栈成员：`(名字, 为什么算)`，干净时是空表。
+
+    ⚠ 这一条挡的是**没有任何报错**的那种退化：PyInstaller 换个版本、多出一条我们没堵的
+    收集路径，构建照样"成功"，包却悄悄多带一份。它带着与目标机同名的 soname，于是又在
+    某个没验过的发行版上盖住系统的 —— issue #123 就是这么出去的。单测拦不住这种（单测
+    查的是我们自己的钩子，不是真实产物），只有查产物才拦得住。
+    """
+    rules = _stack_rules()
+    found: list[tuple[str, str]] = []
+    for name in bundle_members(binary, mode):
+        why = rules.strikes(name)
+        if why:
+            found.append((name, why))
+    return found
+
+
 def main() -> int:
     if not (UI_DIST / "index.html").is_file():
         raise SystemExit(
@@ -513,6 +571,9 @@ def main() -> int:
     #   会留下一个只属于这次失败构建的 `_build_*` 文件 (下一条注释解释了它为什么要命)。
     activation_url = resolve_activation_url()
     mode = bundle_mode()
+    # 窗口后端在这里读一次, 供产物检查判断"这次产物该不该带桌面栈" —— 参数由
+    # `window_build_args()` 那边再读一遍 (同一个纯函数, 值一样)。
+    backend = window_backend()
     print(f"[package] version = {version}")
     print(f"[package] 交付形态 = {mode}")
 
@@ -570,6 +631,20 @@ def main() -> int:
         produced = bundle_output(mode)
         if not produced.is_file():
             raise SystemExit(f"打包结束但没找到产物: {produced}")
+
+        # ⚠ 只在 GTK 后端查: 桌面栈只可能从 `gi` 那条链进来 (Windows/macOS 用系统自带内核,
+        #   Qt 自带 Chromium), 别的后端连这些名字都不会出现, 查它只是徒增误报的机会。
+        if backend == "gtk":
+            offenders = desktop_stack_members(produced, mode)
+            if offenders:
+                listing = "\n".join(f"    {name} —— {why}" for name, why in offenders[:20])
+                raise SystemExit(
+                    f"产物里混进了桌面栈的一份副本, 共 {len(offenders)} 项:\n{listing}\n"
+                    "它带着与目标机同名的 soname, 会盖住系统那一份 —— Ubuntu 24.04 上窗口\n"
+                    "打不开就是这么来的 (issue #123)。两条出路: 打包参数/钩子没拦住\n"
+                    "(看 packaging/hooks/hook-gi.py), 或者漏了一类东西, 把那一类加进\n"
+                    "packaging/hooks/litearm_stack.py 的名单里。")
+            print("[package] 产物检查: 没有桌面栈的库/typelib/加载器/数据")
         print(f"[package] 产物: {produced} ({bundle_size_mb(mode):.1f} MB)")
     finally:
         VERSION_FILE.unlink(missing_ok=True)

@@ -40,44 +40,26 @@ gdk-pixbuf 的加载器、GIO 的模块。而 Linux 的 GTK 窗口后端**本来
 
 from __future__ import annotations
 
+import importlib.util
+from pathlib import Path
 from typing import Any, List
 
 from PyInstaller.depend import dylib
 from PyInstaller.utils.hooks import gi as gi_hooks
 from PyInstaller.utils.hooks import logger
 
-#: 冻结产物**不**自带的桌面栈共享库，按 soname（basename）匹配。
-#:
-#: 只列"根"：排除一个根之后，PyInstaller 不会再顺着它的 `DT_NEEDED` 往下列，所以
-#: `libcairo` → `libpixman`/`libfontconfig`、`libgtk-3` → `libepoxy`、`libgdk_pixbuf` →
-#: `librsvg`、GIO 模块 → `libgnutls`/`libproxy` 这些传递依赖会跟着一起消失，不必（也不该）
-#: 逐条抄。
-#:
-#: 名字取自桌面那十三个 typelib 的 `shared-library` 字段与 `gi/_gi*.so` 的 `DT_NEEDED`；
-#: `packaging/tests/test_build.py` 钉住其中关键的那几个。加了新的一条就该问：目标机的
-#: `Depends` 会不会把它装上来？不会的话，它就不属于这份清单。
-#: ⚠ `libgirepository-1.0.so.1` **不在这份清单里**，是有意的：它是我们**包内**那份
-#: PyGObject（`gi/_gi.so`）自己的加载器，桌面栈没有任何东西会去用它，所以留着它既不盖住谁，
-#: 又替便携产物堵住一个洞 —— 目标机上它只跟着 `python3-gi` 或某条 Recommends 来，
-#: 而 `apt install --no-install-recommends gir1.2-webkit2-4.1` 的机器上没有它
-#: （实测：那样装的 24.04 会在 `import gi` 就 `ImportError: libgirepository-1.0.so.1`）。
-#: 它跟着目标机的 `libglib`/`libgobject`（都在上面那条清单里）跑，ABI 只往上走，所以安全。
-STACK_LIBRARIES = (
-    r"libglib-2\.0\.so.*",
-    r"libgobject-2\.0\.so.*",
-    r"libgio-2\.0\.so.*",
-    r"libgmodule-2\.0\.so.*",
-    r"libgtk-3\.so.*",
-    r"libgdk-3\.so.*",
-    r"libgdk_pixbuf-2\.0\.so.*",
-    r"libatk-1\.0\.so.*",
-    r"libpango-1\.0\.so.*",
-    r"libpangocairo-1\.0\.so.*",
-    r"libcairo\.so.*",
-    r"libcairo-gobject\.so.*",
-    r"libharfbuzz\.so.*",
-    r"libX11\.so.*",
-)
+#: 哪些名字算桌面栈（名单、理由、边界都在那一条里）。`build.py` 用**同一份**检查产物 ——
+#: 一个模块只有一条钩子生效，而同一条规则如果抄成两份，就会出现"拦住了但没查出来"。
+#: ⚠ 按路径加载：钩子目录不在 `sys.path` 上，`import litearm_stack` 在这里不一定成立。
+_stack_spec = importlib.util.spec_from_file_location(
+    "litearm_stack", Path(__file__).resolve().parent / "litearm_stack.py")
+if _stack_spec is None or _stack_spec.loader is None:  # pragma: no cover - 只有文件没了才会
+    raise SystemExit("[hooks] 读不到 packaging/hooks/litearm_stack.py")
+litearm_stack = importlib.util.module_from_spec(_stack_spec)
+_stack_spec.loader.exec_module(litearm_stack)
+
+#: 供本文件与测试引用（真正的定义在 `litearm_stack`）。
+STACK_LIBRARIES = litearm_stack.STACK_LIBRARIES
 
 
 def _nothing(*_args: Any, **_kwargs: Any) -> List[Any]:
