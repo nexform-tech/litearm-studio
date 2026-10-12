@@ -106,6 +106,21 @@ def _hostname_of(netloc: str) -> str:
     return text.rsplit(":", 1)[0] if ":" in text else text
 
 
+def _encode_frame(message: dict) -> Optional[str]:
+    """帧 → 线上 JSON; **不抛**, 编不出来就丢这一条。
+
+    `allow_nan=False` 是刻意的 (NaN/Inf 不是合法 JSON, 前端 `JSON.parse` 也接不住),
+    但异常**不许冒到调用它的那条任务里**: 那是客户端的推送泵或命令 worker, 死了以后
+    socket 照开、界面照显示已连接, 而这边一条帧也发不出去 (issue #134)。`_r6` 与
+    `jsonable` 已经把非有限浮点折成 0.0, 这里是最后一道兜底 (认不出的怪值)。
+    """
+    try:
+        return json.dumps(message, ensure_ascii=False, allow_nan=False, default=str)
+    except (TypeError, ValueError) as e:
+        log.warning("丢弃一条无法序列化的 %s 帧: %s", message.get("t"), e)
+        return None
+
+
 def origin_allowed(origin: str, host: str, extra: Iterable[str] = ()) -> bool:
     """跨源 WebSocket 的准入判据 —— 浏览器不做同源限制, 所以判据只能在这里。
 
@@ -528,9 +543,25 @@ class Daemon:
             await self._on_upstream(ws, client, raw, trace_id, execute)
 
     async def _send_direct(self, ws: WebSocket, client: _Client, message: dict) -> None:
+        payload = _encode_frame(message)
+        if payload is None:
+            if message.get("t") == "res":
+                # 应答请求是**唯一**不能静默丢的帧: 那一头正等着它落地, 兜底超时
+                # (75s, 见 `src/lib/arm/socket.ts`) 太慢也太难解释。回一条最小的
+                # 失败应答, 让"编不出来"变成操作员看得见的一条错误。
+                payload = _encode_frame({
+                    "t": "res", "id": message.get("id"), "ok": False,
+                    "err": {"kind": "BadMessage", "msg": "应答里有无法序列化的值"},
+                })
+            if payload is None:
+                return
         async with client.lock:
-            await ws.send_text(json.dumps(message, ensure_ascii=False,
-                                          allow_nan=False, default=str))
+            try:
+                await ws.send_text(payload)
+            except Exception as e:  # noqa: BLE001
+                # 客户端在这两条帧之间断了。这里不抛: 抛出去会带走在跑它的那条任务
+                # (命令 worker / 握手), 而这一条帧本来也没人收了。
+                log.debug("直发 %s 帧失败 (客户端可能已断开): %s", message.get("t"), e)
 
     async def _pump(self, ws: WebSocket, client: _Client) -> None:
         while True:
@@ -539,9 +570,17 @@ class Daemon:
                 seq = message.get("seq")
                 if isinstance(seq, int):
                     client.last_log_seq = seq
-            async with client.lock:
-                await ws.send_text(json.dumps(message, ensure_ascii=False,
-                                              allow_nan=False, default=str))
+            payload = _encode_frame(message)
+            if payload is None:
+                continue       # 坏帧只丢它自己, 这个客户端下一拍照收 (issue #134)
+            try:
+                async with client.lock:
+                    await ws.send_text(payload)
+            except Exception as e:  # noqa: BLE001
+                # 客户端断了 ⇒ 这条推送泵到此为止, 不再空转; 队列与监听器的摘除由
+                # `handle_ws` 的 finally 负责 (断开不杀会话)。
+                log.debug("推送 %s 帧失败, 停止该客户端的推送: %s", message.get("t"), e)
+                return
 
     async def _on_upstream(self, ws: WebSocket, client: _Client, raw: str,
                            trace_id: Optional[str] = None,

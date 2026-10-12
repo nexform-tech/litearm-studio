@@ -457,6 +457,76 @@ def test_ws_writes_hello_and_conn_before_any_state_frame() -> None:
         session.close()
 
 
+# ------------------------------------------------- 一条坏帧不许带走整条通道 (issue #134)
+
+class _RecordingWS:
+    """只把发出去的帧收集起来的假 WebSocket (`_pump` / `_send_direct` 用)。"""
+
+    def __init__(self) -> None:
+        self.sent: list[dict] = []
+        self.headers: dict = {}
+
+    async def accept(self) -> None:
+        pass
+
+    async def send_text(self, data: str) -> None:
+        self.sent.append(json.loads(data))
+
+    async def receive_text(self) -> str:
+        raise WebSocketDisconnect()
+
+
+def test_one_unserialisable_frame_does_not_kill_the_push_pump() -> None:
+    """NaN/inf 过 `json.dumps(allow_nan=False)` 会抛; 抛在 `_pump` 里 = 这个客户端的推送
+    任务死掉, 而 socket 还开着、界面还显示已连接 (issue #134)。"""
+    session, app = _client()
+    try:
+        daemon = app.state.daemon
+        client = _Client(q=asyncio.Queue(maxsize=8))
+        ws = _RecordingWS()
+        client.q.put_nowait({"t": "state", "stamp": 0.0, "state": {"q": [float("nan")]}})
+        client.q.put_nowait({"t": "state", "stamp": 0.1, "state": {"q": [0.0]}})
+
+        async def run() -> bool:
+            task = asyncio.create_task(daemon._pump(ws, client))
+            for _ in range(200):
+                if ws.sent:
+                    break
+                await asyncio.sleep(0.005)
+            alive = not task.done()
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            return alive
+
+        assert asyncio.run(run()) is True, "一条坏帧把推送任务带走了"
+        # 坏帧丢它自己, 下一拍照发 —— 这正是"一条坏值只花一条帧"的意思。
+        assert ws.sent == [{"t": "state", "stamp": 0.1, "state": {"q": [0.0]}}]
+    finally:
+        session.close()
+
+
+def test_a_reply_that_cannot_be_serialised_still_lands_as_a_failure() -> None:
+    """应答编不出来也得落地: 那一头等的是这条帧, 静默丢掉只会让它转到超时。"""
+    session, app = _client()
+    try:
+        daemon = app.state.daemon
+        client = _Client(q=asyncio.Queue(maxsize=8))
+        ws = _RecordingWS()
+
+        asyncio.run(daemon._send_direct(
+            ws, client, {"t": "res", "id": 3, "ok": True, "v": {"bad": float("inf")}}))
+
+        assert ws.sent == [{
+            "t": "res", "id": 3, "ok": False,
+            "err": {"kind": "BadMessage", "msg": "应答里有无法序列化的值"},
+        }]
+    finally:
+        session.close()
+
+
 def test_ws_rejects_a_non_json_frame() -> None:
     session, app = _client()
     try:
