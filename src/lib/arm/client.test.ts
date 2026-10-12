@@ -2,6 +2,7 @@ import { waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FakeWebSocket } from '@/test/fakeWebSocket'
 import type { RobotState } from './client'
+import { REQUEST_TIMEOUT_MS } from './socket'
 
 const { ArmClient } = await import('./client')
 
@@ -383,6 +384,22 @@ describe('ArmClient (daemon WebSocket)', () => {
   it('rejects commands while the socket is not open', async () => {
     const client = new ArmClient()
     await expect(client.enable()).rejects.toThrow('本地程序未连接')
+  })
+
+  it('fails an in-flight command whose reply never arrives, instead of hanging forever', async () => {
+    const { client, ws } = connectedClient()
+    vi.useFakeTimers()
+    const promise = client.enable()
+    const frame = ws.lastFrame('cmd')!
+    expect(frame.m).toBe('enable')
+
+    // daemon 没回这条 ⇒ 到点必须自己落地。否则按钮一直转, 而 socket 还开着、
+    // `_rejectAllPending` 也没有理由被调用 (issue #135)。
+    const settled = expect(promise).rejects.toThrow(/没有应答/)
+    await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS + 1)
+    await settled
+    // 兜底超时**不是重发**: 一条命令只发一次。
+    expect(ws.frames().filter((f) => f.m === 'enable')).toHaveLength(1)
   })
 
   it('requestStop() sends estop', async () => {

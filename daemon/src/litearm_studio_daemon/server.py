@@ -361,26 +361,83 @@ class Daemon:
     def broadcast(self, message: dict) -> None:
         """给**每个**客户端入队一条帧 (在事件循环线程上调用)。"""
         for c in list(self.clients):
+            self._enqueue(c, message)
+
+    def _enqueue(self, client: _Client, message: dict) -> bool:
+        """入队一条帧; 队列满时按帧的类型让路。返回是否入队成功。"""
+        kind = message.get("t")
+        try:
+            client.q.put_nowait(message)
+            return True
+        except asyncio.QueueFull:
+            pass
+
+        # 慢客户端丢**状态**帧就好 (下一拍就有新的)。
+        if kind not in ("conn", "res", "log"):
+            return False
+
+        if kind == "log":
+            # ⚠ 日志帧丢了**要留下痕迹**: 文件里那条记录仍然在, 但页面上会出现一段
+            # 空白, 而"空白"与"什么都没发生"长得一模一样。计数同时落在客户端与全局上,
+            # 由 `log_meta` 如实上报。
+            #
+            # ⚠ **不许在这里 emit 一条记录**: 队列满时再发一条会走同一条路, 于是自己
+            # 把自己再丢一次, 变成死循环。
+            self._count_dropped_log(client)
+            return False
+
+        # conn / res 丢了会让前端一直转圈 (应答那头在等一个永远不来的 promise), 所以
+        # 这两类宁可挤掉队列里最旧的一条**非 res** 帧 —— 它可能是 logs/state, 也可能
+        # 是另一条 res, 后者不许动 (见 `_evict_one`)。
+        dropped = self._evict_one(client)
+        if dropped is None:
+            # 256 条全是应答: 让路无处可让。丢新的这条 (客户端那条命令由自己的超时兜底,
+            # 见 `src/lib/arm/socket.ts`), 但要留下痕迹。
+            log.warning("客户端队列已被应答帧占满, 丢弃一条 %s 帧", kind)
+            return False
+        if dropped.get("t") == "log":
+            # 让路挤掉的是一条日志帧 ⇒ 与上面丢日志同一条口径地计数, 否则页面上的
+            # 空白会被当成"什么都没发生"。
+            self._count_dropped_log(client)
+        try:
+            client.q.put_nowait(message)
+            return True
+        except asyncio.QueueFull:      # 不在事件循环线程上时可能又满了
+            log.warning("让路后仍放不下一条 %s 帧", kind)
+            return False
+
+    def _count_dropped_log(self, client: _Client) -> None:
+        client.dropped_logs += 1
+        self._log_dropped += 1
+
+    @staticmethod
+    def _evict_one(client: _Client) -> Optional[dict]:
+        """从满队列里挤出**一条**帧的位置, 返回被挤掉的那条; 没得挤返回 `None`。
+
+        只挤非 `res` 的帧, 最旧的 `state` 优先 (`state` 下一拍就有新的; `log` 有记录的
+        代价, 由调用方计数)。
+
+        ⚠ **`res` 不许挤**: `sendRequest` 只在收到同 id 的应答或 socket 关闭时才落地,
+        被挤掉的那条 promise 永远不 settle —— 组件从此停在忙碌态, 而 daemon 已经答过了
+        (issue #135)。
+
+        `asyncio.Queue` 没有"按条件删一条"的接口, 所以整队倒出来再按原顺序放回去: 上限
+        256, 只在满时做一次, 且倒出与放回之间**没有 await** (原子的) —— 队列满也意味着
+        `_pump` 此刻没有待取的帧。
+        """
+        held: List[dict] = []
+        while True:
             try:
-                c.q.put_nowait(message)
-            except asyncio.QueueFull:
-                # 慢客户端丢**状态**帧就好 (下一拍就有新的); conn/res 丢了会让前端
-                # 一直转圈, 所以那两类宁可挤掉队列里最旧的一条状态。
-                if message.get("t") in ("conn", "res"):
-                    try:
-                        c.q.get_nowait()
-                        c.q.put_nowait(message)
-                    except Exception:  # noqa: BLE001
-                        pass
-                elif message.get("t") == "log":
-                    # ⚠ 日志帧丢了**要留下痕迹**: 文件里那条记录仍然在, 但页面上会
-                    # 出现一段空白, 而"空白"与"什么都没发生"长得一模一样。计数同时落在
-                    # 客户端与全局上, 由 `log_meta` 如实上报。
-                    #
-                    # ⚠ **不许在这里 emit 一条记录**: 队列满时再发一条会走同一条路,
-                    # 于是自己把自己再丢一次, 变成死循环。
-                    c.dropped_logs += 1
-                    self._log_dropped += 1
+                held.append(client.q.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+        index = next((i for i, f in enumerate(held) if f.get("t") == "state"), None)
+        if index is None:
+            index = next((i for i, f in enumerate(held) if f.get("t") != "res"), None)
+        dropped = None if index is None else held.pop(index)
+        for frame in held:
+            client.q.put_nowait(frame)
+        return dropped
 
     # ------------------------------------------------------------ WS 单客户端
     async def handle_ws(self, ws: WebSocket) -> None:

@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from litearm_studio_daemon.__main__ import build_parser, main
 from litearm_studio_daemon.server import (
     HTTP_PORT_TRIES,
+    _Client,
     _is_energy_down_frame,
     _is_loopback,
     create_app,
@@ -936,5 +937,79 @@ def test_ws_receives_firmware_progress_and_result_frames() -> None:
                 # 相位从校验一路走到完成 —— 少了中间任何一段，界面上的进度条都会冻住。
                 assert phases[0] == "validate"
                 assert "flash" in phases and phases[-1] == "done"
+    finally:
+        session.close()
+
+
+# ------------------------------------------------- 慢客户端: 让路时不许挤掉应答 (issue #135)
+
+
+def _queued(queue) -> list[dict]:
+    """把队列里现有的帧倒出来 (顺序 = 入队顺序)。"""
+    out: list[dict] = []
+    while not queue.empty():
+        out.append(queue.get_nowait())
+    return out
+
+
+def test_a_full_queue_never_evicts_a_command_reply() -> None:
+    """队列满时让路只挤非 res 的帧 (issue #135)。
+
+    `res` 被挤掉 = 那一头的 `sendRequest` 永远不 settle: 组件停在忙碌态, 而 daemon 已经
+    答过那条命令了, 没有任何补救通道。所以队列里同时躺着一条应答与一条状态帧时, 新来的
+    `conn` 只许挤后者。
+    """
+    session, app = _client()
+    try:
+        daemon = app.state.daemon
+        client = _Client(q=asyncio.Queue(maxsize=2))
+        client.q.put_nowait({"t": "res", "id": 7, "ok": True, "v": None})
+        client.q.put_nowait({"t": "state", "stamp": 0.0, "state": {}})
+        daemon.clients.append(client)
+
+        daemon.broadcast({"t": "conn", "connected": True})
+
+        # 顺序保持: 被挤掉的是 state, 应答与新的 conn 都在。
+        assert _queued(client.q) == [
+            {"t": "res", "id": 7, "ok": True, "v": None},
+            {"t": "conn", "connected": True},
+        ]
+    finally:
+        session.close()
+
+
+def test_a_queue_of_replies_lets_the_new_frame_go_instead() -> None:
+    """256 条全是应答时, 让路无处可让 —— 丢新来的那条, 一条回答过的都不动。"""
+    session, app = _client()
+    try:
+        daemon = app.state.daemon
+        client = _Client(q=asyncio.Queue(maxsize=2))
+        client.q.put_nowait({"t": "res", "id": 1, "ok": True, "v": None})
+        client.q.put_nowait({"t": "res", "id": 2, "ok": True, "v": None})
+        daemon.clients.append(client)
+
+        daemon.broadcast({"t": "res", "id": 3, "ok": True, "v": None})
+
+        assert [f["id"] for f in _queued(client.q)] == [1, 2]
+    finally:
+        session.close()
+
+
+def test_evicting_a_log_frame_for_a_conn_frame_still_counts_it() -> None:
+    """让路挤掉的若是日志帧, 必须计数 —— 否则页面上那段空白看着像"什么都没发生"。"""
+    session, app = _client()
+    try:
+        daemon = app.state.daemon
+        client = _Client(q=asyncio.Queue(maxsize=2))
+        client.q.put_nowait({"t": "log", "seq": 41, "record": {}})
+        client.q.put_nowait({"t": "log", "seq": 42, "record": {}})
+        daemon.clients.append(client)
+
+        daemon.broadcast({"t": "conn", "connected": True})
+
+        # 挤掉的是最旧的那条日志 (state 帧没有, 于是按"最旧的非 res"挑)。
+        assert [f["t"] for f in _queued(client.q)] == ["log", "conn"]
+        assert client.dropped_logs == 1
+        assert daemon._log_dropped == 1
     finally:
         session.close()

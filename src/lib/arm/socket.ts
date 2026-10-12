@@ -4,6 +4,17 @@ type Listener = () => void
 
 const RECONNECT_DELAYS_MS = [1000, 2000, 4000, 8000, 16000, 30000]
 
+/**
+ * 在途命令的兜底超时（毫秒）。
+ *
+ * daemon 自己对每条命令有 60s 上限（`server.COMMAND_TIMEOUT_S`），到点它回一条
+ * `CommandTimeoutError`；75s = 那条上限 + 15s 余量，所以正常路径永远不会撞上它 —— 它只
+ * 在**应答根本没到**时触发。没有它，一条丢失的应答会让那个 promise 永远不 settle：daemon
+ * 的发送路径可能抛在序列化上，或队列满时被挤掉（见 #134 / #135），而 socket 还开着、
+ * `_rejectAllPending` 也就没理由被调用 —— 按钮从此一直转，两端都以为对方知道。
+ */
+export const REQUEST_TIMEOUT_MS = 75_000
+
 /** 命令被 daemon 拒绝时抛出的 Error，`err` 携带结构化错误信息。 */
 export type CommandError = Error & { err: DaemonErrorInfo }
 
@@ -133,10 +144,25 @@ export class DaemonSocket {
     }
     const id = this.nextId++
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject })
+      const timer = setTimeout(() => {
+        this.pending.delete(id)
+        const method = typeof frame.m === 'string' ? `（${frame.m}）` : ''
+        reject(new Error(`本地程序 ${REQUEST_TIMEOUT_MS / 1000} 秒内没有应答${method}`))
+      }, REQUEST_TIMEOUT_MS)
+      this.pending.set(id, {
+        resolve: (v) => {
+          clearTimeout(timer)
+          resolve(v)
+        },
+        reject: (e) => {
+          clearTimeout(timer)
+          reject(e)
+        },
+      })
       const sent = this.sendFrame({ ...frame, id })
       if (!sent) {
         this.pending.delete(id)
+        clearTimeout(timer)
         reject(new Error('本地程序未连接'))
       }
     })
