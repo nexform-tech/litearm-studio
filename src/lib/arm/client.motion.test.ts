@@ -141,16 +141,30 @@ describe('ArmClient motion mutex and notify throttle', () => {
     const { client, ws } = connectedClient()
     const inFlight = client.home()
     expect(client.motionBusy).toBe(true)
+    let settled = false
+    void inFlight.then(
+      () => { settled = true },
+      () => { settled = true },
+    )
 
-    // 断开是一条**带确认的请求**（#82）：先给 daemon 应答，收尾（关 socket、拒在途命令）
-    // 才发生 —— 在途运动正是在那一步被拒、互斥随之放开的。
+    // 断开是一条**带确认的请求**（#82）：先给 daemon 应答，收尾才发生。
+    // ⚠ 收尾**不关链路**（见 `ArmClient.disconnect`），所以在途的那条运动不会由本地
+    //   一句"作废"了事 —— 刚把链路拆掉的是 daemon，它的结局该由 daemon 说。
     const done = client.disconnect()
     ws.receive({ t: 'res', id: ws.lastFrame('disconnect')!.id, ok: true, v: { stopped: true } })
     await done
 
     expect(client.status).toBe('disconnected')
+    // ⚠ 互斥**立刻**放开（`disconnect()` 自己放），否则界面会一直拒下一条运动。
     expect(client.motionBusy).toBe(false)
+    // 而那条在途运动还没有结局：链路还在，谁都不许替 daemon 说它失败了。
+    expect(settled).toBe(false)
+
+    // daemon 说完了 —— 这时才该落地，且终局不许再动互斥位。
+    const frame = ws.frames().filter((f) => f.m === 'home').at(-1)!
+    ws.receive({ t: 'res', id: frame.id, ok: false, err: { kind: 'TransportError', msg: '链路已断开' } })
     await expect(inFlight).rejects.toThrow()
+    expect(client.motionBusy).toBe(false)
   })
 
   it('coalesces ordinary telemetry inside the 100ms notify window', () => {

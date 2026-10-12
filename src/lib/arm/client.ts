@@ -259,6 +259,15 @@ export class ArmClient {
   private _pendingPort: string | null = null
 
   /**
+   * 操作员**还要不要**一个机械臂会话 —— 链路重开时据此决定补不补那条 `connect`。
+   *
+   * ⚠ 它与"链路开不开"是两件事，别再让它们共用一个开关（见 `disconnect()` 的说明）：
+   * `connect()` / 顶栏「连接」置 `true`，「断开连接」置 `false`。默认 `true` 与
+   * "页面一打开就连"（`main.tsx`）同一条口径。
+   */
+  private _wantSession = true
+
+  /**
    * 最近一次被 daemon 拒绝的 `connect` 的原因 —— **不是**连接失败：会话可能仍然
    * `connected`，只是"你这次改口没生效"。
    *
@@ -279,7 +288,9 @@ export class ArmClient {
     //   口再点连接，这次选择会存在 `_pendingPort` 里，等到这一帧才发出去 —— 否则那次
     //   选择会被静默丢掉，daemon 连的是自动发现到的另一台。
     this.socket.onOpen(() => {
-      this._sendConnectFrame()
+      // ⚠ 只在**还想要会话**时补发：操作员按过「断开连接」之后，链路因为别的原因重开
+      //   （daemon 重启、网线抖一下）不该把臂自己连回来 —— 那是"我说了断、它自己接上了"。
+      if (this._wantSession) this._sendConnectFrame()
     })
     this.socket.onFrame('conn', (msg) => this._applyConn(msg))
     this.socket.onFrame('hello', (msg) => this._applyHello(msg))
@@ -380,6 +391,7 @@ export class ArmClient {
    *  （记住的口 → 自动发现）。
    */
   connect(port?: string) {
+    this._wantSession = true
     this._pendingPort = port?.trim() || null
     // 传输层已经通着，说明失败的是 daemon 那边的 connect（没找到 CDC 设备、串口被占）：
     // 原地重发一次就是重试。拆掉重开不会多试任何东西，还会顺手弄断共用这条 socket 的
@@ -445,7 +457,7 @@ export class ArmClient {
   }
 
   /**
-   * 断开：**先让 daemon 确认**它断开了机械臂，再关闭本地 WebSocket。
+   * 断开：**先让 daemon 确认**它断开了机械臂，再本地收尾。**只结束会话，不关链路。**
    *
    * ⚠ 旧实现是 fire-and-forget —— 发一条**不带 id** 的 `disconnect` 帧、紧接着关掉 socket。
    *   投递无人确认，而 daemon **不会**因 WS 关闭就断开机械臂（刷新页面不能掉臂，见
@@ -456,16 +468,25 @@ export class ArmClient {
    * ⚠ 没有确认时（拒绝 / 超时 / 链路中途断开）**绝不谎报已断开**：原样抛出、`status` 不动，
    *   由调用方提示，操作员可以重试。
    *
-   * 数据流：daemon 处理 `disconnect` 时先广播一条 `conn`(disconnected) 再回 `res`，两条都在
-   * 本方法关闭 socket **之前**到达 —— 徽标由那条 `conn` 帧对齐，`res` 只是"确认收到"。
+   * ⚠ **链路不许跟着会话一起关**。那条 WebSocket 是这个程序与本地守护进程之间唯一的一条
+   *   命令通道，会话只是它的用途之一；关掉它，"没有会话"的每个状态都跟着变成"问不出话"。
+   *   固件页要问的"板子在不在 ROM bootloader 里"恰恰**只在没有会话时才有意义**
+   *   （板子停在 bootloader 里就没有应用态可连，见 issue #152）：会话一断就关链路，正是
+   *   那句误诊"未连接控制器 —— 连上之后才能升级"在断线之后永远不变的原因。
+   *   所以链路由 `_wantSession` 另管：会话结束了，链路照开，重开时也不再自动把臂连回来。
+   *
+   * 数据流：daemon 处理 `disconnect` 时先广播一条 `conn`(disconnected) 再回 `res` ——
+   * 徽标由那条 `conn` 帧对齐，`res` 只是"确认收到"。
    */
   async disconnect(): Promise<void> {
     if (this.socket.open) {
       await this.socket.sendRequest({ t: 'disconnect' })
+    } else {
+      // 链路本来就断着：没有会话可结束，也没有 ack 可等。收掉本地重试（操作员按的是
+      // 「断开」，界面不该继续自动重连），真值等下一次链路重开的 `conn` 握手帧再对齐。
+      this.socket.disconnect()
     }
-    // 走到这里：要么 daemon 确认了断开，要么传输层本来就断着（那条帧发不出去，此刻无从
-    // 确认；本地收尾、停止重连，真值等 socket 重连时的 `conn` 握手帧再对齐）。
-    this.socket.disconnect()
+    this._wantSession = false
     this._clearState()
     this._setMotionBusy(false)
     this._conn = null

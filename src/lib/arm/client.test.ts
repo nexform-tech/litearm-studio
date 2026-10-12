@@ -432,7 +432,7 @@ describe('ArmClient (daemon WebSocket)', () => {
     expect(client.motionBusy).toBe(false)
   })
 
-  it('disconnect() waits for the daemon ack before closing the socket and clearing state', async () => {
+  it('disconnect() waits for the daemon ack before clearing state, and keeps the daemon link open', async () => {
     const { client, ws } = connectedClient()
     ws.receive({ t: 'state', stamp: 1, state: { q: [1], state: 'ready' } })
 
@@ -452,6 +452,33 @@ describe('ArmClient (daemon WebSocket)', () => {
 
     expect(client.status).toBe('disconnected')
     expect(client.state).toBeNull()
+    // ⚠ **链路不跟着会话关**：那条 WebSocket 是与本地守护进程唯一的命令通道，会话只是
+    //   它的用途之一。关掉它就是"没有会话 ⇒ 什么都问不出来" —— 而固件页要问的"板子在不在
+    //   ROM bootloader 里"恰恰只在没有会话时才有意义（板子停在 bootloader 里就没有应用态
+    //   可连, 见 issue #152）。
+    expect(ws.readyState).toBe(FakeWebSocket.OPEN)
+  })
+
+  it('takes a session-free question through to the daemon after a disconnect', async () => {
+    // #154 review 的那条路径：顶栏按「断开连接」→ 去固件页。旧实现把 socket 一起关了,
+    // 于是 `firmwareStatus()` 在**本地**就被拒（「本地程序未连接」）, 帧根本不上线 ——
+    // 板子明明停在 DFU 里, 界面却永远停在"未连接控制器 —— 连上之后才能升级"。
+    const { client, ws } = connectedClient()
+    const done = client.disconnect()
+    ws.receive({ t: 'res', id: ws.lastFrame('disconnect')!.id, ok: true, v: { stopped: true } })
+    await done
+
+    const pending = client.firmwareStatus()
+    const frame = ws.frames().filter((f) => f.m === 'firmware_status').at(-1)!
+    expect(frame).toMatchObject({ t: 'cmd', m: 'firmware_status' })
+    ws.receive({
+      t: 'res', id: frame.id, ok: true,
+      v: {
+        job: null, engine: 'libusb-package: /usr/lib/libusb.so', engineReady: true,
+        dfuPresent: true, dfuLocation: '1-3',
+      },
+    })
+    await expect(pending).resolves.toMatchObject({ dfuPresent: true, dfuLocation: '1-3' })
   })
 
   it('disconnect() reports an unacknowledged failure instead of claiming 已断开', async () => {
@@ -530,15 +557,29 @@ describe('ArmClient (daemon WebSocket)', () => {
     expect(FakeWebSocket.instances).toHaveLength(2)
   })
 
-  it('does not reconnect after an explicit disconnect()', async () => {
+  it('does not re-attach the session when the link is reopened after an explicit disconnect()', async () => {
     vi.useFakeTimers()
     const { client, ws } = connectedClient()
     const done = client.disconnect()
     ws.receive({ t: 'res', id: ws.lastFrame('disconnect')!.id, ok: true, v: { stopped: true } })
     await done
+
+    // 链路后来断了（daemon 重启、网线抖一下）：传输层照样自愈 —— 它是与本地程序的通道，
+    // 与"要不要会话"是两件事。
     ws.drop()
-    await vi.advanceTimersByTimeAsync(5000)
-    expect(FakeWebSocket.instances).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(1000)
+    const reopened = FakeWebSocket.instances.at(-1)!
+    expect(reopened).not.toBe(ws)
+    reopened.open()
+
+    // ⚠ 但**不许**补发 `connect`：操作员按过「断开」，把臂自己连回来就是"我说了断、
+    //   它自己接上了"。旧实现靠"链路干脆不开"达到这个效果，代价是断开之后什么都问不到。
+    expect(reopened.lastFrame('connect')).toBeUndefined()
+    // 真值跟着 daemon 的握手帧走：它说断开，就是断开。
+    reopened.receive({
+      t: 'conn', status: 'disconnected', port: null, firmware: '', n: 0, cart: false, error: null,
+    })
+    expect(client.status).toBe('disconnected')
   })
 
   it('rejects in-flight commands when the socket drops', async () => {
