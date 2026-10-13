@@ -20,7 +20,7 @@ const cart: PoseRow[] = [
 
 describe('PosePanel', () => {
   it('shows the joint and Cartesian readings side by side in a single card', () => {
-    render(<PosePanel jointPose={joint} cartPose={cart} />)
+    render(<PosePanel jointPose={joint} cartPose={cart} cartHintKey={null} />)
 
     expect(screen.getByText(i18n.t('solo:pose.title'))).toBeTruthy()
     // 两栏同时可见：关节角与 TCP 位姿不再靠页签二选一。
@@ -31,11 +31,29 @@ describe('PosePanel', () => {
   })
 
   it('says the Cartesian pose is unavailable instead of inventing a value', () => {
-    render(<PosePanel jointPose={joint} cartPose={null} />)
+    render(<PosePanel jointPose={joint} cartPose={null} cartHintKey="solo:cartesian.poseUnavailable" />)
 
     expect(screen.getByText(i18n.t('solo:cartesian.poseUnavailable'))).toBeTruthy()
     expect(screen.queryByText('RX:')).toBeNull()
     // 关节读数不受影响。
     expect(screen.getByText(i18n.t('solo:pose.jointLabel', { n: 7 }))).toBeTruthy()
+  })
+
+  it('blames the firmware only when the firmware said so', () => {
+    // 固件确报不支持：这一句本来就对。
+    render(<PosePanel jointPose={joint} cartPose={null} cartHintKey="solo:cartesian.unsupportedHint" />)
+
+    expect(screen.getByText(i18n.t('solo:cartesian.unsupportedHint'))).toBeTruthy()
+    expect(screen.queryByText(i18n.t('solo:cartesian.probeSilentHint'))).toBeNull()
+    expect(screen.queryByText(i18n.t('solo:cartesian.poseUnavailable'))).toBeNull()
+  })
+
+  it('does not blame the firmware when the probe was merely lost', () => {
+    // ⚠ 探测没答上来：这一句必须和笛卡尔面板同一句，否则同一屏里一边让查线缆、
+    //    一边让重新烧固件，操作员无从下手。
+    render(<PosePanel jointPose={joint} cartPose={null} cartHintKey="solo:cartesian.probeSilentHint" />)
+
+    expect(screen.getByText(i18n.t('solo:cartesian.probeSilentHint'))).toBeTruthy()
+    expect(screen.queryByText(i18n.t('solo:cartesian.poseUnavailable'))).toBeNull()
   })
 })

@@ -138,7 +138,6 @@
     "jogFailed": "点动未执行：{{message}}",
     "disconnectFailed": "断开未确认：{{message}}。机械臂可能仍然连着，请重试",
     "notEnabled": "机械臂未使能 —— 请先使能再操作",
-    "cartUnsupported": "当前固件未编译笛卡尔规划：直线运动与笛卡尔点动不可用，请改用关节空间",
     "jointLimitsFallback": "未能从控制器读取关节软限位，滑条已退回内置默认量程",
     "opFailed": "{{op}}失败：{{message}}",
     "unknownError": "操作失败：{{message}}",

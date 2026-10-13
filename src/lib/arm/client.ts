@@ -24,6 +24,16 @@ export type ConnInfo = {
   firmware: string
   n: number
   cart: boolean
+  /**
+   * `cart` 为假时的成因之一：**探测没问出来**。
+   *
+   * 连接时 SDK 会探测固件的笛卡尔规划能力；那三帧若全无应答（本硬件的 USB CDC 上行有已知
+   * 丢帧），SDK 会 fail-closed 地当"不支持"，同时把这一情形单独记下来 —— 因为**下一步动作
+   * 不同**：一个是查链路，一个是刷固件。守护进程把它随 `conn` 帧一起发（见 `arm_info`）。
+   *
+   * ⚠ 两种成因都要把笛卡尔关掉（SDK 那边同样会拒），**只有说法不同**。
+   */
+  cartProbeSilent: boolean
   error: string | null
 }
 
@@ -764,6 +774,8 @@ export class ArmClient {
       firmware: typeof msg.firmware === 'string' ? msg.firmware : '',
       n: num(msg.n),
       cart: msg.cart === true,
+      // 缺省为假：旧版守护进程不发这个字段，那时按"确报不支持"说，与它原本的行为一致。
+      cartProbeSilent: msg.cartProbeSilent === true,
       error: typeof msg.error === 'string' ? msg.error : null,
     }
     this._conn = conn

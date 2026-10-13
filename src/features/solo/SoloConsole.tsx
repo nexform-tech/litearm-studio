@@ -19,7 +19,7 @@ export function SoloConsole() {
       {/* LEFT: 状态 —— 3D 吃掉剩余高度，关节与笛卡尔合成一张卡，曲线压扁垫在最底下 */}
       <div style={{ ...SCROLL_COLUMN, ...SIDE_COL_WIDE, gap: '0.75rem' }}>
         <PreviewPanel viewTabs={vm.viewTabs} viewBadge={vm.viewBadge} preview={vm.preview} />
-        <PosePanel jointPose={vm.poseJoint} cartPose={vm.poseCart} />
+        <PosePanel jointPose={vm.poseJoint} cartPose={vm.poseCart} cartHintKey={vm.cartHintKey} />
         <MetricsPanel
           compact
           metrics={vm.metricSeries}
@@ -67,6 +67,7 @@ export function SoloConsole() {
           <CartesianPanel
             simMode={simMode}
             cartUnsupported={vm.cartUnsupported}
+            cartProbeSilent={vm.cartProbeSilent}
             frames={vm.frames}
             transCells={vm.transCells}
             rotCells={vm.rotCells}

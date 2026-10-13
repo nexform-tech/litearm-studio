@@ -67,6 +67,49 @@ def test_connect_is_idempotent(fake_session: Session) -> None:
     assert fake_session.connected is True
 
 
+def test_arm_info_reports_both_cartesian_causes(fake_session: Session) -> None:
+    """`cart` 为假有**两种**成因, 两个字段都要发 —— 少一个, 前端就只能猜。
+
+    SDK 探测固件的笛卡尔规划能力时, 若那三帧全无应答 (本硬件的 USB CDC 上行有已知
+    丢帧), 它会 fail-closed 地当"不支持", 同时把这一情形单独记进 `_cart_probe_silent`
+    (`litearm/cart.py:881`), 好让报错能与"固件确报不支持"**分别措辞**。两者都要把
+    笛卡尔关掉 —— 但**下一步动作不同**: 一个是刷固件, 一个是查链路。
+
+    ⚠ 以前只发 `cart`, 于是"没问出来"在界面上被说成了"固件没编": 操作员被推去刷固件,
+    而线缆才是问题。
+    """
+    info = fake_session.arm_info()
+    assert "cart" in info, info
+    assert "cartProbeSilent" in info, info
+
+    arm = fake_session._arm
+
+    arm._cart_supported = False
+    arm._cart_probe_silent = True
+    info = fake_session.arm_info()
+    assert info["cart"] is False
+    assert info["cartProbeSilent"] is True
+
+    arm._cart_supported = False
+    arm._cart_probe_silent = False
+    info = fake_session.arm_info()
+    assert info["cart"] is False
+    assert info["cartProbeSilent"] is False
+
+
+def test_arm_info_tolerates_an_sdk_without_the_probe_flag(fake_session: Session) -> None:
+    """旧 SDK 没有 `_cart_probe_silent` ⇒ 如实回"不是探测没答", 不许抛。
+
+    缺字段时按"固件确报不支持"说, 与加这个字段之前的行为一致 —— 那种说法可能不准,
+    但不会因为一个 `getattr` 失败把整条连接路径炸掉。
+    """
+    arm = fake_session._arm
+    if hasattr(arm, "_cart_probe_silent"):
+        del arm._cart_probe_silent
+    arm._cart_supported = False
+    assert fake_session.arm_info()["cartProbeSilent"] is False
+
+
 def test_connect_with_a_different_port_while_connected_is_refused(
         fake_session: Session) -> None:
     """已连着时指了另一个口 ⇒ **响亮拒绝**, 链路留在原口。

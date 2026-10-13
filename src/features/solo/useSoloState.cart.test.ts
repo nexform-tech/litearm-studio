@@ -11,7 +11,9 @@ const mocks = vi.hoisted(() => ({
   toastWarning: vi.fn(),
   toastError: vi.fn(),
   status: 'connected' as string,
-  conn: { cart: true } as { cart: boolean } | null,
+  // `cartProbeSilent` 与 `cart` 配对：决定"笛卡尔不可用"该说哪一句话（见
+  // `cartUnsupportedHintKey`）。可缺省 —— 旧版守护进程不发它。
+  conn: { cart: true } as { cart: boolean; cartProbeSilent?: boolean } | null,
   armState: null as unknown,
 }))
 
@@ -168,5 +170,55 @@ describe('useSoloState cartesian capability gating', () => {
     // 没有 conn 帧就没有能力结论；未连接发不出指令，与固件是否支持笛卡尔无关。
     expect(result.current.cartUnsupported).toBe(false)
     expect(result.current.poseCart).not.toBeNull()
+  })
+
+  // ── `cart=false` 的两种成因要分开说 ─────────────────────────────────────────
+  //
+  // SDK 探测笛卡尔能力那三帧若全无应答（本硬件的 USB CDC 上行有已知丢帧），它会
+  // fail-closed 地当"不支持"，同时把这一情形单独记进 `_cart_probe_silent`。守护进程
+  // 把两者一起发来，因为**下一步动作不同**：一个是刷固件，一个是查链路。以前只有
+  // `cart`，第二种被说成了第一种。
+
+  it('says the firmware lacks a planner when the firmware said so', async () => {
+    mocks.conn = { cart: false, cartProbeSilent: false }
+
+    const { result } = await renderSolo()
+
+    expect(result.current.cartUnsupported).toBe(true)
+    expect(result.current.cartProbeSilent).toBe(false)
+    expect(result.current.cartHintKey).toBe('solo:cartesian.unsupportedHint')
+  })
+
+  it('says the probe went unanswered when that is what happened', async () => {
+    mocks.conn = { cart: false, cartProbeSilent: true }
+
+    const { result } = await renderSolo()
+
+    // 处理不变（一样关掉笛卡尔 —— SDK 那边同样会拒），变的只是那句话。
+    expect(result.current.cartUnsupported).toBe(true)
+    expect(result.current.cartProbeSilent).toBe(true)
+    expect(result.current.cartHintKey).toBe('solo:cartesian.probeSilentHint')
+  })
+
+  it('does not blame the firmware for a silent probe either', async () => {
+    mocks.conn = { cart: false, cartProbeSilent: true }
+
+    const { result } = await renderSolo()
+
+    await act(async () => {
+      await result.current.movelTarget([0.3, 0, 0.4], [0, 1.57, 0])
+    })
+    expect(mocks.movel).not.toHaveBeenCalled()
+    // 推到界面上的那句必须是"探测没答"，不是"固件没编"。
+    expect(mocks.toastWarning).toHaveBeenCalledWith(
+      expect.stringContaining('没有应答'),
+      { id: 'solo-cart-unsupported' },
+    )
+  })
+
+  it('has nothing to explain while cartesian is available', async () => {
+    const { result } = await renderSolo()
+
+    expect(result.current.cartHintKey).toBeNull()
   })
 })

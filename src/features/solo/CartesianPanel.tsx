@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { MoveRight, RefreshCw, Compass } from 'lucide-react'
+import { cartUnsupportedHintKey } from './soloUtils'
 
 /** 步长选择器：标题行右侧的「平移: 10 mm / 旋转: 5 °」。 */
 function StepPicker({
@@ -78,8 +79,10 @@ function PoseField({
  */
 export function CartesianPanel({
   simMode = false,
-  /** 固件未编译笛卡尔规划（`conn.cart === false`）：两张卡都不可用。 */
+  /** 笛卡尔不可用（`conn.cart === false`）：两张卡都不可用。 */
   cartUnsupported = false,
+  /** 不可用的成因是"探测没答上来"而非"固件确报不支持" —— 只影响那句提示怎么说。 */
+  cartProbeSilent = false,
   frames,
   transCells,
   rotCells,
@@ -96,6 +99,7 @@ export function CartesianPanel({
 }: {
   simMode?: boolean
   cartUnsupported?: boolean
+  cartProbeSilent?: boolean
   frames: SegItem[]
   transCells: PadCell[]
   rotCells: PadCell[]
@@ -174,7 +178,9 @@ export function CartesianPanel({
             </span>
           ) : cartUnsupported ? (
             <span className="rounded-full bg-warn-soft px-2 py-0.5 text-[0.6875rem] font-medium text-warn">
-              {t('solo:cartesian.unsupportedHint')}
+              {/* 说"固件没编"还是"没探测出来"，由 daemon 发来的成因决定 —— 两者都关掉
+                  笛卡尔，但操作员的下一步一个是刷固件、一个是查链路。 */}
+              {t(cartUnsupportedHintKey(cartProbeSilent))}
             </span>
           ) : null}
 
