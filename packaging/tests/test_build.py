@@ -290,8 +290,11 @@ def _load_hook(name: str):
     """按路径加载 `packaging/hooks/` 里的一条钩子。
 
     路径加载而不是 `import`：`hook-gi.repository.Gio` 不是个能 import 的名字（gi 的钩子都
-    按 `hook-<模块名>.py` 命名，PyInstaller 自己也是按路径读的）。PyInstaller 不在测试环境
-    里（CI 只装 `daemon[test]`），所以这里 `importorskip` —— 这几条跑在打包/发布环境。
+    按 `hook-<模块名>.py` 命名，PyInstaller 自己也是按路径读的）。
+
+    ⚠ `importorskip`: 这四条断言的是 PyInstaller 的行为，所以要它在场。CI 与发布任务都装它
+    （见 `.github/workflows/ci.yml` 的安装那步）—— 少了它这几条会**跳过**而不是变红，那是
+    钩子回归唯一能溜过去的路。
     """
     pytest.importorskip("PyInstaller")
     spec = importlib.util.spec_from_file_location(
@@ -338,6 +341,11 @@ def test_the_gi_hook_stops_the_whole_desktop_stack() -> None:
     for soname in ("libssl.so.3", "libz.so.1", "libbz2.so.1.0", "libffi.so.8",
                    "libgirepository-1.0.so.1"):
         assert not dylib.exclude_list.check_library(soname), f"{soname} 不该被排除"
+
+    # 4. 按名字收的那几个模块。`asyncio` 必须在内: 它是标准库、不在 gi 包里,
+    #    `--collect-all gi` 收不到它, 而 PyGObject 3.50 起会在 `_gi` 扩展里 import 它。
+    for module in ("gi._error", "gi._option", "asyncio"):
+        assert module in hook.hiddenimports, f"{module} 不在 hook-gi 的 hiddenimports 里"
 
 
 def _load_stack_rules():

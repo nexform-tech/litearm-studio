@@ -115,11 +115,20 @@ def adopt_the_system_stack() -> None:
 
 adopt_the_system_stack()
 
-#: Python 侧那几个按名字取的 gi 模块 —— 上游那条 `hook-gi.py` 声明的就是这几个
-#: （它还会按 PyGObject 的版本追加 `asyncio` 与 `gi._enum`）。
+#: Python 侧那几个按名字取的 gi 模块 —— 上游那条 `hook-gi.py` 声明的就是这几个。
 #:
 #: ⚠ 这里**照抄**而不是把上游那条加载进来跑一遍，因为它一 import 就读 `pygobject` 的
-#: metadata：那会把这半条清单绑死在"构建机的 PyGObject 装好了"上。而这几个模块本来也由
+#: metadata：那会把这半条清单绑死在"构建机的 PyGObject 装好了"上。这几个模块本来也由
 #: `--collect-all gi` 收（它们是 gi 包内的模块与扩展，`collect_all` 收得干净）；列在这里是
-#: 那层保障消失时也不会静默少东西。上游将来多收什么，`--collect-all gi` 同样跟得上。
-hiddenimports = ["gi._error", "gi._option"]
+#: 那层保障消失时也不会静默少东西。上游将来多收 gi 包**内**的东西，`--collect-all gi`
+#: 同样跟得上。
+#:
+#: ⚠ `asyncio` 是那条论证**覆盖不到**的一个，所以它单独列出来：它是标准库，不在 gi 包里，
+#: `--collect-all gi` 收不到它，而 PyGObject 3.50 起会在 `_gi` 扩展里 import 它（上游那条
+#: hook 因此按 `pygobject_version >= (3, 50, 0)` 追加）。这里**无条件**收下，而不是照抄那个
+#: 版本判据：asyncio 是标准库，收进来永远是对的，uvicorn 本来也会把它拉进产物；而判据要读
+#: `pygobject` 的 metadata，那正是上面刻意不碰的东西。
+#:
+#: （上游还按版本追加 `gi._enum`，但它在 gi 包**内**，`--collect-all gi` 收得到，所以不在
+#: 这里重复。）
+hiddenimports = ["gi._error", "gi._option", "asyncio"]
