@@ -222,21 +222,28 @@ def test_payload_installs_the_whole_directory_when_the_build_is_onedir(tmp_path)
     """目录形态的产物整棵树都要装进去，而且落在**同一个**路径上。
 
     包是用目录形态装的（dpkg 本来就是装一棵树，代价为零，换来每次启动少解包 ~300 ms），
-    所以这条盯两件事：树里的每个文件都在，以及可执行文件仍然落在
-    `/usr/lib/<pkg>/<name>` —— launcher、文档、udev 规则都指着那个路径。
+    所以这条盯三件事：树里的每个文件都在、可执行文件仍然落在
+    `/usr/lib/<pkg>/<name>`（launcher、文档、udev 规则都指着那个路径），以及**每个文件
+    带着自己的模式进包**（`deb.bundled_daemon` 照搬 `st_mode`，不按类型统一规范化）。
     """
     built = tmp_path / "litearm-studio-daemon"
     (built / "_internal" / "litearm_studio_daemon").mkdir(parents=True)
     exe = built / deb.BINARY_NAME
     exe.write_bytes(b"#!/bin/true\n")
     exe.chmod(0o755)
-    (built / "_internal" / "base_library.zip").write_bytes(b"zip")
+    bundle = built / "_internal" / "base_library.zip"
+    bundle.write_bytes(b"zip")
+    # ⚠ 显式 chmod: `write_bytes` 留下的是**运行者的 umask**, 而这条断言问的是
+    #   "每个文件是不是带着自己的模式进的包"（见 `deb.bundled_daemon`），不是 umask 是
+    #   多少。取 0o640 而不是 0o644 是刻意的: 那是"照搬源文件"与"统一规范化成 0o644"
+    #   之间的分界线, 所以这条现在既与 umask 无关, 又真的能证伪一个规范化实现。
+    bundle.chmod(0o640)
     (built / "_internal" / "litearm_studio_daemon" / "factory_calibration.json").write_bytes(b"{}")
 
     modes = {path.as_posix(): mode for path, _source, mode in deb.payload(built)}
 
     assert modes[f"usr/lib/{deb.PACKAGE}/{deb.BINARY_NAME}"] == 0o755
-    assert modes[f"usr/lib/{deb.PACKAGE}/_internal/base_library.zip"] == 0o644
+    assert modes[f"usr/lib/{deb.PACKAGE}/_internal/base_library.zip"] == 0o640
     assert (f"usr/lib/{deb.PACKAGE}/_internal/litearm_studio_daemon/"
             "factory_calibration.json") in modes
     # 目录**本身**不产生条目 —— dpkg 只记录文件，多出来的目录条目会让 md5sums 变脏。
