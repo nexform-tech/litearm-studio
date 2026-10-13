@@ -10,6 +10,11 @@ vi.mock('@/lib/arm/useArmConnection', () => ({
   }),
 }))
 
+vi.mock('@/lib/export', () => ({
+  exportFile: vi.fn(async () => ({ kind: 'saved', path: '/tmp/telemetry.csv' })),
+}))
+
+import { exportFile } from '@/lib/export'
 import { telemetryDb } from './telemetryDb'
 import { useTelemetryState } from './useTelemetryState'
 
@@ -24,6 +29,44 @@ function sample(ts: number) {
     errs: [],
     faults: [],
   }
+}
+
+/** 指定轴数的采样 —— 用来造"同一个会话里换过台架"的那种文件。 */
+function axisSample(ts: number, axes: number) {
+  return {
+    ts,
+    state: 'holding',
+    q: Array.from({ length: axes }, (_, i) => 0.1 * (i + 1)),
+    dq: Array.from({ length: axes }, () => 0),
+    tau: Array.from({ length: axes }, (_, i) => 0.5 * (i + 1)),
+    temps: [],
+    errs: [0, 1],
+    faults: [],
+  }
+}
+
+/** 按 CSV 规则切一行：引号里的逗号不是分隔符（`errs` 是 JSON，天然带逗号）。 */
+function splitCsvLine(line: string): string[] {
+  const out: string[] = []
+  let cur = ''
+  let quoted = false
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i]
+    if (quoted) {
+      if (c === '"') {
+        if (line[i + 1] === '"') {
+          cur += '"'
+          i++
+        } else quoted = false
+      } else cur += c
+    } else if (c === '"') quoted = true
+    else if (c === ',') {
+      out.push(cur)
+      cur = ''
+    } else cur += c
+  }
+  out.push(cur)
+  return out
 }
 
 describe('useTelemetryState', () => {
@@ -112,5 +155,44 @@ describe('useTelemetryState', () => {
     })
 
     expect(result.current.error).toBe('that session no longer exists')
+  })
+
+  // ⚠ 会话在断线 30s 内重连就延续（见 telemetryRecorder），中途换过台架（7J → 1J）的
+  // 会话里因此有**两种宽度的行**。表头只写一次，它必须取整段会话的上限 —— 按第一帧
+  // 定宽的话，窄的那一行会整段左移，`errs` 又落到 `dq4` 底下，正是这次要修的东西。
+  it('exports one header wide enough for every sample in the session', async () => {
+    const id = await telemetryDb.addSession(Date.now() / 1000, '/dev/ttyACM0')
+    // 窄的在前：只看第一帧的话，表头写出来就是 3 轴，后两行会多出 4 列。
+    await telemetryDb.addSamples(id, [
+      axisSample(1700000000, 3),
+      axisSample(1700000001, 7),
+      axisSample(1700000002, 3),
+    ])
+
+    const { result } = renderHook(() => useTelemetryState())
+    await waitFor(() => expect(result.current.sessions).toHaveLength(1))
+    await act(async () => {
+      await result.current.exportSession(id)
+    })
+
+    const calls = vi.mocked(exportFile).mock.calls
+    const blob = calls[calls.length - 1][0]
+    const lines = (await blob.text()).split('\n').filter((l) => l.length > 0)
+    const rows = lines.map(splitCsvLine)
+
+    // 表头按整段会话定宽（7 轴），每一行都与它同宽
+    expect(rows[0]).toContain('q7')
+    for (const row of rows.slice(1)) expect(row).toHaveLength(rows[0].length)
+
+    // 窄的那两行：缺的轴留白，`errs` 仍落在自己的标题下面
+    const at = (row: string[], name: string) => row[rows[0].indexOf(name)]
+    for (const row of [rows[1], rows[3]]) {
+      expect(at(row, 'q3')).toBe('0.30000000000000004')
+      expect(at(row, 'q4')).toBe('')
+      expect(at(row, 'errs')).toBe('[0,1]')
+    }
+    // 宽的那一行铺满，尾部不漏
+    expect(at(rows[2], 'q7')).toBe('0.7000000000000001')
+    expect(at(rows[2], 'errs')).toBe('[0,1]')
   })
 })
