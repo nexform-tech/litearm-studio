@@ -249,6 +249,8 @@ class Plant:
         # what the force conversion is defined on.  At equilibrium against an
         # object this equals the contact reaction, so a blocked gripper reads
         # the force it is actually applying.
+        # ⚠ 符号同样按安装方向 —— 模拟器要**照着真件**报数, 否则反装那种情形在
+        #   `--fake` 里看起来是好的, 到了真机上才发现前馈把夹爪撑开。
         tau = self.tau
         return Telemetry(
             position_rad=reported,
@@ -258,7 +260,7 @@ class Plant:
             temperature_coil=int(round(self.temp_coil)),
             error_code=constants.ERROR_ENABLED,
             position_mm=pos_mm,
-            force_n=force_from_torque(tau),
+            force_n=force_from_torque(tau, direction=self.limits.direction),
             t=t,
         )
 

@@ -7,7 +7,7 @@ the SDK's own ``open()`` and ``close()``.  Every other convenience method is
 deliberately unused, and the reasons are structural rather than stylistic (they
 are listed at length in :mod:`litearm_studio_daemon.gripper.backend`).  The one
 that matters most here: ``control_mit_stream`` has no abort hook of its own
-(can_bus.py:342), so anything built on it cannot be interrupted — which rules
+(``litegrip.protocols.can_bus.control_mit_stream``), so anything built on it cannot be interrupted — which rules
 out ``grasp``, ``goto``, ``move_to`` and ``move_at_speed`` for a console whose
 E-stop has to work inside one tick.  ``open`` and ``close`` are the exceptions
 only because they accept a ``progress`` callback, and the two ``*_plain``
@@ -48,7 +48,7 @@ from .. import calibration, constants
 from ..can_link import link_failure
 from ..calibration import CalibrationInfo
 from ..telemetry import Telemetry
-from ..units import Limits, force_from_torque
+from ..units import CLASSIC_DIRECTION, Limits, force_from_torque
 from . import (
     BackendError,
     ConnectFailed,
@@ -111,8 +111,8 @@ class RealBackend(GripperBackend):
 
         # Built through ``config`` rather than positional arguments: the SDK's
         # constructor substitutes ``config`` values for any argument left at its
-        # default (gripper.py:101), so passing both means the config silently
-        # wins for exactly the arguments that are hardest to notice.
+        # default (``LiteGrip.__init__``), so passing both means the config
+        # silently wins for exactly the arguments that are hardest to notice.
         cfg = GripperConfig()
         cfg.can_channel = channel
         cfg.max_stroke_mm = float(max_stroke_mm)
@@ -124,7 +124,8 @@ class RealBackend(GripperBackend):
             cfg.canfd_mode = bool(canfd_mode)
         self._gripper = LiteGrip(config=cfg)
         # Press softly onto the stop: ``open()``/``close()`` are what this console
-        # delegates its plain moves to, and they always press (see
+        # delegates its plain moves to, and the pressing one of the two (闭合;
+        # 张开只在标定没有工作行程时才压) 走的就是这个 lead (see
         # :data:`~litearm_studio_daemon.gripper.constants.PRESS_STOP_LEAD_MM`).
         # The SDK builds this MotionConfig once, at construction, and nothing
         # rebuilds it, so setting it here holds for the object's whole life.
@@ -308,8 +309,14 @@ class RealBackend(GripperBackend):
             # the probe — works in rad, which is always meaningful.
             position_mm=limits.to_mm(state.position_rad) if limits is not None else 0.0,
             # Well-defined without a calibration: it is a torque scaled by a
-            # constant, and the operator needs it most during the probe.
-            force_n=force_from_torque(state.torque_nm),
+            # constant, and the operator needs it most during the probe.  The
+            # constant carries the mounting's sign, and an uncalibrated unit gets
+            # the SDK's own placeholder orientation (see CLASSIC_DIRECTION) —
+            # the number is approximate, but it is the sign the SDK would report.
+            force_n=force_from_torque(
+                state.torque_nm,
+                direction=(limits.direction if limits is not None
+                           else CLASSIC_DIRECTION)),
             t=time.time(),
         )
 
@@ -346,9 +353,17 @@ class RealBackend(GripperBackend):
         closing one — a plain open that stalls on nothing is the failure this
         avoids.
 
-        Returns ``True`` once the jaws pressed onto the open stop.  An open a
-        workpiece stopped short of the stop is the obstruction it is, not a
-        completed move.
+        Returns ``True`` once the jaws arrived at the end of the open move —
+        which is a press onto the stop **only when the calibration carries no
+        work stroke**: with one (the shipped default does), the SDK's ``open()``
+        is a positioning move that stops inside the open end and never stalls,
+        so the arrival is its reported ``reached`` rather than a stall.  Both are
+        the same verdict from this method's point of view; the caller's arrival
+        test (``_short_of_the_end``) is what tells them apart.
+
+        An open that a workpiece stopped short of the stop is the obstruction it
+        is, not a completed move — and neither ``reached`` nor the stall test can
+        be satisfied by a move that merely gave up.
         """
         return self._drive_to_limit(
             "open", self._gripper.open, speed_mm_s, should_abort, progress
@@ -527,8 +542,8 @@ class RealBackend(GripperBackend):
 
         # The one check that observes the outcome instead of constraining the
         # input.  ``load_calibration`` also overwrites kp, kd, can_id, mst_id,
-        # channel and canfd_mode from the file (gripper.py:752-767), so a file
-        # that disagrees with the running link shows up here too.
+        # channel, canfd_mode, grasp_torque_threshold and work_stroke_mm from the
+        # file, so a file that disagrees with the running link shows up here too.
         applied = Limits.from_config(self._gripper.config)
         mismatch = calibration.cross_check(info, applied)
         if mismatch:

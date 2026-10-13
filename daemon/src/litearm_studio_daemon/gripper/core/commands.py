@@ -323,9 +323,9 @@ class StartGuidedCalibration(Command):
 class ConfirmProbeLimit(Command):
     """The operator says the jaws have reached the limit.
 
-    Replaces the SDK's "press Enter" (gripper.py:582), which needs stdin to be a
-    terminal and therefore cannot be reached from a worker thread — let alone
-    from a GUI.
+    Replaces the SDK's "press Enter" (``calibrate_guided`` 的步骤循环里那个
+    ``isatty`` + ``select`` 检查), which needs stdin to be a terminal and therefore
+    cannot be reached from a worker thread — let alone from a GUI.
     """
 
     source: str = "confirm"

@@ -21,21 +21,26 @@ Force semantics
 A force setpoint is a torque feed-forward, and two things make it mean what it
 says.
 
-**The reference freezes at contact.**  The SDK's ``set_force``
-(gripper.py:988-997) commands ``q_target = get_position()`` plus
-``tau_feedforward``, and the reason is not cosmetic: a reference that keeps
-advancing past a blocked object grows the MIT position error ``kp·(q_cmd − q)``
-without bound, and that term adds to the feed-forward.  Measured in simulation,
-a 40 N setpoint delivered 59 N with the reference advancing.
+**The reference freezes at contact.**  Every frame commands
+``q_target = 上一次读到的位置`` together with ``tau_feedforward``, and the reason is
+not cosmetic: a reference that keeps advancing past a blocked object grows the MIT
+position error ``kp·(q_cmd − q)`` without bound, and that term adds to the
+feed-forward.  Measured in simulation, a 40 N setpoint delivered 59 N with the
+reference advancing.  The SDK's hold does the same thing
+(``litegrip.actions`` 的 ``_hold_force``, 由 ``grasp()`` 的保力段进入, 同样发
+``kp=0.0``), so this is **not** a divergence — it is the same choice, made for
+the same reason.
 
-**The position gain is zero while holding force.**  This is where this console
-deliberately diverges from the SDK, which holds force at ``kp=150``.  Any
-position term is added to the feed-forward, so the delivered force depends on
-how far the jaws sank into the object — with ``kp=150`` a 40 N setpoint landed
-at 31 N against a 500 Nm/rad object, and would run *over* the setpoint against a
-stiffer one.  With ``kp=0`` the torque is the feed-forward alone and the grip
-force equals the setpoint, which is what makes the 40 N rating a real bound
-rather than an aspiration.  ``kd`` still damps velocity, and the two guards
+⚠ 这一节曾经把"``kp=0`` 保力"写成对 SDK 的**故意分歧**, 说 SDK 按 ``kp=150`` 保力、40 N
+设定值因此落到 31 N。 那是错的: 150 是 ``MotionConfig.hold_kp`` 那个**已废弃**的默认值,
+上游的保力段发的是 ``kp=0``, 并在文档里写明 ``hold_kp``/``hold_kd`` "已废弃, 设了也不
+生效"。 上一条仿真的数字仍然说明了"为什么不能用位置增益"(任何位置项都加到前馈上, 夹爪让位
+多少取决于工件硬度), 只是它描述的是这类做法的代价, 不是上游的做法。
+
+**The position gain is zero while holding force.**  ``kp=0`` means the torque is the
+feed-forward alone, so the grip force equals the setpoint — which is what makes
+the 40 N rating a real bound rather than an aspiration.  ``kd`` still damps
+velocity, and the two guards
 below still stop the jaws running away:
 
 * the reference is clamped to the calibrated travel, so even with no object the
@@ -607,7 +612,7 @@ class MotionFSM:
         not zero: a braking torque is a real motor torque.  Only the settled
         value after the ramp is the grip force.
         """
-        target = clamp_force_torque(self._force_n)
+        target = clamp_force_torque(self._force_n, direction=self.limits.direction)
         alpha = min(dt / constants.FORCE_RAMP_S, 1.0)
         if self._tau_cmd is None:
             # Entering force mode: continue from the torque in flight so the

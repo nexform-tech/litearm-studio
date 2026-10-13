@@ -4,17 +4,19 @@ No Qt, no SDK, no I/O — everything here is a function of its arguments, so the
 whole module is unit-testable and can be reasoned about by hand.
 
 The conversion formulas are the SDK's (not invented), because getting them
-subtly wrong is how a gripper drives into a hard stop:
+subtly wrong is how a gripper drives into a hard stop.  Upstream spells them with
+the mounting's sign carried in `close_sign` (``LiteGrip.state``: ``position_mm =
+(pos_closed_rad - position_rad) * close_sign * rad_to_mm``):
 
-    mm  = (pos_closed_rad - position_rad) * rad_to_mm      gripper.py:1281
-    rad = pos_closed_rad - position_mm / rad_to_mm         gripper.py:925
+    mm  = (pos_closed_rad - position_rad) * rad_to_mm      close_sign = +1
+    rad = pos_closed_rad - position_mm / rad_to_mm         close_sign = +1
 
-Both of those hardcode the sign of the mapping, and the SDK has no other form: as
-written it can only describe a gripper whose encoder angle *shrinks* as the jaws
-open, which is how the units it was written for are assembled.  That is an
-assembly detail rather than a property of the calibration, so here it is read
-from the recorded angles — :attr:`Limits.direction` — and the two formulas above
-are the case of it where the closed stop is the larger angle.
+That `close_sign` is an assembly detail rather than a property of the
+calibration, so here it is read from the recorded angles — :attr:`Limits.direction`
+— and the two formulas above are the case of it where the closed stop is the
+larger angle (the classic mounting, ``direction = -1``; ``close_sign`` is
+``-direction``).  Force scaling carries the same sign, for the same reason: see
+:func:`force_from_torque`.
 
 The other thing the SDK's formulas are fed is ``rad_to_mm``, and that one is not
 taken from a file at all.  It is derived from the calibration's angles and the
@@ -241,26 +243,51 @@ def frame_mismatch(limits: Limits, measured_rad: float) -> str:
 
 
 # ── force scaling ───────────────────────────────────────────────────────────
-# The SDK estimates force as torque × NM_TO_N and does NOT guarantee a positive
-# sign (the direction convention flips with the winding).  Display magnitude,
-# keep the signed torque available.
-def force_from_torque(torque_nm: float) -> float:
-    return torque_nm * constants.NM_TO_N
+#: 没有可用标定时的方向 —— 与 SDK 占位默认值同向 (`pos_closed_rad=1.14` >
+#: `pos_open_rad=0.0`), 也就是"经典安装"。没标定时读到的力只是个大致的数, 但它至少与 SDK
+#: 报的是同一个符号。
+CLASSIC_DIRECTION = -1.0
+
+
+def force_from_torque(torque_nm: float, *, direction: float) -> float:
+    """Motor torque → grip force, **in the SDK's own sign convention**.
+
+    ⚠ 符号是安装方向给的, 不是修饰: SDK 报的是 `close_sign · torque · NM_TO_N`
+    (`litegrip/gripper.py` 的 `GripperState`), 而 `close_sign` 在本仓的记法里就是
+    `-direction` (`close_sign = +1` ⟺ `pos_closed_rad ≥ pos_open_rad` ⟺ 经典安装 ⟺ 这里的
+    `direction = -1`)。少了它, 反装机器上"正在夹紧"会读成负数 —— 而这个数是要**显示**的,
+    它必须与 SDK 印出来的是同一个。
+
+    没有调用方可以省略方向: 关键字参数是故意的 (与 `mm_to_rad_per_s` 同一条纪律)。
+    """
+    return -direction * torque_nm * constants.NM_TO_N
 
 
 def torque_from_force(force_n: float) -> float:
+    """Force **magnitude** → torque magnitude.
+
+    ⚠ 这一条刻意不带方向: 它唯一的用途是把一个力预算折成力矩预算的大小
+    (`calibration_fsm` 的步长上限), 那里只比绝对值。要往前馈送, 用 `clamp_force_torque`。
+    """
     return force_n * constants.N_TO_NM
 
 
 def clamp_force(force_n: float) -> float:
+    """Setpoint magnitude → a real force, clamped to the mechanical rating."""
     if math.isnan(force_n):
         return 0.0
     return min(max(force_n, 0.0), constants.FORCE_MAX_N)
 
 
-def clamp_force_torque(force_n: float) -> float:
-    """Force setpoint → torque feed-forward, capped at the mechanical rating."""
-    return torque_from_force(clamp_force(force_n))
+def clamp_force_torque(force_n: float, *, direction: float) -> float:
+    """Force setpoint → torque feed-forward, capped at the mechanical rating.
+
+    ⚠ 与 `force_from_torque` 是同一件事的两半: 前馈要让夹爪往**夹紧**的方向出力, 而
+    "夹紧"在电机坐标里落在哪一侧由安装方向决定 —— SDK 的 `grasp()` 同样乘 `close_sign`
+    (`litegrip/actions.py` 的 `_hold` 段)。少了这个符号, 反装机器上这条前馈会把夹爪**撑开**,
+    大小还正好等于设定力, 于是每一次读数都看着合理。
+    """
+    return -direction * clamp_force(force_n) * constants.N_TO_NM
 
 
 def mm_to_rad_per_s(speed_mm_s: float, rad_to_mm: float, *, direction: float) -> float:

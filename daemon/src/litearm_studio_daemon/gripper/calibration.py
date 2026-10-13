@@ -2,15 +2,20 @@
 
 Why this module exists
 ----------------------
-The SDK's ``load_calibration(path)`` reads ``[path, factory_calibration.json]``
-in order and returns ``True`` for BOTH, distinguishing them only with a
-``log.info`` call (gripper.py:726-749).  A factory file belongs to a nominal
-unit, not necessarily to the gripper on the bench, so silently loading it makes
-every mm and force reading wrong with nothing on screen to show it.  Worse,
-calling nothing at all leaves ``GripperConfig``'s defaults in place —
-``pos_closed_rad=0.0`` / ``pos_open_rad=1.14`` — and under those the SDK's own
-clamp ``max(open, min(closed, x))`` collapses to a constant, so every target maps
-to one angle.
+The SDK's ``load_calibration(path)`` tries ``[path, factory_calibration.json]`` in
+order and returns ``True`` for either, distinguishing them only with a
+``log.info`` call.  A factory file belongs to a nominal unit, not necessarily to
+the gripper on the bench, so silently loading it makes every mm and force reading
+wrong with nothing on screen to show it.  Worse, calling nothing at all leaves
+``GripperConfig``'s defaults in place — ``pos_closed_rad=1.14`` /
+``pos_open_rad=0.0`` with ``rad_to_mm=105.26``, i.e. the nominal 120 mm unit that
+ships in the SDK's own file — so every millimetre is scaled by a stranger's
+geometry, and there is nothing on screen to say so.
+
+⚠ 这两句曾经是**反**的 (defaults 写成 ``0.0``/``1.14``, 又说 SDK 的区间夹取
+``max(open, min(closed, x))`` 会塌成一个常数)。 SDK 的夹取是先取 ``min``/``max`` 再夹
+(``_move_at_speed_rad``), 与两个角的次序无关, 不会塌; 真正的问题是那对默认值描述的是
+**另一台**夹爪。
 
 The defence is structural rather than defensive:
 
@@ -87,7 +92,8 @@ TEMPLATE_NAMES = ("normal", "reverse")
 #: Environment override for the calibration file, same variable the SDK reads.
 CALIB_ENV = "LITEGRIP_CALIB"
 
-# The three keys the SDK requires; it indexes them unguarded (gripper.py:745),
+# The three keys the SDK requires; it indexes them unguarded
+# (``LiteGrip.load_calibration`` reads ``data["zero_position_rad"]`` and friends),
 # so a file missing one raises KeyError from inside the SDK rather than a
 # diagnosable error.  We validate before it ever gets there.
 REQUIRED_KEYS = ("zero_position_rad", "max_position_rad", "rad_to_mm")
