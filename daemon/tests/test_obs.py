@@ -88,6 +88,23 @@ def test_catalog_constants_match_the_table() -> None:
         assert name in schema.EVENT_SEVERITIES
 
 
+def test_every_event_constant_is_reachable_through_the_package() -> None:
+    """Emitters name events as `obs.X`, so a constant left in `schema` is a crash.
+
+    The vocabulary is declared in `schema` and read at the call sites through the
+    package, and the two lists are edited by hand. A name that misses the
+    re-export is not a missing label: it is an `AttributeError` on the emitting
+    path, which is where it hurts most — `obs.UPLINK_DROPPED` sat in the
+    WebSocket teardown, where raising also skipped the task cancellation behind it.
+    """
+    missing = sorted(
+        name for name, value in vars(schema).items()
+        if name.isupper() and isinstance(value, str)
+        and value in schema.EVENT_KINDS and not hasattr(obs, name)
+    )
+    assert missing == [], f"declared in schema, not re-exported by obs: {missing}"
+
+
 def test_event_catalog_is_json_ready_for_the_page() -> None:
     """`/api/logs/events` serves this: it must survive json.dumps."""
     catalog = schema.event_catalog()
