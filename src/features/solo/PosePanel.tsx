@@ -15,10 +15,18 @@ export type PoseRow = { k: string; v: string; u: string }
 export function PosePanel({
   jointPose,
   cartPose,
+  cartHintKey,
 }: {
   jointPose: PoseRow[]
-  /** null = 固件没有笛卡尔规划，读不到 TCP 位姿（不是"还没读到"）。 */
+  /** null = 笛卡尔不可用，读不到 TCP 位姿（不是"还没读到"）。 */
   cartPose: PoseRow[] | null
+  /**
+   * 笛卡尔不可用时该说的那一句（`useSoloState.cartHintKey`）——**与笛卡尔面板、与
+   * 两条被拒的 toast 同一句**。起因有两种（固件确报不支持 / 探测没问出来），这里再
+   * 自己判断一次就会出现同一屏两句话打架的情况。
+   * null 只是兜底：`cartPose` 为 null 而调用方没给原因时，至少说清"读不到"，不编数。
+   */
+  cartHintKey: string | null
 }) {
   const { t } = useTranslation(['common', 'solo'])
 
@@ -31,7 +39,7 @@ export function PosePanel({
           <PoseColumn items={cartPose} labelOf={(row) => `${row.k}:`} />
         ) : (
           <div className="flex items-center px-2 text-center text-[0.71875rem] leading-relaxed text-muted-foreground">
-            {t('solo:cartesian.poseUnavailable')}
+            {t(cartHintKey ?? 'solo:cartesian.poseUnavailable')}
           </div>
         )}
       </div>
