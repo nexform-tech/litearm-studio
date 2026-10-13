@@ -315,7 +315,8 @@ export function FirmwareSection() {
               </Notice>
             ) : (
               <Notice tone="danger">
-                {t('settings:firmware.failedTitle')}：
+                {t('settings:firmware.failedTitle')}
+                {t('common:labelSeparator')}
                 {formatFirmwareReason(vm.result.reason, vm.result.msg)}
               </Notice>
             )}

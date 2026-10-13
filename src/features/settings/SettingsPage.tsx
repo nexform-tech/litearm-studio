@@ -242,7 +242,8 @@ function InstallationSection({ vm }: { vm: SettingsState }) {
             c.gqOk ? t('settings:installation.checkExpected') : t('settings:installation.checkUnexpected')
           }`,
     ]
-    return `${t('settings:installation.checkTitle')}：${parts.join(' · ')}`
+    // 分隔符走 i18n —— 写死的 `：` 在英文界面上是一个中文标点。
+    return `${t('settings:installation.checkTitle')}${t('common:labelSeparator')}${parts.join(' · ')}`
   })()
 
   const segmentStyles = {

@@ -171,7 +171,10 @@ export function useGripperPanel() {
       const why = GATE_VALUES.includes(gate)
         ? t(`gripper:gate.${gate}_why`)
         : (state?.gateReason || conn?.gateReason || '')
-      return why ? `${t(`gripper:gate.${gate}`)}：${why}` : t(`gripper:gate.${gate}`)
+      // ⚠ 分隔符也走 i18n：写死的 `：` 会在英文界面上留一个中文标点
+      //   （"Template：Precision is not guaranteed today"）。
+      const sep = t('common:labelSeparator')
+      return why ? `${t(`gripper:gate.${gate}`)}${sep}${why}` : t(`gripper:gate.${gate}`)
     }
     return ''
   }, [present, connected, estopped, enabled, gate, state?.gateReason, conn?.gateReason, t])

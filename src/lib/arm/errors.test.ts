@@ -219,3 +219,59 @@ describe('formatArmError (activation reasons)', () => {
     await i18n.changeLanguage('zh')
   })
 })
+
+describe('formatArmError (SDK 自己的异常类)', () => {
+  // ⚠ 这一组钉的是"英文界面上不许出现 SDK 写的中文原句"。
+  //
+  // `error_to_dict` 取的是 `type(e).__name__`, 而 daemon 只对 `TransportError` 另作处理,
+  // 其余异常**原样上抛** —— 于是任何没登记进 `KIND_KEYS` 的类名都会落到 `formatArmError`
+  // 最后那条 `return msg`, 把 `cart.py` 写的中文端到英文界面上。最常撞上的是笛卡尔点动:
+  // 路点无解时抛的正是 `IKError`。
+
+  it('translates the SDK cartesian errors instead of echoing their Chinese', async () => {
+    await i18n.changeLanguage('en')
+
+    const zhMsg = '固件笛卡尔规划失败: 路点 IK 无解或解跳变 (err=3)'
+    const text = formatArmError(daemonErr('IKError', zhMsg))
+    expect(text).not.toContain('固件')
+    expect(text).not.toContain('笛卡尔规划失败')
+    expect(text).toMatch(/pose/i)
+
+    expect(formatArmError(daemonErr('CartesianPlanError', zhMsg))).not.toContain('固件')
+    expect(formatArmError(daemonErr('MotionSupersededError', '被新指令取代'))).not.toContain('指令取代')
+
+    await i18n.changeLanguage('zh')
+  })
+
+  it('translates the SDK errors that are not about cartesian motion', async () => {
+    await i18n.changeLanguage('en')
+
+    expect(formatArmError(daemonErr('ArmIsInDfuError', '设备在 bootloader 里'))).toMatch(/bootloader/i)
+    expect(formatArmError(daemonErr('UnsupportedByFirmwareError', '固件不支持'))).not.toContain('固件不支持')
+    expect(formatArmError(daemonErr('CartReplyLostError', '应答丢失'))).toMatch(/reply frame/i)
+    expect(formatArmError(daemonErr('InvalidCommandError', '参数不对'))).toMatch(/arguments/i)
+    expect(formatArmError(daemonErr('ForkedSessionError', '这是 fork'))).toMatch(/fork/i)
+
+    await i18n.changeLanguage('zh')
+  })
+
+  it('translates the daemon’s own argument errors', async () => {
+    await i18n.changeLanguage('en')
+
+    // `gripper/session.py` 的十来个 `raise ValueError` 都在命令处理器里, 一样会上线。
+    const text = formatArmError(daemonErr('ValueError', 'channel 不能为空'))
+    expect(text).not.toContain('不能为空')
+    expect(text).toMatch(/arguments|values/i)
+
+    await i18n.changeLanguage('zh')
+  })
+
+  it('keeps an unknown kind on the fallback path', async () => {
+    await i18n.changeLanguage('en')
+
+    // 认不出的类名仍然照原样回 —— 显示一句没翻译的话，好过什么都不显示。
+    expect(formatArmError(daemonErr('SomeBrandNewError', '一句没登记的话'))).toBe('一句没登记的话')
+
+    await i18n.changeLanguage('zh')
+  })
+})

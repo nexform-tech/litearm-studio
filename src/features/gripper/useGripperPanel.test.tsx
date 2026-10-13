@@ -238,3 +238,34 @@ describe('useGripperPanel', () => {
     expect(result.current.disabledReason).toBe('')
   })
 })
+
+describe('useGripperPanel (分隔符跟语言走)', () => {
+  // ⚠ 这一条钉的是"英文界面上不留中文标点"。
+  //
+  // 门禁那句话是 `标题 + 分隔符 + 解释` 拼出来的，分隔符以前写死成全角的 `：`。英文界面
+  // 于是出现 "Template：Precision is not guaranteed today" —— 整句是英文，中间一个中文
+  // 标点。与 issue #128 修掉的是同一类问题（daemon 写死的中文混排），只是换成了标点。
+
+  beforeEach(() => {
+    ready({})
+    mocks.conn.current = { ...mocks.conn.current, gate: 'TEMPLATE', source: 'template' }
+    mocks.state.current = { ...mocks.state.current, gate: 'TEMPLATE' }
+  })
+
+  it('uses the English separator in English', async () => {
+    await i18n.changeLanguage('en')
+    const { result } = renderHook(() => useGripperPanel())
+
+    expect(result.current.disabledReason).not.toContain('：')
+    expect(result.current.disabledReason).toContain(': ')
+    await i18n.changeLanguage('zh')
+  })
+
+  it('uses the full-width separator in Chinese', async () => {
+    await i18n.changeLanguage('zh')
+    const { result } = renderHook(() => useGripperPanel())
+
+    expect(result.current.disabledReason).toContain('：')
+    await i18n.changeLanguage('zh')
+  })
+})

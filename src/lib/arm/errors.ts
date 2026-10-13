@@ -26,6 +26,26 @@ const KIND_KEYS: Record<string, string> = {
   BadMessage: 'badMessage',
   // 设备选择：已连着时指了另一个口，daemon 拒了这次 connect 的 `res`（不是 `conn` 帧）。
   PortChangeWhileConnectedError: 'portChangeWhileConnected',
+  // ---- SDK 自己的异常类 ----
+  //
+  // ⚠ 这些**必须**在这里有名字。`error_to_dict` 取的是 `type(e).__name__`，而 daemon 在
+  //   `_sdk_call` 里只对 `TransportError` 另作处理，其余**原样往上抛** —— 于是任何没登记
+  //   的类名都会落到 `formatArmError` 最后那条 `return msg`，把 SDK 写的中文原句端到
+  //   英文界面上。最常撞上的是笛卡尔点动：路点无解时 `cart.py` 抛的正是下面头三条。
+  //
+  // ⚠ 这几条的文案**不插 `{{message}}`**：那就是 SDK 那句中文，插进来等于换个地方再漏
+  //   一次。要让操作员看见的是"下一步做什么"，不是一个我们没翻译的字符串。
+  IKError: 'ikFailed',
+  CartesianPlanError: 'cartesianPlanFailed',
+  MotionSupersededError: 'motionSuperseded',
+  CartReplyLostError: 'cartReplyLost',
+  UnsupportedByFirmwareError: 'unsupportedByFirmware',
+  ArmIsInDfuError: 'armInDfu',
+  ForkedSessionError: 'forkedSession',
+  InvalidCommandError: 'invalidArgument',
+  // daemon 自己在夹爪那条路上抛的参数错误（`gripper/session.py` 的十来个 `raise
+  // ValueError`，全在命令处理器里）。与 `InvalidCommandError` 同义：都是"你给的参数不对"。
+  ValueError: 'invalidArgument',
   // 夹爪 (§4.3)。daemon 的类名与这里的键一一对应。
   GripperNotConnectedError: 'gripperNotConnected',
   GripperLinkError: 'gripperLinkError',
@@ -152,6 +172,18 @@ const FALLBACK_ZH: Record<string, string> = {
   badMessage: '与本地程序的通信协议错误：{{message}}',
   portChangeWhileConnected:
     '机械臂已连接在另一个串口上：换口请先按「断开」，再选新口连接',
+  // ---- SDK ／ daemon 的参数与规划错误（见 KIND_KEYS 里那一段说明）----
+  ikFailed: '控制器解不出这个位姿（无解，或解跳变）。请把目标改到更接近可达范围的位置',
+  cartesianPlanFailed: '控制器规划不出这条直线运动。请缩短单段距离，或降一档速度',
+  motionSuperseded: '这次运动已被更新的一条指令取代。若仍要到那个位置，请重新下发',
+  cartReplyLost:
+    '控制器不再回应这条笛卡尔运动（有一帧应答丢了）。它可能已经走完、也可能没走 —— 再下发之前请先看当前位姿',
+  unsupportedByFirmware: '这份固件不支持该命令。请升级固件，或改用固件提供的方式',
+  armInDfu:
+    '控制器在 bootloader 里（升级正在进行，或上次升级被中断）。请先把升级做完再下发命令',
+  forkedSession:
+    '本进程是持有机械臂那个进程的 fork。只有原来那个进程能驱动它',
+  invalidArgument: '控制器不接受这次命令的参数。请核对取值后重试',
   gripperNotConnected: '夹爪未连接：请先在夹爪页连接',
   gripperLinkError: '夹爪的 CAN 接口不可用：{{message}}',
   gripperFaultActive: '夹爪驱动报故障：{{message}}，请排除原因后清除故障',
