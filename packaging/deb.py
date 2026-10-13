@@ -104,6 +104,37 @@ WEBKIT_DEPENDS = "gir1.2-webkit2-4.1"
 #: would pull 126 MB onto a machine that does not need it.
 WINDOW_BACKEND_ENV = "LITEARM_STUDIO_WINDOW_BACKEND"
 
+#: What the variable may say — the same three words `build.py.window_backend()` accepts.
+#: `native` is not a Linux backend, but the value is shared with the other platforms'
+#: builds, so refusing it here would make one setting fail on one leg and not another.
+WINDOW_BACKENDS = ("gtk", "qt", "native")
+
+#: Used when nothing says otherwise, on a Linux build. The release matrix always passes a
+#: value explicitly (each leg pins its own), so this only covers a hand-run build.
+DEFAULT_WINDOW_BACKEND = "gtk"
+
+
+def window_backend_from_env() -> str:
+    """The window backend from ``LITEARM_STUDIO_WINDOW_BACKEND``, validated.
+
+    Normalised (stripped, lower-cased) and rejected the same way
+    :func:`packaging.build.window_backend` does it, because the two must agree: this value
+    picks the package's `Depends`, and the executable's value picks how it was frozen. A
+    value that means `gtk` to one and something else to the other ships a package that
+    installs, starts, and dies with no usable webview backend.
+
+    An unset variable is the default rather than an error: a hand-run build without it is
+    the GTK path, which is what the help text promises.
+    """
+    forced = os.environ.get(WINDOW_BACKEND_ENV, "").strip().lower()
+    if not forced:
+        return DEFAULT_WINDOW_BACKEND
+    if forced not in WINDOW_BACKENDS:
+        raise SystemExit(
+            f"{WINDOW_BACKEND_ENV} 只接受 {' / '.join(WINDOW_BACKENDS)}，实得 {forced!r}")
+    return forced
+
+
 #: Browsers are a `Suggests`, never a `Depends` or a `Recommends`. The program works with
 #: any browser (it opens a tab when it cannot find a Chromium build) and a `Recommends`
 #: would pull a second browser onto an operator workstation that already has one.
@@ -504,11 +535,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help=f"where to write the .deb (default: {OUT_DIST})")
     parser.add_argument("--work", default=str(WORK), metavar="DIR",
                         help=f"scratch directory for the package tree (default: {WORK})")
-    parser.add_argument("--window-backend", choices=("gtk", "qt"),
-                        default=os.environ.get(WINDOW_BACKEND_ENV, "").strip() or "gtk",
+    parser.add_argument("--window-backend", choices=WINDOW_BACKENDS, default=None,
                         help="which window backend the executable was built with; decides "
                              "whether the package depends on the system's WebKitGTK "
-                             f"(default: {WINDOW_BACKEND_ENV}, else gtk)")
+                             f"(default: {WINDOW_BACKEND_ENV}, else {DEFAULT_WINDOW_BACKEND})")
     return parser
 
 
@@ -524,16 +554,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if shutil.which("dpkg-deb") is None:
         raise SystemExit("[deb] dpkg-deb not found: this step needs Debian or Ubuntu")
 
+    # ⚠ Resolved after parsing, not as the argument's `default=`: a default is evaluated
+    # when the parser is built, so an invalid environment value would abort even
+    # `--help` — and argparse applies `choices` to a supplied value only, never to a
+    # default, which is how `LITEARM_STUDIO_WINDOW_BACKEND=GTK` used to slip through and
+    # select the wrong `Depends`.
+    window_backend = args.window_backend or window_backend_from_env()
+
     version = deb_version(args.version or resolve_version())
     out_dir = Path(args.outdir)
     out_dir.mkdir(parents=True, exist_ok=True)
     root, installed_kb = stage(Path(args.work) / "root", binary, version=version,
-                               arch=args.arch, window_backend=args.window_backend)
+                               arch=args.arch, window_backend=window_backend)
 
     target = out_dir / f"{PACKAGE}_{version}_{args.arch}.deb"
     print(f"[deb] staged {root} (Installed-Size {installed_kb} KiB)")
-    print(f"[deb] window backend = {args.window_backend} "
-          f"(Depends: {', '.join(depends_for(args.window_backend))})")
+    print(f"[deb] window backend = {window_backend} "
+          f"(Depends: {', '.join(depends_for(window_backend))})")
     subprocess.run(
         ["dpkg-deb", "--build", "--root-owner-group", str(root), str(target)],
         check=True, cwd=ROOT)

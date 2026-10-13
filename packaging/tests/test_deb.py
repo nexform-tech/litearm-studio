@@ -390,3 +390,48 @@ def test_builds_a_debian_package_with_the_expected_layout(tmp_path):
     launcher = extract / "usr/bin/litearm-studio"
     assert launcher.stat().st_mode & 0o111
     assert f"/usr/lib/litearm-studio/{deb.BINARY_NAME}" in launcher.read_text(encoding="utf-8")
+
+
+# ------------------------------------------------- the window-backend variable (#188)
+
+
+def test_the_window_backend_is_normalised_the_way_build_py_normalises_it(monkeypatch):
+    """One variable drives the frozen bundle **and** the package's `Depends`.
+
+    `build.py` strips and lower-cases it; this side has to agree. `=GTK` used to slip
+    through here (argparse applies `choices` only to a supplied value, never to a
+    `default`), so a GTK bundle shipped in a package that omitted `gir1.2-webkit2-4.1` —
+    it installs, starts, and dies with no usable webview backend.
+    """
+    monkeypatch.setenv(deb.WINDOW_BACKEND_ENV, "  GTK  ")
+    assert deb.window_backend_from_env() == "gtk"
+    assert deb.WEBKIT_DEPENDS in deb.depends_for(deb.window_backend_from_env())
+
+
+@pytest.mark.parametrize("value", ["gtk", "qt", "native"])
+def test_every_value_build_py_accepts_is_accepted_here(monkeypatch, value):
+    monkeypatch.setenv(deb.WINDOW_BACKEND_ENV, value)
+    assert deb.window_backend_from_env() == value
+
+
+def test_an_unset_variable_is_the_documented_default(monkeypatch):
+    monkeypatch.delenv(deb.WINDOW_BACKEND_ENV, raising=False)
+    assert deb.window_backend_from_env() == deb.DEFAULT_WINDOW_BACKEND == "gtk"
+
+
+def test_an_unknown_window_backend_fails_the_way_it_does_in_build_py(monkeypatch):
+    monkeypatch.setenv(deb.WINDOW_BACKEND_ENV, "gtk2")
+    with pytest.raises(SystemExit):
+        deb.window_backend_from_env()
+
+
+def test_the_parser_leaves_the_environment_alone_until_it_is_asked(monkeypatch):
+    """`--help` must not die on a bad environment, and `main()` must still refuse it.
+
+    Reading the environment as the argument's `default=` would evaluate it while the
+    parser is being built — and would keep argparse's `choices` out of the decision.
+    """
+    monkeypatch.setenv(deb.WINDOW_BACKEND_ENV, "bogus")
+    assert deb.build_parser().parse_args([]).window_backend is None
+    with pytest.raises(SystemExit):
+        deb.window_backend_from_env()
