@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input'
 import { NumberField } from '@/components/ui/number-field'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Toggle } from '@/components/ui/toggle'
-import { useGripperSettings, TRAVEL_MAX_MM, TRAVEL_MIN_MM } from './useGripperSettings'
+import { useGripperSettings } from './useGripperSettings'
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -95,16 +95,14 @@ export function GripperSection() {
               onCommit={(v) => vm.setMstId(v === 0 ? null : v)}
             />
           </Field>
-          {/* 行程不再是"实测"要填的东西，而是 mm/rad 换算的分母：由它和标定角度
-              定出每 rad 多少毫米，所以它随配置卡一起提交。 */}
+          {/* 行程是 mm/rad 换算的分母，但它由**设备侧**决定：线协议里没有写它的位置，
+              唯一的写入点是会话建立时那条 `SetTravelMm(DEFAULT_TRAVEL_MM)`。
+              所以这里只回读设备在用的值。以前它是个能改的输入框 —— 改了不生效、还被
+              下一次 `gripper_conn` 回读冲掉，是界面上一个"看着能改其实没接线"的控件。 */}
           <Field label={t('gripper:settings.travel')}>
-            <NumberField
-              value={vm.travel}
-              min={TRAVEL_MIN_MM}
-              max={TRAVEL_MAX_MM}
-              step={0.5}
-              onCommit={vm.setTravel}
-            />
+            <span data-testid="gripper-travel-readback">
+              {vm.travel == null ? '—' : vm.travel.toFixed(1)}
+            </span>
           </Field>
         </div>
 

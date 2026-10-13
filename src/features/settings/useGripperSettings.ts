@@ -6,10 +6,6 @@ import { gripperClient } from '@/lib/arm/gripperClient'
 import { useGripperAlerts, useGripperCalibration, useGripperConnection, useGripperState } from '@/lib/arm/useGripper'
 import { pickFileThroughDaemon } from '@/lib/pickFile'
 
-/** daemon 侧 `STROKE_MIN_MM` / `STROKE_MAX_MM`：行程的合理带。 */
-export const TRAVEL_MIN_MM = 10
-export const TRAVEL_MAX_MM = 300
-
 /** 所输路径的**上级目录** —— "浏览…"的原生对话框从哪开始; 取不到就让本地程序落回家目录。 */
 function dirOf(path: string): string | undefined {
   const trimmed = path.trim()
@@ -38,7 +34,6 @@ export function useGripperSettings() {
   const [mstId, setMstId] = useState<number | null>(null)
   // 装配方向固定为正装：参考硬件就是正装，设置页不再让操作员选。
   const mount = 'normal' as const
-  const [travel, setTravel] = useState(85)
   const [importPath, setImportPath] = useState('')
   const [channels, setChannels] = useState<string[]>([])
   const [scanning, setScanning] = useState(false)
@@ -53,13 +48,25 @@ export function useGripperSettings() {
   // （闸门一变就推一条），挂在对象上会把操作员正在改的输入框冲掉。
   const connChannel = conn?.channel
   const connCanId = conn?.canId
-  const connTravel = conn?.travelMm
   useEffect(() => {
     if (connChannel == null || connCanId == null) return
     setChannel((prev) => (prev === '' ? connChannel : prev))
     setCanId(connCanId)
-    setTravel(connTravel && connTravel > 0 ? connTravel : 85)
-  }, [connChannel, connCanId, connTravel])
+  }, [connChannel, connCanId])
+
+  /**
+   * 行程 —— **只回读设备实际在用的值，不可编辑**。
+   *
+   * 它属于工作台，不属于界面偏好。`gripper/constants.py` 写得很直白：「工作台的属性，
+   * 不是偏好……刻意没有开关、设置项或控件能改它」。线协议里也没有给它留位置：
+   * `gripper.connect` 只收 channel/canId/mstId/mount，唯一的写入点是会话建立时那条
+   * `SetTravelMm(DEFAULT_TRAVEL_MM)`。
+   *
+   * 所以这里以前那个输入框是**假的**：改完点「应用」弹成功提示，值却从没发出去过，
+   * 下一次 `gripper_conn` 回读还会把它冲回设备的数。没有连接时如实回 `null`（界面显示
+   * `—`），不编一个默认值出来充数。
+   */
+  const travel = conn?.travelMm && conn.travelMm > 0 ? conn.travelMm : null
 
   /** 枚举本机 CAN 接口：内核的问题，不需要连接。 */
   const refresh = useCallback(async () => {
@@ -188,7 +195,6 @@ export function useGripperSettings() {
     setMstId,
     mount,
     travel,
-    setTravel,
     importPath,
     setImportPath,
     scanning,

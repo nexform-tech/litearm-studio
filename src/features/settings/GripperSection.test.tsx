@@ -195,4 +195,37 @@ describe('GripperSection', () => {
     // 没选到文件，路径框不动。
     expect((screen.getByTestId('gripper-import-path') as HTMLInputElement).value).toBe('')
   })
+
+  // ── 行程：只回读，不可编辑 ─────────────────────────────────────────────────
+  //
+  // 它属于工作台，不属于界面偏好（`gripper/constants.py`：「刻意没有开关、设置项或控件
+  // 能改它」），线协议里也没有写它的位置。以前这里是个输入框：改完点「应用」会弹成功
+  // 提示，值却从没发出去过 —— 这两条用例把"只读"钉住。
+
+  it('shows the travel the device reports, not a default of its own', async () => {
+    mocks.conn.current = { ...mocks.conn.current, travelMm: 92.5 }
+    render(<GripperSection />)
+    await waitFor(() => expect(mocks.listChannels).toHaveBeenCalled())
+
+    expect(screen.getByTestId('gripper-travel-readback').textContent).toBe('92.5')
+  })
+
+  it('gives the travel field no way to be edited', async () => {
+    render(<GripperSection />)
+    await waitFor(() => expect(mocks.listChannels).toHaveBeenCalled())
+
+    // 那一格只有一个只读文本：既没有输入框，也没有数字调节控件。
+    const readback = screen.getByTestId('gripper-travel-readback')
+    expect(readback.querySelector('input')).toBeNull()
+    expect(readback.getAttribute('role')).not.toBe('spinbutton')
+  })
+
+  it('shows no travel at all when there is nothing to read it from', async () => {
+    mocks.conn.current = null
+    render(<GripperSection />)
+    await waitFor(() => expect(mocks.listChannels).toHaveBeenCalled())
+
+    // 编一个 85 出来比留空更糟：操作员会以为那是设备在用的值。
+    expect(screen.getByTestId('gripper-travel-readback').textContent).toBe('—')
+  })
 })
