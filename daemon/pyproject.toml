@@ -61,7 +61,7 @@ ui = ["pywebview"]
 
 # 备选: 自带一个 Chromium (Qt WebEngine)。不需要 apt, 但产物与安装体积都多 ~200 MB ——
 # 只在拿不到系统 GTK 时才用它, 见 `packaging/build.py` 的后端选择。实测: 借系统 WebKitGTK
-# 的 `.deb` 是 63 MB, 自带 Qt 的是 243 MB。
+# 的 `.deb` 约 21 MB (v0.23.4 发布产物), 自带 Qt 的是 243 MB。
 ui-qt = [
     "QtPy; sys_platform == 'linux'",
     "PyQt6; sys_platform == 'linux'",

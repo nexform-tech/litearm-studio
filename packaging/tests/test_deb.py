@@ -96,7 +96,7 @@ def test_control_never_pulls_a_browser_in():
 
 
 def test_control_borrows_the_system_webkit_only_for_the_gtk_build():
-    """GTK 借系统的 WebKit, Qt 自带内核 —— 这条决定了包是 63 MB 还是 243 MB。
+    """GTK 借系统的 WebKit, Qt 自带内核 —— 这条决定了包是 ~21 MB 还是 243 MB。
 
     `libwebkit2gtk` 一个库就有 94 MB。GTK 产物把它留在系统上，用 `Depends` 要过来
     （`gir1.2-webkit2-4.1` 会一并带出 typelib 与 GTK 那条链）；Qt 全部打进产物，于是

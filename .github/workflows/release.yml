@@ -102,7 +102,7 @@ jobs:
 
       - name: Install the window stack (Linux)
         if: runner.os == 'Linux'
-        # ⚠ 这一条决定 Linux 产物是 63 MB 还是 243 MB。借系统的 WebKitGTK 就把
+        # ⚠ 这一条决定 Linux 产物是 ~21 MB 还是 243 MB。借系统的 WebKitGTK 就把
         # `libwebkit2gtk`（94 MB）留在用户机器上、由 `.deb` 的 `Depends` 要过来；
         # 装不上它时 `LITEARM_STUDIO_WINDOW_BACKEND=gtk` 会让构建**判失败**，而不是
         # 静默换成自带 Qt 的 243 MB 产物（见 packaging/build.py）。

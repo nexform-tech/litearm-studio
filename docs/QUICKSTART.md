@@ -52,7 +52,7 @@ sudo apt install python3-gi gir1.2-webkit2-4.1   # Linux only: the window's rend
 The `ui` extra is `pywebview`, the window itself. On Linux it still needs a renderer, and
 the small one is the system's WebKitGTK (`python3-gi` plus `gir1.2-webkit2-4.1`). Do not
 reach for `daemon[ui-qt]` unless those packages are unavailable: it bundles a Chromium and
-takes the `.deb` from about 16 MB to about 240 MB. Leave the window out entirely only if you
+takes the `.deb` from about 21 MB to about 240 MB. Leave the window out entirely only if you
 always run headless with `--no-open`; without a renderer the program exits with an error
 rather than opening a window.
 
