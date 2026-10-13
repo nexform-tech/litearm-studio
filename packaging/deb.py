@@ -29,12 +29,15 @@ script (`build.py`, `checksums.py`).
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
+import io
 import math
 import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Iterable, List, NamedTuple, Optional, Sequence, Tuple, Union
 
@@ -352,8 +355,12 @@ class Symlink(NamedTuple):
 Entry = Tuple[Path, Union[bytes, Path, Symlink], int]
 
 
-def payload(binary: Path) -> List[Entry]:
-    """Everything the package installs, in a fixed order."""
+def payload(binary: Path, version: str = "0.0.0") -> List[Entry]:
+    """Everything the package installs, in a fixed order.
+
+    `version` reaches only the changelog; the default is for tests, which build a tree
+    without caring which version it claims to be.
+    """
     entries: List[Entry] = [
         *bundled_daemon(binary),
         # The packaged default gripper calibration the launcher points the daemon
@@ -366,13 +373,66 @@ def payload(binary: Path) -> List[Entry]:
         (Path(f"usr/share/applications/{PACKAGE}.desktop"), desktop_entry().encode(), 0o644),
         (Path(f"usr/lib/udev/rules.d/60-{PACKAGE}.rules"), udev_rule().encode(), 0o644),
         (Path(f"usr/share/doc/{PACKAGE}/copyright"), copyright_text().encode(), 0o644),
+        # Policy wants a changelog beside the copyright; without it the package trips
+        # lintian's `no-changelog`, and `apt changelog` has nothing to show.
+        (Path(f"usr/share/doc/{PACKAGE}/changelog.Debian.gz"),
+         changelog_debian(version), 0o644),
     ]
-    for png in sorted(ICON_DIR.glob("icon-*.png")):
+    icons = sorted(ICON_DIR.glob("icon-*.png"))
+    if not icons:
+        # ⚠ 图标缺失要**在这里**失败, 和 `build.py` 对产物做的那道检查同理: 没有图标的
+        #   包照样装得上、跑得起来, 症状只是菜单和 Dock 里一个空白/通用图标 —— 没有测试
+        #   看得见, 无头构建也看不见。
+        raise SystemExit(
+            f"[deb] no icons under {ICON_DIR} — the desktop entry names one, so the "
+            f"package would install with a blank icon. Regenerate them with `pnpm icon`.")
+    for png in icons:
         size = png.stem.partition("-")[2]
+        if not size.isdigit():
+            raise SystemExit(
+                f"[deb] {png.name} does not carry its size — expected `icon-<px>.png`, "
+                f"so the file can be placed under hicolor/<px>x<px>/")
         entries.append(
             (Path(f"usr/share/icons/hicolor/{size}x{size}/apps/{LAUNCHER}.png"), png, 0o644)
         )
     return entries
+
+
+#: Debian changelog dates are RFC 2822 in English. Spelled out rather than taken from
+#: `strftime`, whose `%a`/`%b` follow the locale — a build on a non-C locale would write
+#: a changelog `dpkg-parsechangelog` cannot read.
+_WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def changelog_debian(version: str) -> bytes:
+    """A one-entry Debian changelog, gzipped, for the version being packaged.
+
+    The project's own history is on GitHub (semantic-release owns the real changelog), so
+    this is not a second copy of it: it exists so the package is a good Debian citizen —
+    `dpkg` metadata, `apt changelog`, lintian — and it says where the real history is.
+
+    The gzip mtime is pinned to 0 and the timestamp comes from `SOURCE_DATE_EPOCH` when
+    the caller sets it, so two builds of the same tree produce the same bytes.
+    """
+    epoch = os.environ.get("SOURCE_DATE_EPOCH", "")
+    stamp = time.gmtime(int(float(epoch)) if epoch.strip() else int(time.time()))
+    date = (f"{_WEEKDAYS[stamp.tm_wday]}, {stamp.tm_mday:02d} "
+            f"{_MONTHS[stamp.tm_mon - 1]} {stamp.tm_year} "
+            f"{stamp.tm_hour:02d}:{stamp.tm_min:02d}:{stamp.tm_sec:02d} +0000")
+    text = (
+        f"{PACKAGE} ({version}) unstable; urgency=medium\n"
+        "\n"
+        "  * Package built from the repository source at this version. The project's\n"
+        "    changelog lives with the releases on GitHub.\n"
+        "\n"
+        f" -- {MAINTAINER}  {date}\n"
+    )
+    buffer = io.BytesIO()
+    with gzip.GzipFile(fileobj=buffer, mode="wb", mtime=0) as gz:
+        gz.write(text.encode("utf-8"))
+    return buffer.getvalue()
 
 
 def bundled_daemon(binary: Path) -> List[Entry]:
@@ -439,11 +499,13 @@ def _bundle_relative_link(source: Path, root: Path) -> Optional[str]:
 def write_tree(root: Path, entries: Iterable[Entry]) -> int:
     """Write the payload under `root`, plus the control files. Returns Installed-Size in KiB.
 
-    `Installed-Size` is what `du` would report for an installed package, so the sizes are
-    read back from the written files rather than from the sources: hard links, sparse
-    files and block rounding are all irrelevant here, and this keeps the number honest.
-    A symlink counts as its own length, which is also what `du` counts for it — its target
-    is counted where that file actually lives.
+    The number is an **approximation**, which is all policy asks of it (it tells an
+    installer whether the package fits, not what it weighs on disk): the summed apparent
+    size of the payload, rounded up to KiB. It agrees with `du --apparent-size -sk`, and
+    deliberately not with `du -sk` (which rounds every file up to a block) or with
+    dpkg-gencontrol's own algorithm — all three differ, so do not read it as any of the
+    other two. Reading the sizes back from the written files, and counting a symlink as
+    its own length, keeps the number the same across filesystems and bundle shapes.
     """
     total = 0
     for relative, source, mode in entries:
@@ -486,7 +548,7 @@ def stage(root: Path, binary: Path, *, version: str, arch: str,
           window_backend: str = "gtk") -> Tuple[Path, int]:
     """Build the package tree under `root`; return it and its Installed-Size in KiB."""
     shutil.rmtree(root, ignore_errors=True)
-    installed_kb = write_tree(root, payload(binary))
+    installed_kb = write_tree(root, payload(binary, version))
     control = root / "DEBIAN" / "control"
     control.write_text(
         control_text(version=version, arch=arch, installed_size_kb=installed_kb,

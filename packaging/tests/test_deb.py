@@ -6,6 +6,7 @@ test builds a real `.deb` with `dpkg-deb`, which is why it is skipped off Debian
 """
 from __future__ import annotations
 
+import gzip
 import importlib.util
 import os
 import pathlib
@@ -435,3 +436,51 @@ def test_the_parser_leaves_the_environment_alone_until_it_is_asked(monkeypatch):
     assert deb.build_parser().parse_args([]).window_backend is None
     with pytest.raises(SystemExit):
         deb.window_backend_from_env()
+
+
+# ----------------------------------------------------------- icons and doc files (#193)
+
+
+def test_a_missing_icon_set_fails_the_build(monkeypatch, tmp_path):
+    """A package with no icons still installs and runs — the only symptom is a blank icon
+    in the menu and the dock, which no test and no headless build can see."""
+    empty = tmp_path / "icon-png"
+    empty.mkdir()
+    monkeypatch.setattr(deb, "ICON_DIR", empty)
+    with pytest.raises(SystemExit, match="no icons"):
+        deb.payload(_fake_binary(tmp_path))
+
+
+def test_an_icon_without_a_size_fails_the_build(monkeypatch, tmp_path):
+    icons = tmp_path / "icon-png"
+    icons.mkdir()
+    (icons / "icon-final.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    monkeypatch.setattr(deb, "ICON_DIR", icons)
+    with pytest.raises(SystemExit, match="does not carry its size"):
+        deb.payload(_fake_binary(tmp_path))
+
+
+def test_the_package_ships_a_debian_changelog(tmp_path):
+    entries = {path.as_posix() for path, _source, _mode in deb.payload(_fake_binary(tmp_path))}
+    assert f"usr/share/doc/{deb.PACKAGE}/changelog.Debian.gz" in entries
+
+
+def test_the_changelog_is_one_debian_can_parse(monkeypatch, tmp_path):
+    """lintian wants the file; `dpkg-parsechangelog` is the check that it is a changelog."""
+    parser = shutil.which("dpkg-parsechangelog")
+    if parser is None:
+        pytest.skip("dpkg-parsechangelog is not installed")
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "1700000000")
+    path = tmp_path / "changelog.Debian"
+    path.write_bytes(gzip.decompress(deb.changelog_debian("1.2.3")))
+    fields = subprocess.run([parser, "-l", str(path)], capture_output=True, text=True,
+                            check=True).stdout
+    assert "Version: 1.2.3" in fields
+    assert deb.MAINTAINER in fields
+
+
+def test_the_changelog_is_reproducible(monkeypatch):
+    """Same tree, same bytes: the gzip mtime is pinned and the date comes from
+    `SOURCE_DATE_EPOCH`."""
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "1700000000")
+    assert deb.changelog_debian("1.2.3") == deb.changelog_debian("1.2.3")
