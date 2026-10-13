@@ -76,7 +76,10 @@ jobs:
           python -m pip install --upgrade pip
           # 两个 SDK 都不在 PyPI 上: 从本仓的 submodule 装, 与 `make sdk` 完全一致。
           pip install ./sdk/litearm-python ./sdk/litegrip-python
-          pip install -e "daemon[test]"
+          # ⚠ PyInstaller 不只是打包工具: `packaging/tests` 里四条断言 PyInstaller
+          #   hook 行为的用例要 import 它, 而 `importorskip` 在缺它时会让那四条**跳过**
+          #   —— 于是 hook 的回归只有到发布构建才看得见。发布任务本来就装它, 这里跟上。
+          pip install -e "daemon[test]" pyinstaller
 
       # The packaging tests run here too: `packaging/tests` builds a real `.deb` with
       # dpkg-deb, and the release-time `package` job only runs when a new version is
