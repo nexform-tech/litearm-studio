@@ -69,6 +69,12 @@ LICENSE_FORMAT = 1
 #: `draft-4`: 表单与网站对齐, 新增微信号 / 所在地区 / 所属行业 / 用途说明。
 CONSENT_TEXT_VERSION = "draft-4"
 
+#: 可选的订单号/激活码字段的上限, 以**服务端**为准 (`litearm-activation` 的
+#: `license-request.ts`: `code: z.string().max(128).default("")`)。
+#: 两边各定各的就会漂移: 本地宽松 ⇒ 本地放行的请求被服务端整份拒掉, 报错还说不清是哪个字段;
+#: 本地严格 ⇒ 服务端能收的我们现在收不了。服务端是权威, 这里只是跟着它。
+CODE_MAX_LEN = 128
+
 #: 一次请求的上限与超时。激活是**人等着**的动作, 超时要短到操作员不会以为界面卡死。
 REQUEST_TIMEOUT_S = 10.0
 MAX_RESPONSE_BYTES = 64 * 1024
@@ -297,7 +303,12 @@ def build_request(payload: dict) -> dict:
     code = payload.get("code")
     if isinstance(code, str) and code.strip():
         # 预留: 订单号/激活码那一层如果启用, 站点直接读这个字段。今天界面上没有它。
-        request["code"] = code.strip()[:200]
+        #
+        # ⚠ 上限以**服务端**为准: `litearm-activation` 的 schema 是
+        #   `code: z.string().max(128)`。这里曾经截到 200, 于是 129–200 字的输入能通过本地
+        #   校验、被服务端整份拒掉, 而报错说的是"校验失败", 与"码不对"完全两回事。
+        #   本地判据不许比服务端宽松 —— 那会把一个明确的错误变成一个含糊的。
+        request["code"] = code.strip()[:CODE_MAX_LEN]
     return request
 
 
