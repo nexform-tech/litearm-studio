@@ -10,16 +10,16 @@ The SDK's own high-level motion methods are deliberately absent.  Each is
 unusable here for a concrete reason:
 
 ``move_at_speed``
-    Ends every call with a fixed 20-frame (~100 ms) hold
-    (gripper.py:1117-1121), so slicing it for live feedback stutters.
+    Ends every call with a fixed 20-frame (~100 ms) hold (the tail of
+    ``_move_at_speed_rad``), so slicing it for live feedback stutters.
 ``goto``/``move_to``/``goto_rad``
     ``duration`` is a settle time, not a speed, so the speed setting cannot be
-    honoured.  Also clamps to a config-derived range that is inverted while
-    uncalibrated (gripper.py:947).
+    honoured.  Targets are also clamped to the two calibrated limits (the same
+    ``min``/``max`` pair as the ramp below, so the ordering cannot flip).
 ``grasp``
-    Drives a blocking ramp (can_bus.py:342, ``_move_to_limit``) whose only
-    interruption point would be a callback this console does not pass, so an
-    E-stop could not interrupt it.
+    Drives a blocking ramp (``_move_to_limit``) whose only interruption point
+    would be a callback this console does not pass, so an E-stop could not
+    interrupt it.
 
 ``open``/``close``
     Both drive the same blocking ramp, but both take a ``progress`` callback
@@ -31,9 +31,16 @@ unusable here for a concrete reason:
     lead the measurement by only a bounded cap — could not.  A force-carrying
     close still goes through the FSM.
 ``home``
-    Uses the hardcoded ``GripperParams.POS_CLOSED_RAD`` rather than
-    ``config.pos_closed_rad`` (gripper.py:781), so it is wrong after
-    calibration.
+    It is ``move_to(self._config.pos_closed_rad, duration=1.0)``, so it carries
+    ``move_to``'s objection (``duration`` is a settle time, not a speed) — and
+    the closed end is already driven by
+    :meth:`GripperBackend.close_plain`, which takes the E-stop callback.
+
+    ⚠ This entry used to say ``home()`` uses a hardcoded
+    ``GripperParams.POS_CLOSED_RAD`` and so is "wrong after calibration".  That is
+    the opposite of what the SDK does: ``home()`` reads
+    ``self._config.pos_closed_rad`` — the calibrated limit, documented as "a
+    reverse-mounted gripper homes to the correct end".
 ``calibrate_guided``/``calibrate_manual``
     Read stdin / rely on Ctrl+C and print to stdout — unreachable from a worker
     thread.  Reimplemented in :mod:`litearm_studio_daemon.gripper.core.calibration_fsm`.

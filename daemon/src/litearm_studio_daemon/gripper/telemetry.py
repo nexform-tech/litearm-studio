@@ -50,9 +50,12 @@ class Telemetry:
     def force_magnitude(self) -> float:
         """``|force_n|``.
 
-        The SDK derives force as ``torque × NM_TO_N`` with no sign guarantee
-        (the winding direction flips it), so the magnitude is what an operator
-        wants to read while the signed torque stays available alongside.
+        ``force_n`` is already in the SDK's own convention — squeezing reads
+        positive on either mounting, because the conversion carries the mounting's
+        sign (see :func:`~litearm_studio_daemon.gripper.units.force_from_torque`).
+        The magnitude is what a status line shows; the signed value and the raw
+        torque stay alongside for anything that needs to tell a grip from a
+        back-drive.
         """
         return abs(self.force_n)
 

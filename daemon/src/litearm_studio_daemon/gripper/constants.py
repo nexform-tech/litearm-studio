@@ -11,7 +11,8 @@ named so the two can be re-checked when the SDK moves.
 from __future__ import annotations
 
 # ── Control loop ────────────────────────────────────────────────────────────
-# 200 Hz, the SDK's own MIT stream rate (can_bus.py:328 interval_s=0.005).  The
+# 200 Hz, the SDK's own MIT stream rate (``litegrip.protocols.can_bus`` — the
+# stream interval; it is a package path, not a module).  The
 # rate is not free and this is the number that was measured, not a default: a
 # move commanded at ``v`` advances the command by ``v·dt`` per tick, and when
 # the jaws meet something the servo turns that whole advance into force before
@@ -72,8 +73,11 @@ STALL_TIMEOUT_FACTOR = 2.5
 # ── Gains ───────────────────────────────────────────────────────────────────
 KP_MOVE = 100.0  # SDK DEFAULT_KP (GripperParams)
 KD_DEFAULT = 2.0  # SDK DEFAULT_KD
-KP_GRASP = 150.0  # SDK grasp() default
-KP_PROBE = 60.0  # SDK calibrate()/calibrate_guided() default
+#: 本仓自己的值, **不是** SDK 的: `calibrate_guided()` 的默认 kp 是 20.0
+#: (`litegrip.gripper.calibrate_guided`), 与下面那组 GUIDED_* 一起构成我们自己的探针手感。
+#: ⚠ 曾经这里还有一条 `KP_GRASP = 150.0  # SDK grasp() default` —— 两个错都占了: SDK 保力是
+#: 在 `kp=0` 上保的 (`actions.grasp` 的保力段), 而这个常量**没有任何读者**。
+KP_PROBE = 60.0
 KP_BACKOFF = 80.0
 
 # ── Force ───────────────────────────────────────────────────────────────────
@@ -244,11 +248,17 @@ PRESS_REACH_TOL_MM = 1.0
 
 #: The SDK ``MotionConfig.stop_lead_mm`` this console runs its plain 张开/闭合 with.
 #:
-#: ``open()``/``close()`` hardcode ``press=True`` (litegrip actions.py:335,349),
-#: so every plain move presses *past* the calibrated limit onto the mechanical
-#: stop.  That press is the law that breaks the closing-side dead-band (issue
-#: #72) and it is kept; what is not kept is how hard it seats.  Within
-#: ``press_zone_mm`` of the limit the command may sit ``stop_lead_mm`` ahead of
+#: 闭合那一次是**压紧**的: SDK 的 ``close()`` 固定 ``press=True``
+#: (``litegrip.actions.close``), 命令会压过标定限位、顶在机械限位上。那次压紧正是破开
+#: 闭合侧死区的法子 (issue #72), 保留; 不留的是它压得多狠。
+#:
+#: ⚠ 张开**不一定**压紧 —— 取决于标定里有没有工作行程: ``open()`` 在 ``work_stroke_mm``
+#: 为 0 (或大于等于机械行程) 时是 ``press=True``, 否则退化成一次普通定位、停在行程内
+#: (``litegrip.actions.open`` 里那个分支; 本仓随包发的那份标定带的正是 80 mm 工作行程)。
+#: 所以下面"压过限位"的算法只描述了**压紧那一次**; 张开停在哪里由那边决定, 到达判据也
+#: 因此同时接受 ``reached`` 与堵转 (见 `backend/real.py` 的 ``_short_of_the_end``)。
+#:
+#: Within ``press_zone_mm`` of the limit the command may sit ``stop_lead_mm`` ahead of
 #: the measured position, so the press torque is ``kp × stop_lead_mm /
 #: rad_to_mm`` — at the SDK's own 0.7 mm that is 100 × 0.7 / 53.3 ≈ 1.3 N·m on
 #: this unit, and with the ramp's velocity feed-forward on top a full 张开 read
@@ -331,7 +341,12 @@ RAD_TO_MM_MAX = 200.0
 CALIB_MISMATCH_RAD = 0.15
 
 # ── Calibration ─────────────────────────────────────────────────────────────
-# Guided probe, mirroring calibrate_guided()'s defaults (gripper.py:516).
+# 引导探针的参数 —— **本仓自己的**, 不是 SDK 的默认值。SDK 的
+# `calibrate_guided()` 用的是 kp=20.0 / kd=2.0 / step_rad=0.05 / stall_delta=0.0015 /
+# stall_cycles=5 / max_iter=200 (`litegrip.gripper.calibrate_guided` 的签名), 与下面
+# 每一项都不同。曾经这里的注释写的是"mirroring calibrate_guided()'s defaults", 而后来的
+# 注释又拿"SDK 的 kp=60"当论据 (§GUIDED_MAX_FORCE_N 那段)—— 两句话互相矛盾, 也都不是
+# 上游的样子。真正的理由是探针要按**这台**机器定: 见下面力上限那一段。
 GUIDED_KP = KP_PROBE  # 60.0
 GUIDED_STEP_RAD = 0.08
 GUIDED_STALL_DELTA = 4.0e-4
@@ -342,11 +357,13 @@ GUIDED_BACKOFF_RAD = 0.15
 
 # A probe step is bounded so that the press it can build up never exceeds the
 # mechanical rating.  At a stall the MIT law's torque is exactly ``kp × step``
-# (the velocity term has nothing left to damp), so the SDK's own kp=60 with
-# step=0.08 asks for 4.8 Nm — 48 N, over the 40 N rating — with nothing between
-# it and the hard stop except the drive's 10 Nm limit.  The step is therefore
-# derived from the cap rather than chosen: ``torque_from_force(FORCE_MAX_N)/kp``,
-# which is 0.0667 rad at kp=60 and still covers a full stroke inside max_iter.
+# (the velocity term has nothing left to damp), so **our** kp=60 with step=0.08
+# asks for 4.8 Nm — 48 N, over the 40 N rating — with nothing between it and the
+# hard stop except the drive's 10 Nm limit.  The step is therefore derived from
+# the cap rather than chosen: ``torque_from_force(FORCE_MAX_N)/kp``, which is
+# 0.0667 rad at kp=60 and still covers a full stroke inside max_iter.
+# (SDK 的 20.0 × 0.05 = 1.0 Nm 不会撞上这个上限; 我们那 60 会 —— 这条判据是为它设的,
+#  不是为了"照抄上游"。)
 GUIDED_MAX_FORCE_N = FORCE_MAX_N
 
 # The probe is the one place motion is allowed without a valid calibration, so

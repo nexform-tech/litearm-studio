@@ -4,17 +4,19 @@ No Qt, no SDK, no I/O — everything here is a function of its arguments, so the
 whole module is unit-testable and can be reasoned about by hand.
 
 The conversion formulas are the SDK's (not invented), because getting them
-subtly wrong is how a gripper drives into a hard stop:
+subtly wrong is how a gripper drives into a hard stop.  Upstream spells them with
+the mounting's sign carried in `close_sign` (``LiteGrip.state``: ``position_mm =
+(pos_closed_rad - position_rad) * close_sign * rad_to_mm``):
 
-    mm  = (pos_closed_rad - position_rad) * rad_to_mm      gripper.py:1281
-    rad = pos_closed_rad - position_mm / rad_to_mm         gripper.py:925
+    mm  = (pos_closed_rad - position_rad) * rad_to_mm      close_sign = +1
+    rad = pos_closed_rad - position_mm / rad_to_mm         close_sign = +1
 
-Both of those hardcode the sign of the mapping, and the SDK has no other form: as
-written it can only describe a gripper whose encoder angle *shrinks* as the jaws
-open, which is how the units it was written for are assembled.  That is an
-assembly detail rather than a property of the calibration, so here it is read
-from the recorded angles — :attr:`Limits.direction` — and the two formulas above
-are the case of it where the closed stop is the larger angle.
+That `close_sign` is an assembly detail rather than a property of the
+calibration, so here it is read from the recorded angles — :attr:`Limits.direction`
+— and the two formulas above are the case of it where the closed stop is the
+larger angle (the classic mounting, ``direction = -1``; ``close_sign`` is
+``-direction``).  Force scaling carries the same sign, for the same reason: see
+:func:`force_from_torque`.
 
 The other thing the SDK's formulas are fed is ``rad_to_mm``, and that one is not
 taken from a file at all.  It is derived from the calibration's angles and the

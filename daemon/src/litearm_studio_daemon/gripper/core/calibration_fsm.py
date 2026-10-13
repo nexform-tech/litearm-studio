@@ -4,13 +4,13 @@ Both replace an SDK method that cannot be used from a GUI, and in both cases
 the reason is the same shape: the SDK's version owns its own loop, and there is
 no way into it.
 
-``calibrate_guided`` (gripper.py:520)
-    Waits for Enter (``sys.stdin.isatty()`` and ``select``, gripper.py:582), so
-    with no terminal it silently degrades to stall-detection only — in a GUI
-    there is no terminal at all.  Each step calls ``control_mit_stream`` for a
-    fixed 0.3 s, so nothing can interrupt it, and its output goes to ``print``.
+``calibrate_guided`` (``LiteGrip.calibrate_guided``)
+    Waits for Enter (the ``sys.stdin.isatty()`` + ``select`` check in its step
+    loop), so with no terminal it silently degrades to stall-detection only — in
+    a GUI there is no terminal at all.  Each step calls ``control_mit_stream`` for
+    a fixed 0.3 s, so nothing can interrupt it, and its output goes to ``print``.
 
-``calibrate_manual`` (gripper.py:354)
+``calibrate_manual`` (``LiteGrip.calibrate_manual``)
     Sweeps the axis with the motor for a fixed duration with the position gain
     at zero and takes the extremes it passed through.  It documents "press
     Ctrl+C to stop early", which can never happen here: Python delivers signals
@@ -215,9 +215,13 @@ class GuidedCalibFSM:
     ``measured + one step``, so the MIT law's position error can never exceed one
     step and the press at a hard stop is bounded by ``kp × step`` — which is why
     the step is derived from the mechanical rating rather than taken from the SDK
-    (:data:`~litearm_studio_daemon.gripper.constants.GUIDED_MAX_FORCE_N`).  The SDK's own loop
-    advances its target from the previous target, so a jammed axis accumulates
-    0.08 rad of error per iteration for up to 40 iterations.
+    (:data:`~litearm_studio_daemon.gripper.constants.GUIDED_MAX_FORCE_N`).
+
+    ⚠ 这一段曾经说 SDK 的循环"从上一个目标推进目标, 于是卡住的轴每次迭代累加 0.08 rad
+    误差, 最多 40 次"。 两半都不对: SDK 的 ``_step_to_limit`` 每轮把 ``current`` 重新锚定到
+    刚读到的位置 (``current = self._can.get_position()``), 误差同样被限制在**一步**之内;
+    而它的默认是 ``step_rad=0.05`` / ``max_iter=200``, 不是 0.08 / 40。 我们的实现不照抄
+    它是为了别的东西 —— 中断粒度与力上限, 不是为了修一个上游并不存在的漂移。
 
     Which way the jaws open has to be given, not assumed — see
     ``reversed_mount``: this is the one probe that produces a calibration out of
@@ -471,10 +475,11 @@ class GuidedCalibFSM:
     def _backoff_tick(self) -> ProbeOut:
         """Move away from the open stop, one bounded step at a time.
 
-        The SDK backs off by commanding ``open_rad - 0.15`` (gripper.py:610),
-        which is *further into* the open stop — the sign is wrong on its own
-        mounting and it presses at kp=80 for half a second.  Backing off means
-        moving toward closed, which is :attr:`_sign` during this phase.
+        ⚠ 这一段曾经说 SDK"命令 ``open_rad - 0.15``, 那是**更深入**张开限位, 符号在自己的
+        安装上就是错的"。 也不对: SDK 的 ``calibrate_guided`` 在张开限位之后命令的是
+        ``open_rad + close_sign·0.15``, 也就是**朝闭合侧退**, 而它的注释写的正是
+        "away from the open stop toward the close side"。 方向与我们这里一致, 差别只在
+        幅度与保压 (它 0.15 rad / kp=80 / 0.5 s, 我们按步数与自己的增益走)。
 
         The length of the back-off is a step *count*
         (:attr:`backoff_steps`), not a distance to be measured.  Everywhere else
@@ -827,8 +832,10 @@ class TwoPointCalibFSM:
         """Whether this tick's reading is one to build a calibration on.
 
         Two ways it is not, and neither is hypothetical.  ``abs(rad) >=
-        pos_guard_rad`` is the SDK's own guard (gripper.py:427) against a runaway
-        value being adopted as a limit.  The jump is this console's, and it is
+        pos_guard_rad`` is this console's own guard
+        (:data:`~litearm_studio_daemon.gripper.constants.MANUAL_POS_GUARD_RAD`)
+        against a runaway value being adopted as a limit — it is not the SDK's,
+        and there is no equivalent there to point at.  The jump is this console's, and it is
         the one that matters on a hand-driven axis: a dropped frame leaves the
         SDK's cached position at 0.0, which is well inside the first guard and is
         also where a misread would put the *open* limit — the one reading that
