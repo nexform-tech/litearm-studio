@@ -103,7 +103,15 @@ export function FirmwareSection() {
           </p>
         ) : null}
 
-        {fromDfu ? (
+        {/* 三态，不是一个布尔：升级中设备**在 bootloader 里**，说"未连接"是说反了 ——
+            它不是掉了，是正在被刷，而且这是全程最需要操作员冷静的时刻。
+            ⚠ `upgrading` 排在 `fromDfu` 前面：救砖那一路升级期间不再轮询，`dfuPresent`
+            会一直停在 true，此时正在发生的事是"正在烧录"，不是"等你按下烧录"。 */}
+        {vm.upgrading ? (
+          <div data-testid="firmware-upgrading">
+            <Notice>{t('settings:firmware.upgrading')}</Notice>
+          </div>
+        ) : fromDfu ? (
           // ⚠ 这一句是 issue #152 的落点：**说清是哪种"没连上"**。板子在 bootloader 里
           //   时顶栏连不上是**正确行为**（它没有应用态），不说清的话操作员就会去查线、
           //   换口、重装驱动 —— 而它只想被烧一次。

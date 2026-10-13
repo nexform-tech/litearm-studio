@@ -34,6 +34,7 @@ const SUMMARY = {
 function baseVm(over: Record<string, unknown> = {}) {
   return {
     connected: true,
+    upgrading: false,
     firmware: 'Litearm1.8.0-7J',
     port: '/dev/ttyACM0',
     armEnabled: false,
@@ -171,6 +172,29 @@ describe('FirmwareSection', () => {
     // 离线仍可**校验**镜像（那一步不碰设备），但不许开始。
     fireEvent.click(screen.getByTestId('firmware-safety-arm'))
     expect((screen.getByTestId('firmware-start') as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  // ── 升级期间：设备在 bootloader 里，但那不是"掉线" ──────────────────────────
+  //
+  // `conn.status` 在这个相位是 `upgrading`，于是 `connected` 为假。旧实现据此显示
+  // 「未连接控制器 —— 连上之后才能升级」—— 在全程最需要冷静的时刻说反了话：设备不是
+  // 掉了，是**我们自己**把它交出去刷了，而界面还在让操作员去"连上"。
+
+  it('does not call a board in the bootloader a disconnected controller', () => {
+    mocks.vm = baseVm({ connected: false, upgrading: true, summary: SUMMARY })
+    render(<FirmwareSection />)
+
+    expect(screen.getByTestId('firmware-upgrading')).toBeTruthy()
+    expect(screen.queryByTestId('firmware-offline')).toBeNull()
+  })
+
+  it('shows the plain offline notice once the update is not the reason', () => {
+    // 同一个 `connected: false`，没有 `upgrading` —— 这才是真的没连上。
+    mocks.vm = baseVm({ connected: false, summary: SUMMARY })
+    render(<FirmwareSection />)
+
+    expect(screen.getByTestId('firmware-offline')).toBeTruthy()
+    expect(screen.queryByTestId('firmware-upgrading')).toBeNull()
   })
 
   it('calls out a board sitting in the bootloader instead of "not connected"', () => {
