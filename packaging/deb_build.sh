@@ -48,6 +48,14 @@ for sdk in litearm-python litegrip-python; do
 done
 "$PY" -m pip install -q ./sdk/litearm-python ./sdk/litegrip-python
 
+# ⚠ **必须把守护进程本身也装上**, 与发布任务同一条命令 (release.yml 的 package job)。
+#   不是"顺手装个包": 生成出来的 spec 里那句 `collect_data_files('litearm_studio_daemon')`
+#   要靠包**可导入**才收得到它的包内数据 —— 少了这一步, PyInstaller 只打一条 warning,
+#   冻结产物里就没有 `gripper/factory_calibration.json`, 而 `.deb` 恰好因为启动器导出了
+#   `LITEGRIP_FACTORY_CALIB` 而看不出来 (丢的是便携形态的产物)。deps 已由构建镜像钉住,
+#   这里通常一个包都不用再下载; `[test]`/`[ui]` 与发布任务保持一致, 免得两边多装少装。
+"$PY" -m pip install -q -e "./daemon[test,ui]" pyinstaller
+
 echo "[deb 2/5] checking the window backend is GTK, not a silent fallback"
 "$PY" -c "import gi; gi.require_version('WebKit2', '4.1'); \
     from gi.repository import WebKit2; print('[deb] PyGObject + WebKit2 4.1 visible')"
