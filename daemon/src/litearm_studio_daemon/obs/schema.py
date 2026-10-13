@@ -165,11 +165,13 @@ KINDS: Final[Tuple[str, ...]] = (
 
 #: Every event the daemon can emit, as (name, kind, default severity, summary).
 #:
-#: This table is the **single source** for three consumers: the emitter (whose
-#: call sites use the constants below), the page (which fetches it from
-#: ``/api/logs/events`` to build labels and filters) and the docs. An event name
-#: that is not in here is a bug, not an extension point — that is what keeps the
-#: page's filter list and the daemon's vocabulary from drifting apart.
+#: This table is the **single source** for the emitter (whose call sites use the
+#: constants below) and for the docs, and it is served at ``GET /api/logs/events``
+#: for anything outside this repository that wants the vocabulary. The console
+#: page does **not** read it: its kind filter is its own list (``src/lib/log/
+#: schema.ts``, ``KIND_SET``) and its labels come from the i18n bundle, so a new
+#: name here needs a ``logs:kind.*`` key there. An event name that is not in this
+#: table is a bug, not an extension point.
 EVENTS: Final[Tuple[Tuple[str, str, str, str], ...]] = (
     # -- arm session lifecycle
     ("session.connect.started", KIND_SESSION, "INFO",
