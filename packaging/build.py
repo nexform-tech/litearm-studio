@@ -61,6 +61,12 @@ EXE_NAME = "litearm-studio-daemon"
 #: 没设就自动：有 GTK 用 GTK，否则 Qt。见 `window_backend()`。
 WINDOW_BACKEND_ENV = "LITEARM_STUDIO_WINDOW_BACKEND"
 
+#: 这个变量允许的取值。⚠ 同一个变量在 `deb.py` 里也有一份（那边据此决定包的 `Depends`），
+#: 两份**都**是各自模块的单一事实来源 —— `test_deb.py` 直接比对这两个元组，而不是把值
+#: 抄成字面量，这样只在一边新增一个取值会当场判失败（否则它会以 `.deb` 构建末尾一个
+#: 未捕获的 `SystemExit` 的形态出现，而用例全绿）。
+WINDOW_BACKENDS = ("gtk", "qt", "native")
+
 #: GTK 后端要显式点名的 gi 模块 —— 窗口后端用到它们，而它们**全部**由目标机提供。
 #: 点名只是把这层依赖写下来（`WebKit2` 尤其：它从来没有进过包）；收与不收由
 #: `packaging/hooks/` 决定，见 `hooks_args()`。
@@ -339,9 +345,9 @@ def window_backend() -> str | None:
     """
     forced = os.environ.get(WINDOW_BACKEND_ENV, "").strip().lower()
     if forced:
-        if forced not in ("gtk", "qt", "native"):
+        if forced not in WINDOW_BACKENDS:
             raise SystemExit(
-                f"{WINDOW_BACKEND_ENV} 只接受 gtk / qt / native，实得 {forced!r}")
+                f"{WINDOW_BACKEND_ENV} 只接受 {' / '.join(WINDOW_BACKENDS)}，实得 {forced!r}")
         return forced
     if not sys.platform.startswith("linux"):
         return "native"

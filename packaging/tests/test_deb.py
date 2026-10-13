@@ -17,18 +17,22 @@ import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 DEB_PY = ROOT / "packaging" / "deb.py"
+BUILD_PY = ROOT / "packaging" / "build.py"
 ICON_DIR = ROOT / "assets" / "icon-png"
 
 
-def _load_deb_module():
-    spec = importlib.util.spec_from_file_location("litearm_studio_deb", DEB_PY)
+def _load_module(name: str, path: pathlib.Path):
+    spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-deb = _load_deb_module()
+deb = _load_module("litearm_studio_deb", DEB_PY)
+#: The bundle builder, loaded the same way `test_build.py` loads it. The window-backend
+#: cases below ask **it** what it accepts rather than restating the answer (issue #212).
+build = _load_module("litearm_studio_build", BUILD_PY)
 
 needs_dpkg = pytest.mark.skipif(
     shutil.which("dpkg-deb") is None,
@@ -403,25 +407,50 @@ def test_the_window_backend_is_normalised_the_way_build_py_normalises_it(monkeyp
     through here (argparse applies `choices` only to a supplied value, never to a
     `default`), so a GTK bundle shipped in a package that omitted `gir1.2-webkit2-4.1` —
     it installs, starts, and dies with no usable webview backend.
+
+    The other side is exercised for real, not restated: `build.window_backend()` returns
+    the forced value before it looks at the platform, so this call is the same decision
+    the bundle builder makes.
     """
     monkeypatch.setenv(deb.WINDOW_BACKEND_ENV, "  GTK  ")
-    assert deb.window_backend_from_env() == "gtk"
+    assert deb.window_backend_from_env() == build.window_backend() == "gtk"
     assert deb.WEBKIT_DEPENDS in deb.depends_for(deb.window_backend_from_env())
 
 
-@pytest.mark.parametrize("value", ["gtk", "qt", "native"])
+def test_both_implementations_accept_the_same_window_backend_spellings():
+    """The accepted spellings come from two definitions, and both are compared.
+
+    These cases used to assert `deb.py`'s tuple against a literal copy of itself: the two
+    agreed by construction, and a fourth spelling added to `build.py` alone would reach
+    `deb.py` as an unhandled `SystemExit` at the end of every `.deb` build, with the suite
+    green. Comparing the two modules means either side drifting fails here first.
+    """
+    assert deb.WINDOW_BACKENDS == build.WINDOW_BACKENDS
+
+
+@pytest.mark.parametrize("value", build.WINDOW_BACKENDS)
 def test_every_value_build_py_accepts_is_accepted_here(monkeypatch, value):
+    """Parametrised over `build.py`'s tuple, so adding a spelling there shows up here."""
     monkeypatch.setenv(deb.WINDOW_BACKEND_ENV, value)
-    assert deb.window_backend_from_env() == value
+    assert build.window_backend() == deb.window_backend_from_env() == value
 
 
 def test_an_unset_variable_is_the_documented_default(monkeypatch):
+    """The one place the two deliberately differ: unset means GTK here, auto there."""
     monkeypatch.delenv(deb.WINDOW_BACKEND_ENV, raising=False)
     assert deb.window_backend_from_env() == deb.DEFAULT_WINDOW_BACKEND == "gtk"
 
 
 def test_an_unknown_window_backend_fails_the_way_it_does_in_build_py(monkeypatch):
+    """Both refuse the same spelling — with a `SystemExit`, which `main()` does not catch.
+
+    That is why the accepted sets have to agree: the value reaches `deb.py` from the same
+    environment the bundle was built with, and a package build that dies at the last step
+    is what this pairing exists to prevent.
+    """
     monkeypatch.setenv(deb.WINDOW_BACKEND_ENV, "gtk2")
+    with pytest.raises(SystemExit):
+        build.window_backend()
     with pytest.raises(SystemExit):
         deb.window_backend_from_env()
 
