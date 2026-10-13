@@ -648,13 +648,51 @@ class Daemon:
                 await self._on_upstream(ws, client, raw, trace_id, execute)
             except asyncio.CancelledError:
                 raise
-            except Exception:                                      # noqa: BLE001
+            except Exception as e:                                 # noqa: BLE001
                 # ⚠ 一条帧的意外异常不许带走整条 worker: 它一死, 这条连接就再也执行不了
                 #   任何命令, 而客户端只会等到自己的超时 —— 一次**看不见的哑掉**。
                 #   `_on_upstream` 自己已经兜住了绝大多数情况(回 `res` 错误而不是抛), 这里是
-                #   对"没兜住的那一类"的兜底, 所以只要留下痕迹、继续消费下一条。
-                log.warning("处理上行帧时异常, 该帧已丢弃", exc_info=True,
+                #   对"没兜住的那一类"的兜底。
+                # ⚠⚠ 「继续消费下一条」**不等于**兜底做完了 (issue #213): 只记日志、不回那
+                #   条 `res`, 客户端就只剩它自己的 75 s 超时 —— 那正是这条兜底存在的理由
+                #   所说的"看不见的哑掉"。所以这里必须把异常变成一条**给操作员看的应答**。
+                log.warning("处理上行帧时异常, 已回一条失败应答", exc_info=True,
                             extra={"trace_id": trace_id})
+                await self._answer_rescued_frame(ws, client, raw, e)
+
+    async def _answer_rescued_frame(self, ws: WebSocket, client: _Client, raw: str,
+                                    exc: BaseException) -> None:
+        """`_drain` 从异常里救下的那条帧, 回一条最小失败 `res`。
+
+        客户端结算一条命令的**唯一**依据是同一个数字 `id` 的 `res`
+        (`src/lib/arm/socket.ts` 的 `_resolvePending`), 所以"回一条应答"是这里唯一
+        有意义的动作 —— 与 `_send_direct` 对编不出来的 `res` 的处理同一条思路: 那边
+        兜住了"值编不出来", 这边兜住"整条帧处理都炸了"。
+
+        `id` / `m` 只能从**原始帧**里重新取: 异常完全可能发生在 `_on_upstream` 把它们
+        解析出来之前 (`json.loads` 本身、或 `_run_command` 里回不去的那一步)。取不到
+        `id` 就原样留 `None` —— 那一头没有在等这条应答 (帧连 id 都没有), 而编造一个
+        数字会去结算另一条无关的在途命令。
+
+        错误形状复用 `error_to_dict` (与 `_run_command` 的 `except` 同一个来源):
+        `kind` 因此是 `RuntimeError` / `ValueError` 这类 Python 类名 —— 它是**守护进程
+        自己的**内部故障, 不是设备故障, 而这一点正是操作员要知道的。
+        """
+        mid: Any = None
+        method: Optional[str] = None
+        try:
+            msg = json.loads(raw)
+        except (ValueError, TypeError):
+            msg = None
+        if isinstance(msg, dict):
+            mid = msg.get("id")
+            raw_method = msg.get("m")
+            if isinstance(raw_method, str):
+                method = raw_method
+        await self._send_direct(ws, client, {
+            "t": "res", "id": mid, "ok": False,
+            "err": error_to_dict(exc, method=method),
+        })
 
     async def _send_direct(self, ws: WebSocket, client: _Client, message: dict) -> None:
         payload = _encode_frame(message)
