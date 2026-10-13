@@ -501,6 +501,46 @@ def bundle_size_mb(mode: str) -> float:
     return sum(p.stat().st_size for p in root.rglob("*") if p.is_file()) / 1e6
 
 
+def console_build_args() -> list[str]:
+    """Windows 上按 **GUI 子系统**打包 —— 双击不再弹出一个控制台窗口。
+
+    ⚠ PyInstaller 默认打的是**控制台子系统**的可执行文件: 双击时 Windows 先给它分配
+    一个控制台, 再运行我们的代码。对命令行工具那是对的, 对本程序不是 —— 它是个 GUI
+    程序 (窗口由 `window.run_window` 自己创建, 关掉窗口就是退出), 而那个控制台从双击
+    那一刻起就一直挂在任务栏上, 头一秒多还是全黑的。
+
+    **实测** (Windows 11, 0.23.8 的发布产物, onefile, `--fake`):
+
+    | 时刻 | 发生了什么 |
+    | --- | --- |
+    | 0.25 s | 控制台黑窗出现 (Windows 分配的) |
+    | 0.25–1.72 s | 单文件引导器往 `%TEMP%\\_MEI*` 解包 —— **还没有 Python 代码在跑, 所以一个字都打不出来** |
+    | 1.72 s | 第一行输出 |
+    | 1.75 s | uvicorn 开始监听 |
+    | 4.45 s | 应用窗口出现 (2.7 s 花在 WebView2 的初始化上) |
+
+    也就是说"黑着没输出"的那几秒是解包, 与这个开关无关; 这个开关消掉的是那个窗口本身。
+
+    ⚠ **代价说清楚**: `--windowed` 之后 `sys.stdout` / `sys.stderr` 是 `None`, 所有
+    `print` 与 stderr 日志处理器都变成静默无操作 —— 于是"起不来的原因"也会一起消失。
+    所以这一条**必须**与 `daemon/src/litearm_studio_daemon/fatal.py` 那三条一起上, 而且
+    第二条不是可选的:
+
+    * `ensure_streams()` —— 给 `None` 补一个 `os.devnull` 落点。**少了它程序根本起不来**:
+      uvicorn 的 `DefaultFormatter.__init__` 无条件读 `sys.stdout.isatty()`, 抛在
+      `serve()` 里配日志的时候 (实测 `AttributeError: 'NoneType' object has no attribute
+      'isatty'`)。`--windowed` 只换"少一个控制台窗口"的前提是这一条在。
+    * `show_fatal()` —— 没有可用的控制台时, 失败走对话框而不是写进 `nul`。
+    * `attach_parent_console()` —— 从终端启动时把两个流接回那个终端。
+
+    权威历史不受影响: 那是 `obs` 写的 JSONL 文件, 与这两个流无关。
+
+    Linux 不加这个开关: 那边没有"控制台子系统"这回事, 从文件管理器启动本来就不开终端,
+    而从终端启动时操作员正是**要**那份输出。
+    """
+    return ["--windowed"] if sys.platform == "win32" else []
+
+
 def _stack_rules() -> Any:
     """`packaging/hooks/litearm_stack.py` —— "哪些名字算桌面栈"的唯一定义。
 
@@ -607,6 +647,8 @@ def main() -> int:
         args = [
             sys.executable, "-m", "PyInstaller",
             "--noconfirm", "--clean", *bundle_mode_args(mode),
+            # GUI 子系统 (Windows): 双击只出应用窗口, 不出控制台
+            *console_build_args(),
             "--name", EXE_NAME,
             # 可执行文件图标（Windows）；Linux 上被接受但忽略
             "--icon", str(ICON),
