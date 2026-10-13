@@ -13,6 +13,9 @@ const mocks = vi.hoisted(() => ({
   onResult: null as null | ((r: unknown) => void),
   offProgress: vi.fn(),
   offResult: vi.fn(),
+  // 可变的连接状态：升级期间守护进程把它报成 `upgrading`（见 `client.ts` 的 `_applyConn`），
+  // 而 `connected` 在那一相位是假 —— 这条路径必须能被测到。
+  connStatus: 'connected' as string,
 }))
 
 vi.mock('sonner', () => ({
@@ -35,8 +38,8 @@ vi.mock('@/lib/arm', () => ({
     },
   },
   useArmConnection: () => ({
-    status: 'connected',
-    conn: { status: 'connected', port: '/dev/ttyACM0', firmware: 'Litearm1.8.0-7J', n: 7, cart: true, error: null },
+    status: mocks.connStatus,
+    conn: { status: mocks.connStatus, port: '/dev/ttyACM0', firmware: 'Litearm1.8.0-7J', n: 7, cart: true, error: null },
   }),
   useArmState: () => ({ enabled: false }),
   formatArmError: (err: unknown) => String((err as Error)?.message ?? err),
@@ -62,6 +65,7 @@ const file = () => new File([':00000001FF\n'], 'fw.hex')
 describe('useFirmwareUpgrade', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mocks.connStatus = 'connected'
     mocks.onProgress = null
     mocks.onResult = null
     mocks.firmwareStatus.mockResolvedValue({
@@ -214,6 +218,62 @@ describe('useFirmwareUpgrade', () => {
     expect(result.current.result).toBeNull()
     expect(result.current.progress).toBeNull()
     expect(result.current.running).toBe(false)
+    expect(result.current.job).toBeNull()
+  })
+
+  // ── 升级期间的状态不是"掉线" ──────────────────────────────────────────────
+  //
+  // `conn.status` 在烧录相位是 `upgrading`，于是 `connected` 为假。旧实现把这两件事当成
+  // 同一件，一旦为假就把进度、job、结果一并清掉 —— 而那些正是**升级自己**产生的状态。
+
+  it('keeps the upgrade state while the board is in the bootloader', async () => {
+    const { result, rerender } = renderHook(() => useFirmwareUpgrade())
+    await waitFor(() => expect(mocks.onProgress).not.toBeNull())
+
+    await act(async () => {
+      await result.current.pick(file())
+    })
+    await act(async () => {
+      expect(await result.current.start()).toBe(true)
+    })
+    act(() => {
+      mocks.onProgress?.({ job: 'fw-1', phase: 'flash', done: 5, total: 10, detail: '写入' })
+    })
+    expect(result.current.job).toBe('fw-1')
+    expect(result.current.progress?.phase).toBe('flash')
+
+    // 设备进 bootloader：守护进程把状态报成 `upgrading`。
+    mocks.connStatus = 'upgrading'
+    rerender()
+
+    expect(result.current.upgrading).toBe(true)
+    expect(result.current.connected).toBe(false)
+    // 清掉了就等于"正在进行的升级"凭空消失。
+    expect(result.current.job).toBe('fw-1')
+    expect(result.current.progress?.phase).toBe('flash')
+  })
+
+  it('still clears the upgrade state when the link really drops', async () => {
+    const { result, rerender } = renderHook(() => useFirmwareUpgrade())
+    await waitFor(() => expect(mocks.onProgress).not.toBeNull())
+
+    await act(async () => {
+      await result.current.pick(file())
+    })
+    await act(async () => {
+      await result.current.start()
+    })
+    act(() => {
+      mocks.onProgress?.({ job: 'fw-1', phase: 'flash', done: 5, total: 10, detail: '写入' })
+    })
+    expect(result.current.progress).not.toBeNull()
+
+    // `error` 不是升级造成的 —— 这才是真的掉线，旧行为不变。
+    mocks.connStatus = 'error'
+    rerender()
+
+    expect(result.current.upgrading).toBe(false)
+    expect(result.current.progress).toBeNull()
     expect(result.current.job).toBeNull()
   })
 })

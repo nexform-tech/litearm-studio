@@ -173,6 +173,7 @@
     "imageSha": "sha256",
     "holesValue": "{{count}} gap(s), filled with 0xFF",
     "notConnected": "No controller connected — connect before updating.",
+    "upgrading": "Update in progress — the controller is in its bootloader until this finishes, so the console cannot reach it right now. This is expected.",
     "connectedHint": "Current firmware: {{firmware}} · port: {{port}}",
     "safetyTitle": "Confirm before you start",
     "safetyDisarm": "The update disarms the arm first — the motors release mid-way, so a gravity-loaded arm will sag",

@@ -30,6 +30,15 @@ export function useFirmwareUpgrade() {
   const { status, conn } = useArmConnection()
   const armState = useArmState()
   const connected = status === 'connected'
+  /**
+   * 升级中 —— 设备在 ROM bootloader 里，**是我们自己**把它交出去的。
+   *
+   * ⚠ 它与"断开"是两回事，界面必须分开说：`connected` 在这里为假（`conn.status` 是
+   * `upgrading`），但这句"未连接控制器 —— 连上之后才能升级"恰好说反了 —— 设备不是掉了，
+   * 是正在被刷。而且这是全程最需要操作员冷静的时刻，一句假警报会把人推去做多余的操作。
+   * 守护进程专门为此设了这个状态（见 `client.ts` 的 `_applyConn`）。
+   */
+  const upgrading = status === 'upgrading'
 
   const [summary, setSummary] = useState<FirmwareImageSummary | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -157,16 +166,20 @@ export function useFirmwareUpgrade() {
   }, [])
 
   // 连接一断，上一次的升级结果就不该继续挂在那儿（与激活面板同一条纪律）。
+  // ⚠ 但 `upgrading` 不算"断了"：那是升级**自己**造成的脱开，进度与终局正是这个相位产生
+  //   的 —— 在这里清掉，等于把升级正在用的状态删掉（`job` 没了、进度闪一下、失败时的
+  //   终局也一起消失）。只清真正的掉线。
   useEffect(() => {
-    if (!connected) {
+    if (!connected && !upgrading) {
       setResult(null)
       setProgress(null)
       setJob(null)
     }
-  }, [connected])
+  }, [connected, upgrading])
 
   return {
     connected,
+    upgrading,
     firmware: conn?.firmware ?? '',
     port: conn?.port ?? '',
     armEnabled: armState?.enabled ?? null,

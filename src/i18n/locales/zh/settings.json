@@ -173,6 +173,7 @@
     "imageSha": "sha256",
     "holesValue": "{{count}} 段（按 0xFF 填充）",
     "notConnected": "未连接控制器 —— 连上之后才能升级。",
+    "upgrading": "升级进行中 —— 控制器在 bootloader 里，升级结束前界面连不上它，这是正常的。",
     "connectedHint": "当前固件：{{firmware}} · 端口：{{port}}",
     "safetyTitle": "开始之前必须确认",
     "safetyDisarm": "升级会先让机械臂失能 —— 中途电机会松开，有重力负载就会下垂",

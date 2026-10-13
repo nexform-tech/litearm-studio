@@ -91,7 +91,13 @@ export function FirmwareSection() {
           </p>
         ) : null}
 
-        {!vm.connected ? (
+        {/* 三态，不是一个布尔：升级中设备**在 bootloader 里**，说"未连接"是说反了 ——
+            它不是掉了，是正在被刷，而且这是全程最需要操作员冷静的时刻。 */}
+        {vm.upgrading ? (
+          <div data-testid="firmware-upgrading">
+            <Notice>{t('settings:firmware.upgrading')}</Notice>
+          </div>
+        ) : !vm.connected ? (
           <div data-testid="firmware-offline">
             <Notice>{t('settings:firmware.notConnected')}</Notice>
           </div>
