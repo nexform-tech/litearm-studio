@@ -64,6 +64,9 @@ DEV_ORIGINS = frozenset({"http://localhost:5173", "http://127.0.0.1:5173"})
 #: (`move_timeout` 默认 15s), `enable` 的重试上界约 3.3s。
 COMMAND_TIMEOUT_S = 60.0
 
+#: 每个客户端**上行**队列的上限, 与下行队列的 256 同一条纪律 (见 `_enqueue_uplink`)。
+UPLINK_QUEUE_MAX = 256
+
 #: 多久广播一次日志流的位置 (`log_meta`: 序号 + 丢帧数)。取 2s 的理由: 丢帧与断流都是
 #: 页面**自己发现不了**的事, 而 2s 短到"操作员还没开始困惑", 又长到不占可观的带宽
 #: (一条几十字节)。它只在有客户端时发。
@@ -90,6 +93,9 @@ class _Client:
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     #: 因队列满而被丢掉的 log 帧数。页面据此知道"这段空白是丢帧, 不是没发生"。
     dropped_logs: int = 0
+    #: 因上行队列满而被挤掉的命令帧数。与 `dropped_logs` 成对: 前者是"页面少看了什么",
+    #: 这个是"守护进程少做了什么" —— 断开时一并结账进日志。
+    dropped_uplink: int = 0
     #: 这个客户端已经收到的最后一条 log 帧序号 (由 `_pump` 更新)。序号是页面判断
     #: "我漏了东西没有"的唯一证据 —— 空白与"什么都没发生"长得一模一样。
     last_log_seq: int = 0
@@ -412,6 +418,37 @@ class Daemon:
         self._log_dropped += 1
 
     @staticmethod
+    def _enqueue_uplink(queue: "asyncio.Queue[str]", client: _Client, raw: str,
+                        trace_id: Optional[str] = None) -> None:
+        """把一条普通上行帧排进这个客户端的队列, 满了就挤掉**最旧**的一条。
+
+        ⚠ 队列**必须有界**, 与下行队列同一条纪律: 命令的执行上限是
+          `COMMAND_TIMEOUT_S`(60 s), 而 `_drain` 一次只取一条, 所以没有上限时任何本机
+          进程都能让守护进程把帧无限攒在内存里 —— `/ws` 对不带 Origin 的本机客户端是
+          放行的, 这不是网络暴露, 但确实是"没有背压"。
+        ⚠ 也**不能**改成 `await queue.put(raw)` 让它阻塞: 那会把 `receive_text` 一起挡住,
+          旁路的安全帧(急停)就进不来了。队列有界的代价不许落在"急停永远可达"上。
+        ⚠ 挤掉的是**最旧**的一条(与 `_evict_one` 同一取舍): 被挤掉的命令由客户端自己的
+          超时兜底(见 `src/lib/arm/socket.ts`), 这里计数、留下痕迹, 断开时结账。
+        """
+        if queue.full():
+            try:
+                queue.get_nowait()
+            except asyncio.QueueEmpty:                             # pragma: no cover
+                pass
+            else:
+                client.dropped_uplink += 1
+                log.warning("上行队列已满(%d), 挤掉一条最旧的帧 —— 该客户端已挤掉 %d 条",
+                            UPLINK_QUEUE_MAX, client.dropped_uplink)
+        try:
+            queue.put_nowait(raw)
+        except asyncio.QueueFull:                                  # pragma: no cover
+            # 单生产者/单消费者下取不到这里; 真到了这里说明上面那次 `get_nowait` 没腾出
+            # 位置, 那就丢掉这一条新的, 但要说出来。
+            client.dropped_uplink += 1
+            log.warning("上行队列仍然满, 丢弃一条新帧", extra={"trace_id": trace_id})
+
+    @staticmethod
     def _evict_one(client: _Client) -> Optional[dict]:
         """从满队列里挤出**一条**帧的位置, 返回被挤掉的那条; 没得挤返回 `None`。
 
@@ -471,8 +508,9 @@ class Daemon:
                   trace_id=trace_id)
         client = _Client(q=asyncio.Queue(maxsize=256))
         #: 普通上行帧的**有序**队列 —— 单条 worker 顺序消费, 保证「先发的先执行」
-        #: (前端有依赖顺序的连招: set_speed 之后再 movej)。
-        queue: asyncio.Queue[str] = asyncio.Queue()
+        #: (前端有依赖顺序的连招: set_speed 之后再 movej)。**有界**, 见
+        #: `_enqueue_uplink`。
+        queue: asyncio.Queue[str] = asyncio.Queue(maxsize=UPLINK_QUEUE_MAX)
         #: 降能量方向的安全帧**不进队列** —— 直接起任务, 于是不必等在途运动结束。
         #: 这是「急停永远可达」在传输层的另一半 (另一半是 `Session` 的专用执行器):
         #: 原来的 `await self._on_upstream(...)` 会把 `receive_text` 也一起挡住,
@@ -538,7 +576,7 @@ class Daemon:
                     bypass.add(task)
                     task.add_done_callback(_bypass_done)
                 else:
-                    await queue.put(raw)
+                    self._enqueue_uplink(queue, client, raw, trace_id)
         except WebSocketDisconnect:
             pass
         except Exception:  # noqa: BLE001 - 一个客户端坏了不该影响别人
@@ -552,8 +590,16 @@ class Daemon:
                     pass
                 obs.debug(obs.WS_DISCONNECTED, body="浏览器客户端已离开",
                           fields={"clients": len(self.clients),
-                                  "dropped_logs": client.dropped_logs},
+                                  "dropped_logs": client.dropped_logs,
+                                  "dropped_uplink": client.dropped_uplink},
                           trace_id=trace_id)
+                if client.dropped_uplink:
+                    # 与 `dropped_logs` 相对的另一半: 那一条记的是"页面少看了什么", 这一条
+                    # 记的是"守护进程少做了什么" —— 一次挤掉几十条命令, 事后必须查得出原因。
+                    obs.warning(obs.UPLINK_DROPPED,
+                                body=f"上行队列满导致 {client.dropped_uplink} 条命令帧被挤掉",
+                                fields={"dropped": client.dropped_uplink},
+                                trace_id=trace_id)
                 if client.dropped_logs:
                     # 队列满时丢掉的 log 帧在这里结账: 页面会看到一条明确的
                     # "丢了 N 条", 而不是一段无法解释的空白。
@@ -598,7 +644,17 @@ class Daemon:
         """顺序消费普通上行帧 (单条 worker ⇒ 保序)。"""
         while True:
             raw = await queue.get()
-            await self._on_upstream(ws, client, raw, trace_id, execute)
+            try:
+                await self._on_upstream(ws, client, raw, trace_id, execute)
+            except asyncio.CancelledError:
+                raise
+            except Exception:                                      # noqa: BLE001
+                # ⚠ 一条帧的意外异常不许带走整条 worker: 它一死, 这条连接就再也执行不了
+                #   任何命令, 而客户端只会等到自己的超时 —— 一次**看不见的哑掉**。
+                #   `_on_upstream` 自己已经兜住了绝大多数情况(回 `res` 错误而不是抛), 这里是
+                #   对"没兜住的那一类"的兜底, 所以只要留下痕迹、继续消费下一条。
+                log.warning("处理上行帧时异常, 该帧已丢弃", exc_info=True,
+                            extra={"trace_id": trace_id})
 
     async def _send_direct(self, ws: WebSocket, client: _Client, message: dict) -> None:
         payload = _encode_frame(message)
@@ -1009,6 +1065,7 @@ def create_app(session: Session, *, gripper: Optional[Any] = None,
     # 见 `instance` 与 `__main__._reuse_the_running_instance`。关掉窗口就是退出, 所以
     # 正常路径上不会有第二个进程; 但"图标被点了两次"和"上一个版本的进程还活着"都会走到
     # 这里。抬不起来 (无界面运行) 就如实说 `focused: false`, 由调用者去告诉操作员。
+    #
     # ⚠ 这是**唯一**一条有副作用却没有同源判据的路由 —— 补上, 与 `/ws`、`/api/export`、
     # `/api/pick-file` 同一套。别的网页 `fetch(..., {mode:"no-cors"})` 就能反复把窗口抬到
     # 操作员脸上: 这是不发预检的简单请求, 响应虽然不透明, 副作用已经落地。抬窗口本身还是
@@ -1023,7 +1080,6 @@ def create_app(session: Session, *, gripper: Optional[Any] = None,
             return JSONResponse({"ok": False, "error": "cross-origin"}, status_code=403)
         return JSONResponse({"ok": True,
                              "focused": bool(focus is not None and focus())})
-
 
     # ── 导出落点: 页面把字节交回来, 由**本进程**弹对话框并写文件 (#104 / #100) ──
     #

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import socket
 import sys
@@ -16,6 +17,7 @@ from litearm_studio_daemon.__main__ import build_parser, main
 from litearm_studio_daemon.dfu import fake as fake_engine
 from litearm_studio_daemon.server import (
     HTTP_PORT_TRIES,
+    Daemon,
     _Client,
     _is_energy_down_frame,
     _is_loopback,
@@ -1151,3 +1153,60 @@ def test_evicting_a_log_frame_for_a_conn_frame_still_counts_it() -> None:
         assert daemon._log_dropped == 1
     finally:
         session.close()
+
+
+def test_the_uplink_queue_is_bounded_and_evicts_the_oldest() -> None:
+    """发得比执行快的客户端, 不能让守护进程把帧无限攒在内存里。
+
+    与下行队列同一条纪律 (有界 + 挤最旧 + 计数)。为什么不靠 `await queue.put()` 阻塞来
+    背压: 那会把 `receive_text` 一起挡住, 旁路的安全帧(急停)就进不来了 —— 队列有界的
+    代价不许落在"急停永远可达"上。
+    """
+    queue: asyncio.Queue[str] = asyncio.Queue(maxsize=4)
+    client = _Client(q=asyncio.Queue(maxsize=4))
+
+    for i in range(4):
+        Daemon._enqueue_uplink(queue, client, f"frame-{i}")
+    assert client.dropped_uplink == 0
+
+    Daemon._enqueue_uplink(queue, client, "frame-4")
+
+    assert queue.qsize() == 4
+    assert client.dropped_uplink == 1
+    # 挤掉的是**最旧**的那一条, 其余保序。
+    assert [queue.get_nowait() for _ in range(4)] == [
+        "frame-1", "frame-2", "frame-3", "frame-4"]
+
+
+def test_a_frame_that_raises_does_not_kill_the_drain_worker() -> None:
+    """一条帧的意外异常不许带走整条 worker。
+
+    worker 一死, 这条连接的命令就再没有消费者: 客户端只会等到自己的 75s 超时, 而守护
+    进程这边一条记录都没有 —— 一次看不见的哑掉。兜底必须是"留下痕迹, 继续消费"。
+    """
+    seen: list[str] = []
+
+    class Stub:
+        async def _on_upstream(self, ws, client, raw, trace_id=None, execute=None):
+            if raw == "boom":
+                raise RuntimeError("帧处理炸了")
+            seen.append(raw)
+
+    async def run() -> None:
+        queue: asyncio.Queue[str] = asyncio.Queue()
+        queue.put_nowait("boom")
+        queue.put_nowait("after")
+        worker = asyncio.create_task(
+            Daemon._drain(Stub(), object(), _Client(q=asyncio.Queue()), queue))
+        try:
+            for _ in range(200):
+                if seen:
+                    break
+                await asyncio.sleep(0.01)
+        finally:
+            worker.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await worker
+
+    asyncio.run(run())
+    assert seen == ["after"]
