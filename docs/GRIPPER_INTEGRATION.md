@@ -354,7 +354,7 @@ The record's `mount` is never absent — it defaults to `normal`, the reference
 hardware's assembly — so the operator changes it from the settings page, which
 loads the chosen template by name. `normal` is a *declaration*, not a
 measurement: row 6's nominal geometry is a 120 mm unit's, and the gate refuses
-every millimetre target on it until a measured file (or a zero write) replaces
+every millimetre target on it until a measured file replaces
 it. Row 5, when it fits the declared mount, is the ordinary resting state of a
 channel with no measured file — and it does *not* refuse millimetre targets, it
 only warns; the difference between the two rows is the one an operator sees on
