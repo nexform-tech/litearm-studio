@@ -92,7 +92,7 @@ than rewritten:
 | New module | Responsibility |
 | --- | --- |
 | `daemon/.../gripper/session.py` | Adapts `WorkerLoop` to the daemon: replaces its signal object with a callback that emits WebSocket frames, adds `gripper.*` command intake, channel enumeration, and the per-channel settings record. |
-| `daemon/.../gripper/config.py` | Per-channel device record (channel, CAN id, mount, calibration path override, travel) persisted next to the daemon's settings. `mount` is always `normal` or `reverse` and defaults to `normal`: the reference hardware is assembled that way, so a channel with no measured file resolves to the nominal `normal` template (row 5) rather than to the factory fallback or to nothing. |
+| `daemon/.../gripper/config.py` | Per-channel device record (channel, CAN id, mount, calibration path override, travel) persisted next to the daemon's settings. `mount` is always `normal` or `reverse` and defaults to `normal`: the reference hardware is assembled that way, so a channel with no measured file resolves to the bundled default or, failing that, the nominal `normal` template (row 6) rather than to nothing. |
 | `daemon/.../server.py` (edit) | Route `gripper.*` commands, relay gripper frames to clients, add the gripper to `/api/health`. |
 | `src/lib/arm/gripperClient.ts` (new) | Frontend client half: gripper frame handling and command wrappers. |
 
@@ -301,16 +301,29 @@ The implementation is `daemon/src/litearm_studio_daemon/gripper/calibration.py`
 | 2 | `~/.litegrip/<channel>_calibration.json` | parses and validates | `measured` |
 | 3 | `LITEGRIP_CALIB` | set in the environment | `measured`, flagged as an environment override |
 | 4 | `~/.litegrip/litegrip_calibration.json` | channel field matches or is absent | `measured`, flagged as legacy |
-| 5 | SDK template `normal` / `reverse` | always — the record's `mount` defaults to `normal` | `template` |
-| 6 | SDK bundled `factory_calibration.json` | row 5 had no template file to load | `factory` |
+| 5 | Bundled `factory_calibration.json` | the file exists and its recorded orientation fits the declared `mount` | `measured` — adopted as a *user* file, with a warning banner saying the numbers are the shipped ones |
+| 6 | SDK template named by `mount` | always | `template` |
 | 7 | nothing | — | `missing` |
+
+`template` (an explicit choice from the settings page) short-circuits the whole
+table: the operator asked for that direction by name, and answering with a file
+instead is the silent substitution the name exists to prevent.
 
 **Gate.** Motion is allowed only when the provenance is `measured`, or `template`
 for the commands that do not depend on geometry: `open`, `close` and both
 zero-gravity commands (`gripper.release`, `gripper.set_zero_gravity`).
 Every millimetre target (`gripper.move_to`, `gripper.grasp`) requires `measured`.
-`factory` requires an explicit, persisted operator acknowledgement
-(`gripper.set_allow_factory`). `missing` allows nothing but `zero`.
+`factory` would require an explicit, persisted operator acknowledgement
+(`gripper.set_allow_factory`). `missing` allows nothing but `write_zero`.
+
+⚠ **The `factory` branch is unreachable today**: `PROVENANCE_FACTORY` is never
+assigned (every provenance site is `measured` / `template` / `missing` /
+`invalid`), so `is_factory()` is false everywhere the gate is asked. Row 5 does
+not stand in for it either — the bundled file is deliberately adopted as a user
+calibration, so a millimetre target is accepted on it with only the warning
+banner. `gripper.set_allow_factory` and the persisted acknowledgement are
+therefore a closed loop with no input: kept, but do not read §5.3 as a promise
+that a millimetre move is refused on the shipped numbers.
 
 `zero` has a precondition of its own: the axis must have reported a position since
 it was last enabled. The probe is seeded from that reading and drives ungated, so a
@@ -338,11 +351,14 @@ Read the result back from the SDK and show it; a wrong pick is not silent to the
 software but it is to the operator.
 
 The record's `mount` is never absent — it defaults to `normal`, the reference
-hardware's assembly — so row 5 is the ordinary resting state of a channel with no
-measured file, and the operator changes it from the settings page, which loads the
-chosen template by name. `normal` is a *declaration*, not a measurement: row 5's
-nominal geometry is a 120 mm unit's, which is why the gate still refuses every
-millimetre target until `zero()` replaces it.
+hardware's assembly — so the operator changes it from the settings page, which
+loads the chosen template by name. `normal` is a *declaration*, not a
+measurement: row 6's nominal geometry is a 120 mm unit's, and the gate refuses
+every millimetre target on it until a measured file (or a zero write) replaces
+it. Row 5, when it fits the declared mount, is the ordinary resting state of a
+channel with no measured file — and it does *not* refuse millimetre targets, it
+only warns; the difference between the two rows is the one an operator sees on
+the calibration card.
 
 ### 5.4 CAN link and channel enumeration
 
@@ -367,8 +383,9 @@ millimetre target until `zero()` replaces it.
 `--fake` must cover the gripper too, or the page is untestable in CI. Lift
 `backend/sim.py` and `backend/plant.py`: they run the same FSM against a
 simulated plant, so the simulator exercises production logic instead of sitting
-beside it. `gripper.zero` against the simulator is how the calibration flow gets
-end-to-end coverage without hardware.
+beside it. `gripper.write_zero` against the simulator is how the calibration flow
+gets end-to-end coverage without hardware; the guided probe's `gripper_calib`
+frames cannot be reached at all (§4.2).
 
 ### 5.6 Persistence
 
@@ -518,7 +535,7 @@ no hardware. Cover:
   a malformed file, the cross-check mismatch, and the factory acknowledgement.
 - The gate: which commands each provenance allows and refuses.
 - The E-stop: a stop arriving mid-move engages within one tick, latches, and
-  survives until reset; a stop during `gripper.zero` aborts the probe.
+  survives until reset; a zero write is refused while the stop is latched.
 - The tick as keepalive: no tick gap exceeds the drive's 0.4 s window.
 - Shutdown de-energizes; `disconnect` does not.
 
@@ -593,6 +610,8 @@ Three items, each with the check that closes it. None of them blocks P1 or P2.
   moves.
 - Do not accept a millimetre target while the calibration is nominal. The
   template's geometry describes a 120 mm unit; every millimetre would be wrong by
-  about 40%.
+  about 40%. (The gate enforces this for the template row; the bundled default —
+  row 5 of §5.3 — is accepted as a user file and only warns, so "not nominal" is
+  not the same question as "measured".)
 - Do not hardcode the travel. It is per unit, it is not in the SDK's schema, and
   it is the numerator of every millimetre the UI shows.
