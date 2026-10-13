@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
 """Generate the joint poses the URDF/firmware frame identification needs.
 
-This is step 1 of 3 for issue #56. It only writes a JSON file; it never talks to
-the arm. Deterministic, so the same file can be regenerated on another machine.
+Step 1 of 3 of the frame investigation. ⚠ The investigation is **not settled**:
+#56 was closed by hand right after PR #61 merged, and that PR states outright that
+it does not resolve it — it aligned the gizmo's on-screen directions, and the
+preview's pose still disagreed with the firmware's `get_tcp`. No verdict from
+step 3 has ever been recorded. Running this chain on a live arm and writing its
+verdict down is still the way to close the question; see `urdf_frame_fit.py`.
+
+It only writes a JSON file; it never talks to the arm. Deterministic, so the same
+file can be regenerated on another machine.
 
 The poses are centred on the app's Ready Pose and spread each joint over a
 fraction of its URDF limit, with a different sine frequency per joint so the

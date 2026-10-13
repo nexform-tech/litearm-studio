@@ -47,7 +47,8 @@ pip install -e "daemon[test]"
 ```bash
 pip install -e "daemon[ui]"                       # pywebview 本体
 
-# Linux: 借系统的 WebKitGTK。整条 GTK 栈都在目标机上，`.deb` 只有 16 MB（本版实测）。
+# Linux: 借系统的 WebKitGTK。整条 GTK 栈都在目标机上，`.deb` 只有约 21 MB
+# （v0.23.4 的发布产物实测；`gh release view v0.23.4 --json assets`）。
 sudo apt install python3-gi gir1.2-webkit2-4.1
 
 litearm-studio-daemon             # 开窗口；关掉窗口就是退出
@@ -55,8 +56,8 @@ litearm-studio-daemon --no-open   # 无界面运行；界面用浏览器连它�
 ```
 
   ⚠ Linux 上还有一个**自带内核**的备选：`pip install -e "daemon[ui-qt]"`（Qt WebEngine）。
-  它不需要 apt，但把一整个 Chromium 打进产物 —— 本版实测 `.deb` 是 **16 MB**，换成它就
-  回到 **~240 MB** 那个量级（见 `packaging/build.py` 的 `window_build_args()`）。
+  它不需要 apt，但把一整个 Chromium 打进产物 —— 借系统 GTK 时 `.deb` 约 **21 MB**，换成
+  它就回到 **~240 MB** 那个量级（见 `packaging/build.py` 的 `window_build_args()`）。
   只在拿不到系统 GTK 时才用它。
 
   Windows 的 WebView2 与 macOS 的 WKWebView 都是系统自带的，两边什么都不用装。
@@ -396,7 +397,8 @@ python packaging/build.py      # 产物：packaging/dist/litearm-studio-daemon[.
   盖住 24.04 的，24.04 的系统 WebKitGTK 于是加载失败、窗口开不出来（issue #123）。
   窗口后端本来就借目标机的 WebKitGTK（`libwebkit2gtk` 94 MB 从不进包），那套依赖会把
   整条 GTK 栈一起装上 —— 所以包里那份是纯副本。少了这个参数不会有任何报错，包只是白白
-  多带一份（实测 `.deb` 45.4 MB → 16.0 MB，安装体积 124 MB → 40 MB），还会在 24.04 上坏掉。
+  多带一份（落地时实测 `.deb` 45.4 MB → 16.0 MB，安装体积 124 MB → 40 MB），还会在 24.04
+  上坏掉。
 - **版本单一来源**：`LITEARM_STUDIO_VERSION`（CI 传 git tag）> `git describe --tags` >
   `0.0.0+dev`，写进构建时生成的 `_build_version.py`（不入库）。于是 `hello` 帧报的版本
   就是发出去的那个 tag，而不是 `pyproject.toml` 里的占位符。
@@ -508,8 +510,9 @@ litearm-studio-daemon --fake --fake-unactivated
   而是**真开一次**、开不了继续等（实测撞到过：`find_device()` 成功、`open()` 却 EACCES）。
   一直开不了会报 `dfu_permission_denied`，而不是笼统的"烧录失败"。
 - `--fake` 下注入的是一个**同形的假引擎**，整条流水线（相位顺序、进度、失败收尾）
-  都能在没有硬件时走一遍 —— 但**烧录结果本身**只能在真机验，判据见
-  [`FIRMWARE-UPGRADE-PLAN.md`](../../FIRMWARE-UPGRADE-PLAN.md) §5.3。
+  都能在没有硬件时走一遍 —— 但**烧录结果本身**只能在真机验：判据是读回校验通过
+  （`firmware_result.ok`），以及设备复位后 CDC 重新枚举、报出镜像里的那个版本串
+  （对不上会带一条 `warning`，见 `firmware_result.version`）。
 
 ## 对计划文档的偏离与补充
 

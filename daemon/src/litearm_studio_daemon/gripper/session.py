@@ -88,10 +88,13 @@ GRIPPER_COMMANDS: Dict[str, str] = {
     "gripper.set_allow_factory": "确认/撤销「允许出厂标定」(持久化) → {allowFactory}",
 }
 
-#: Commands that need a connected session.  The filesystem-facing listings
-#: (`gripper.list_channels`, `gripper.list_calibrations`) are deliberately
-#: absent: they are filesystem questions, and the settings page asks them while
-#: deciding what to connect to and which calibration to load.
+#: Commands that need a connected session.  `gripper.list_channels` is
+#: deliberately absent: enumerating the interfaces is a filesystem question, and
+#: the settings page asks it while deciding what to connect to.  (A
+#: `gripper.list_calibrations` was once listed here as a peer; it never existed —
+#: no whitelist entry, no handler — and the calibration in effect rides on
+#: `gripper_conn`.  That stale listing is what `docs/GRIPPER_INTEGRATION.md`
+#: §4.2 used to document as a real command.)
 _NEEDS_CONNECTION = frozenset({
     "gripper.enable", "gripper.disable", "gripper.clear_fault",
     "gripper.open", "gripper.close", "gripper.grasp", "gripper.move_to",

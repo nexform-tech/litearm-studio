@@ -1,7 +1,9 @@
 # LiteArm Studio 重构计划
 
 > 范围：**只做控制上位机**这一个应用。
-> 状态：待评审。本文档是执行的唯一依据，评审通过后按阶段推进。
+> 状态：**已执行** —— Phase 1–5（§4）均已落地。本文档保留下来当接口契约与决策记录：
+> §3 是守护进程源码按节引用的那份口径，§5 记的是能力缺口的处置。后续工作走 GitHub
+> issue，不再回改本文档的阶段划分。
 
 ---
 
@@ -72,16 +74,23 @@ litearm-python  ──USB CDC (1d50:606f @921600)──>  STM32  ──CAN──
 
 ```jsonc
 {"t":"hello","daemon":"0.1.0","sdk":"2.1.0"}
-{"t":"conn","status":"disconnected|connecting|connected|error",
+{"t":"conn","status":"disconnected|connecting|connected|upgrading|error",
  "port":"/dev/ttyACM0","firmware":"Litearm1.8.0-7J","n":7,"cart":true,"error":null}
 {"t":"state","stamp":1234.5,"state":{ /* 见 3.3 */ }}
 {"t":"res","id":7,"ok":true,"v":null}
 {"t":"res","id":7,"ok":false,"err":{"kind":"TransportError","msg":"…","cmd":0,"code":0}}
+// 以下是**广播**帧（不是 RPC 应答），载荷各自的文档里写全：
+{"t":"log_meta", /* … */} | {"t":"log", /* … */}          // 事件日志流, 见 LOGS.md §1
+{"t":"gripper_conn", /* … */} | {"t":"gripper_state", /* … */}     // 见 GRIPPER_INTEGRATION.md §4.1
+{"t":"gripper_calib", /* … */} | {"t":"gripper_alert", /* … */} | {"t":"gripper_busy", /* … */}
+{"t":"firmware_progress", /* … */} | {"t":"firmware_result", /* … */}   // 见 daemon/README.md 的固件升级一节
 ```
 
 `conn` 帧的 `status` 是**唯一**的连接口径，前端据此显示顶栏。`error` 态既表示「连不上」，
 也表示「连上过、现在链路断了」（#48）：后者会把 `error` 填成原因、把 `port` 清空，因为
 那个节点名已经不存在了；自愈成功后重新推一条 `connected`（`port` 是重新解析出来的）。
+`upgrading` 是固件升级期间的状态 —— 板子被我们送进了 bootloader，这时既不 `connected`
+也不是出错。
 
 上行（浏览器 → 本地程序）：
 
@@ -232,13 +241,13 @@ mode==ZERO_G(7) 或 zero_g 会话激活    → 'zero_gravity'
 
 **需换算或降级**：位姿旋转矩阵 ↔ rpy；安装姿态（改用重力向量表达）；关节限位/增益（由整数组改为逐轴下发）。
 
-**固件无对应，先隐藏**：
+**固件无对应，改由守护进程实现或不做**：
 
-| 缺口 | 判定依据 |
+| 缺口 | 判定依据与现状 |
 | --- | --- |
-| 夹爪 / 灵巧手 | 固件无任何末端设备命令；旧实现是 server 侧 device daemon 走 CAN |
-| 零点偏移 / 笛卡尔限位 / 碰撞配置 | 固件无对应命令 |
-| 服务运维（重启服务、配置文件读写、清停止） | 纯 server 概念 |
+| 夹爪 / 灵巧手 | 固件仍然没有任何末端设备命令 —— **守护进程自己走 CAN 实现**（`daemon/.../gripper/`，契约见 [GRIPPER_INTEGRATION.md](GRIPPER_INTEGRATION.md)）。本行记的是"固件侧没有对应命令"，不是"界面里没有这个功能" |
+| 零点偏移 / 笛卡尔限位 / 碰撞配置 | 固件无对应命令，本版不做 |
+| 服务运维（重启服务、配置文件读写、清停止） | 纯 server 概念，本版不做 |
 
 **已定：这一版不做，从界面移除**：
 

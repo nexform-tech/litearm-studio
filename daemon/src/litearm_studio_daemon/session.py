@@ -318,7 +318,7 @@ class Session:
         #: 与 `/api/health` 显示。⚠ 上一版直接读 `arm.port`, 那会在**连接收尾**抛
         #: AttributeError, 而收尾跑在没人读取的 Future 上 ⇒ 静默失败。
         self._resolved_port: Optional[str] = None
-        self._status = "disconnected"          # disconnected|connecting|connected|error
+        self._status = "disconnected"          # disconnected|connecting|connected|upgrading|error
         self._last_error: Optional[str] = None
         self._state: Any = None                # 最近一帧 RobotState
         self._state_dict: Optional[dict] = None

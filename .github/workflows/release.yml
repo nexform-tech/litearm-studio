@@ -1,13 +1,28 @@
-# Copy this file into a downstream repository as `.github/workflows/release.yml`.
-# `scripts/sync.sh` does that automatically when the file does not exist yet.
+# Release for this repository. Two jobs:
 #
-# This is the source-only shape: compute the version, create the tag, create the
-# GitHub release. GitHub attaches the source tarball and zip to every release by
-# itself, so nothing else is required.
+#   release — versioning only. The shared template workflow reads the merged
+#             commit prefixes, pushes the tag and creates the GitHub release.
+#             It decides the version; nothing here may.
+#   package — builds the artifacts and attaches them to that release. It runs
+#             only when `release` produced a new tag, and only then: a push to
+#             main that releases nothing must not spend two runners on a build.
 #
-# Add the `publish` job from examples/publish.yml when the repository publishes to
-# a registry, and the `package` job from examples/package.yml when it ships build
-# artifacts. Both are independent siblings of `release`: add or delete them freely.
+# The `package` job builds per platform (matrix):
+#   · ubuntu-22.04 — the one-file portable executable, plus a `.deb` built from a
+#     second, directory-shaped build (`LITEARM_STUDIO_BUNDLE_MODE=onedir`). The
+#     `.deb` is the only artifact that can set the serial-port permission and
+#     register a desktop entry. The host is pinned because the package declares a
+#     `libc6 (>= 2.35)` floor, so it must not be built on anything newer either.
+#   · windows-latest — the one-file `.exe`.
+#
+# The window backend is written per platform rather than detected, on purpose:
+# the Linux leg borrows the system WebKitGTK, and a build host missing it fails
+# here instead of quietly shipping the self-contained Qt backend, which is about
+# four times larger. See `LITEARM_STUDIO_WINDOW_BACKEND` below.
+#
+# Versions come from the tag, never from a manifest: `package` reads
+# `needs.release.outputs.new_tag`, and the manifest version field stays a
+# placeholder.
 name: Release
 
 on:
@@ -102,7 +117,7 @@ jobs:
 
       - name: Install the window stack (Linux)
         if: runner.os == 'Linux'
-        # ⚠ 这一条决定 Linux 产物是 63 MB 还是 243 MB。借系统的 WebKitGTK 就把
+        # ⚠ 这一条决定 Linux 产物是 ~21 MB 还是 243 MB。借系统的 WebKitGTK 就把
         # `libwebkit2gtk`（94 MB）留在用户机器上、由 `.deb` 的 `Depends` 要过来；
         # 装不上它时 `LITEARM_STUDIO_WINDOW_BACKEND=gtk` 会让构建**判失败**，而不是
         # 静默换成自带 Qt 的 243 MB 产物（见 packaging/build.py）。

@@ -33,7 +33,7 @@ STM32 firmware ──USB CDC (1d50:606f)──> CAN ──> motors
 | Core Module | Key Features |
 | :--- | :--- |
 | Control | 3D pose monitoring & simulation, joint angle control, Cartesian jog & linear interpolation, mode switching, one-click homing |
-| Telemetry | Joint telemetry sampling & recording, session details, CSV export |
+| Logs | The daemon's event log, plus joint telemetry sampling & recording, session details, CSV export |
 | Settings | End-effector payload, mounting direction, gains & limits, diagnostics, gripper & bus, activation |
 | Activation | Fill in a registration form once, before first use, to unlock the arm |
 
@@ -63,7 +63,7 @@ The program is self-contained: it needs no Python install and no browser — it 
 
 ### 1.3 Connecting to the arm
 
-On start, the local program **finds the arm's USB CDC device automatically** (VID:PID `1d50:606f`) and opens a session as soon as it appears. The badge on the left of the top bar reports the state:
+On start, the console opens a session by itself: the page asks for one, and the local program enumerates the serial ports — the arm's USB CDC device (VID:PID `1d50:606f`) first — and opens the first candidate. The local program **never connects on its own**: the page is what asks, and after **Disconnect** the session stays closed until you press **Connect**. The badge on the left of the top bar reports the state:
 
 | Badge | Display | Meaning |
 | :--- | :--- | :--- |
@@ -243,30 +243,36 @@ The LiteGrip two-finger parallel gripper shares the arm's CAN bus and fills the 
 - Zero gravity: release the drive so the jaws can be moved by hand;
 - Stop / Release Stop / Clear Fault: stop immediately, release a latched stop, and clear a drive fault;
 - Gripper parameters (collapsed by default): **target force** (0–40 N) and **move speed** (5–150 mm/s);
-- Calibration: the panel names the calibration in effect (measured, nominal template, or factory fallback). With the nominal template it refuses millimetre targets until you run the zero calibration.
+- Calibration: the panel names the calibration in effect — a measured file, or a nominal template — and warns when the numbers are the program's own bundled default. With the nominal template it refuses millimetre targets until you run the zero calibration.
 
-## 4. Telemetry
+## 4. Logs
 
-The Telemetry page manages sampled motion telemetry.
+The Logs page carries two kinds of record, one tab each: **Log Records** (the daemon's structured event log) and **Samples** (motion telemetry).
 
-### 4.1 Telemetry Sampling & Session History
+### 4.1 Log Records
 
-Telemetry recording begins automatically upon connection, saving 10 Hz samples of joint angles, velocities, torques, temperatures, and fault states locally.
+The daemon writes every event to a JSONL file of its own, and this tab is a view of that file — the records outlive the page, so they are still there after a restart or from another machine. Filter by level and category, search the messages, and expand a row for its sequence number, trace ids, source and raw fields. **Load Earlier** widens the window, **Export JSONL** saves what is loaded, and **Clear local cache** drops this browser's copy (the daemon's file is untouched). The header line reports whether the stream is live, and counts what the link had to drop.
 
-- Session List: Chronologically displays recording sessions with start time, duration, sample count, and storage size;
-- Detailed Inspection: Expand any session to inspect per-timestamp joint angles, velocities, torques, and driver temperatures;
-- Storage Retention Limit:
-  - Click the "Retention: N MB" edit button at the top;
-  - Configure storage quota between 10 MB and 500 MB;
-  - Oldest sessions are pruned automatically upon reaching quota.
+### 4.2 Telemetry Sampling & Session History
 
-### 4.2 CSV Data Export
+The Samples tab keeps two different records, and they are worth telling apart:
 
-Click "Export CSV" to download the full time-series telemetry data as a `.csv` file for analysis in MATLAB, Python (Pandas), or Excel. A save dialog opens with `telemetry-session-<id>.csv` as the suggested name, starting in your Downloads folder; pick any location. After it is written, a message states the full path. The Logs page's **Export JSONL** works the same way.
+- **Daemon samples** — one row per second: run state, peak temperature, peak speed, peak torque and the fault axes, written by the daemon's own log at DEBUG — and that log defaults to INFO, so they are recorded only when the daemon runs with `--log-level DEBUG`;
+- **Browser sessions** — while the console is connected it records the state stream at 10 Hz into this browser's local storage:
+  - Session list: chronologically displays recording sessions with start time, duration, sample count, and storage size;
+  - Detailed inspection: select any session to inspect per-timestamp joint angles, velocities, torques, and driver temperatures;
+  - Storage retention limit:
+    - Click the "Retention: N MB" edit button at the top;
+    - Configure storage quota between 10 MB and 500 MB;
+    - Oldest sessions are pruned automatically upon reaching quota.
 
-### 4.3 Link Diagnostics
+### 4.3 CSV Data Export
 
-The current version has no separate "Controller Logs" page. For link health, use **Settings → Diagnostics → Firmware self-test**: it runs a kinematics self-test and reports the link diagnostic counters (CRC errors, dropped FIFO frames) — those are the first numbers to move when the USB link misbehaves. Overall runtime metrics live in the top bar (enable, run state, fault state).
+Click "Export CSV" to download the selected session's time-series data as a `.csv` file for analysis in MATLAB, Python (Pandas), or Excel. A save dialog opens with `telemetry-session-<id>.csv` as the suggested name, starting in your Downloads folder; pick any location. After it is written, a message states the full path. **Export JSONL** on the Log Records tab works the same way.
+
+### 4.4 Link Diagnostics
+
+For link health, use **Settings → Diagnostics → Firmware self-test**: it runs a kinematics self-test and reports the link diagnostic counters (CRC errors, dropped FIFO frames) — those are the first numbers to move when the USB link misbehaves. Overall runtime metrics live in the top bar (enable, run state, fault state).
 
 ---
 
