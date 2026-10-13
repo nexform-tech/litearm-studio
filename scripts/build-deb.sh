@@ -76,11 +76,16 @@ started=$(date +%s)
 # hashes a file the packager never wrote".
 build_log="$(mktemp)"
 trap 'rm -f "$build_log"' EXIT
+# ⚠ `LITEARM_ACTIVATION_URL` is forwarded with `:-` so "set but empty" travels too: the
+# container cannot see the host's environment otherwise, and `build.py` treats an empty
+# value exactly like an unset one. Without this line a staging build succeeds and ships a
+# package that still points at the production activation service.
 docker run --rm \
     -v "$ROOT":/src:ro \
     -v "$ROOT/packaging/deb_build.sh":/deb_build.sh:ro \
     -v "$ROOT/packaging/dist":/out \
     -e "VERSION=$VERSION" \
+    -e "LITEARM_ACTIVATION_URL=${LITEARM_ACTIVATION_URL:-}" \
     "$IMAGE" bash /deb_build.sh | tee "$build_log"
 
 artifact_name="$(sed -n 's|^\[deb\] artifact: /out/\(.*\) ([0-9.]* MB)$|\1|p' "$build_log" | tail -1)"
