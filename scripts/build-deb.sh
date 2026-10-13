@@ -76,6 +76,12 @@ started=$(date +%s)
 # hashes a file the packager never wrote".
 build_log="$(mktemp)"
 trap 'rm -f "$build_log"' EXIT
+# ⚠ `SOURCE_DATE_EPOCH` decides the date in the changelog `deb.py` writes, and `deb.py`
+# runs **inside** the container — `docker run` does not pass the host environment, so
+# without an `-e` here the variable never reaches the process that reads it and the
+# changelog stamps the build clock on every run. Default it to the commit's own timestamp
+# so "same tree, same changelog" holds for a plain `make deb`, and stays overridable.
+epoch="${SOURCE_DATE_EPOCH:-$(git -C "$ROOT" log -1 --format=%ct 2>/dev/null || date +%s)}"
 # ⚠ `LITEARM_ACTIVATION_URL` is forwarded with `:-` so "set but empty" travels too: the
 # container cannot see the host's environment otherwise, and `build.py` treats an empty
 # value exactly like an unset one. Without this line a staging build succeeds and ships a
@@ -85,6 +91,7 @@ docker run --rm \
     -v "$ROOT/packaging/deb_build.sh":/deb_build.sh:ro \
     -v "$ROOT/packaging/dist":/out \
     -e "VERSION=$VERSION" \
+    -e "SOURCE_DATE_EPOCH=$epoch" \
     -e "LITEARM_ACTIVATION_URL=${LITEARM_ACTIVATION_URL:-}" \
     "$IMAGE" bash /deb_build.sh | tee "$build_log"
 

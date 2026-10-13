@@ -10,6 +10,9 @@
 #   VERSION             version to stamp into the executable and the package (required)
 #   SOURCE_DIR          checkout to package (default /src)
 #   OUT_DIR             where the .deb lands (default /out)
+#   SOURCE_DATE_EPOCH   date for the changelog `deb.py` writes; the entry point forwards
+#                       it (defaulting to the checkout's commit time), because a container
+#                       cannot see the host environment on its own
 #   (both SDKs come from the tree's `sdk/` submodules — see .gitmodules)
 #
 # This mirrors the `package` job of .github/workflows/release.yml step for step. When that
