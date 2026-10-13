@@ -14,6 +14,11 @@ DfuSe 烧录引擎 —— 用 pyusb 直接实现 STM32 ROM bootloader 的 USB-DF
 而不是按整个镜像范围 —— `skip` 策略下两段之间夹着受保护扇区 6+7，按整段擦会把许可证与
 出厂标定一起毁掉（`_erase_written` 与 `flash()` 里那段注释写了全过程）。
 
+⚠ 2026-10-13 再改一处**逻辑**（issue #211）：`skip` 的分段从切片算术改成**按地址**算
+（`base` 落在受保护区内时，`cut = PROTECTED_START - base` 是负数，`blob[:cut]` 会变成
+"除尾部以外的一切"并**写进受保护扇区**），并在 `erase_sectors_covering()` 这个唯一收口
+处加了 fail-closed 的守卫：没有 `wipe` 授权就不许擦扇区 6/7，无论调用方怎么算错的。
+
 ⚠ 这些改动**上游还没有**。里面每一条注释都是真机烧砖换来的：DfuSe 特殊命令的
 `wBlockNum`、32 B flash word 对齐、擦除忙时长下界、相位切换。要改这里的行为，
 请**回改上游仓**再同步回来 —— 否则两边的时序会漂移，而漂移的代价是砖机。
@@ -583,7 +588,8 @@ class DfuDevice:
             f"    在未擦完的扇区上写会毁掉 ECC(FLASH_SR1.DBECCERR), 让整片变砖\n"
             f"    (2026-09-28 实测过: 扇区 0 的 101/128 个块读失败, 首坏块是向量表首字)。")
 
-    def _erase_written(self, segments, rep, done_base: int = 0) -> None:
+    def _erase_written(self, segments, rep, done_base: int = 0, *,
+                       allow_protected: bool = False) -> None:
         """把**这次写过的每一段**擦回空白 —— 而不是整个镜像范围。
 
         ⚠ 这是三个失败恢复路径共用的落点, 也是 `skip` 策略的成败所在: 两段之间夹着受保护
@@ -593,12 +599,17 @@ class DfuDevice:
 
           恢复擦除要覆盖的是**这次写入可能损坏的东西**, 而那正是 `segments` 已经算好的范围
           (abort/wipe 策略下它就是整个镜像, 与旧行为一致)。
+
+        `allow_protected` 一路透传给 `erase_sectors_covering()` 的守卫 (见那里): 只有
+          `wipe` 那条路才允许擦到扇区 6/7。
         """
         for seg_blob, seg_base, seg_done in segments:
             self.erase_sectors_covering(seg_base, len(seg_blob),
-                                        note=lambda m, d=seg_done: rep(d, "  " + m))
+                                        note=lambda m, d=seg_done: rep(d, "  " + m),
+                                        allow_protected=allow_protected)
 
-    def erase_sectors_covering(self, base: int, total: int, note=None) -> None:
+    def erase_sectors_covering(self, base: int, total: int, note=None, *,
+                               allow_protected: bool = False) -> None:
         """擦掉 [base, base+total) 覆盖到的**所有**扇区。
 
         ⚠ 单一来源: 正常烧录路径与"校验失败后擦回空白"路径**共用这一个实现** ——
@@ -615,12 +626,36 @@ class DfuDevice:
           低于 0.15 s 一律拒绝编程。
           ⚠ 两条判据都**不依赖 DFU_UPLOAD, 也不需要任何外部工具**(纯 pyusb) ——
             Linux 上只要有 libusb + udev 规则即可, 与 Windows 同一套代码。
+
+        ⚠⚠ 2026-10-13 (issue #211): 受保护区在这里**fail-closed** —— 落在
+          [PROTECTED_START, PROTECTED_END) 里的扇区, 没有 `allow_protected=True` 就
+          直接抛 DfuError, 一个字节都不发出去。
+
+          为什么闸放在**这里**: 这是本文件唯一的擦除收口 (正常烧录与三条恢复擦除都走它),
+          所以它同时也是"分段算错"这一整类缺陷的最后一道闸。前车之鉴是 `skip` 里那句
+          `cut = PROTECTED_START - base`: `base` 一旦落在受保护区内 cut 就是负数,
+          `blob[:cut]` 于是变成"除尾部 |cut| 字节以外的一切", 而它仍被写在 `base` 上 ——
+          擦掉的正是许可证(扇区 6)与出厂标定(扇区 7), 两者都**只存在于设备**、不可恢复。
+          逐个修补调用点挡不住下一处算错的地址; 在这里拒一次, 最坏的结果是烧录失败。
+
+        `allow_protected=True` 只由 `flash(param_policy="wipe")` (及其恢复路径) 传入 ——
+          那是操作员**明说**"许可证和标定都不要了"的那条路。
         """
         lo, hi = base, base + total - 1
         s = (lo - FLASH_BASE) // SECTOR_SIZE
         e = (hi - FLASH_BASE) // SECTOR_SIZE
         for k in range(s, e + 1):
             sect = FLASH_BASE + k * SECTOR_SIZE
+            if not allow_protected and PROTECTED_START <= sect < PROTECTED_END:
+                raise DfuError(
+                    f"拒绝擦除扇区 {k} (@0x{sect:08X}): 它落在受保护区内 "
+                    f"(0x{PROTECTED_START:08X}..0x{PROTECTED_END - 1:08X})。\n"
+                    f"    该区含两个**只存在于设备**的记录, 擦掉均不可恢复:\n"
+                    f"      · 扇区 6 @ 0x{LICENSE_SECTOR_START:08X} — 许可证 (magic LTC1)\n"
+                    f"      · 扇区 7 @ 0x{PARAM_SECTOR_START:08X} — 标定参数 (flash_store)\n"
+                    f"    `skip` 策略本该把这一块整个跳过 —— 擦到它说明要烧的范围算错了\n"
+                    f"    (典型: base 落在受保护区内)。\n"
+                    f"    确实要连它一起擦写, 走 flash(param_policy=\"wipe\") 那条路。")
             if note:
                 note(f"擦除扇区 {k} (@0x{sect:08X}) ...")
             self.erase_sector_verified(sect, note=note)
@@ -650,12 +685,13 @@ class DfuDevice:
 
     # ------------------------------------------------------------------
     def _flash_range(self, blob: bytes, base: int, rep, erase: bool,
-                     done_base: int = 0) -> None:
+                     done_base: int = 0, allow_protected: bool = False) -> None:
         """
         烧一段**连续**区域: Set Address -> Erase -> Set Address -> 数据块。
 
         不含参数扇区策略 —— 分段由 flash() 负责。done_base 是这一段在整体
-        进度里的起点(分段烧时用来把两段的进度接成一条)。
+        进度里的起点(分段烧时用来把两段的进度接成一条)。`allow_protected` 透传给
+        `erase_sectors_covering()` 的守卫 (只有 `wipe` 那条路为 True)。
 
         ⚠ 顺序是实测出来的 (2026-09-13):
           Set Address -> Erase -> Set Address -> 数据块
@@ -671,7 +707,8 @@ class DfuDevice:
             # ⚠ 只擦**镜像覆盖到的**扇区。本工程固件 103,712 B 全部落在扇区 0,
             #   所以正常情况下这里只会擦扇区 0 —— 扇区 6(许可证)/7(标定) 不会被碰。
             self.erase_sectors_covering(base, total,
-                                        note=lambda m, d=done_base: rep(d, m))
+                                        note=lambda m, d=done_base: rep(d, m),
+                                        allow_protected=allow_protected)
 
         rep(done_base, "设置地址指针 (写数据前) ...")
         self.set_address(base)
@@ -745,21 +782,32 @@ class DfuDevice:
         # 切成 [base, PROTECTED_START) + [PROTECTED_END, hi] 两段, 中间整块不碰 ——
         # ⚠ 不能只"跳过擦除": 镜像里落在受保护区内的字节若照常按连续块发出,
         #   会被写到**错误的地址**上。必须连写入也分段。
-        # ⚠ 保护区跨越 2 个扇区 (256KB), 而 cut 与 PROTECTED_SIZE 都是 0x20000 的
-        #   整数倍 ⇒ 分段边界天然落在扇区边界上, _flash_range 的按扇区擦除不会
+        # ⚠ 保护区跨越 2 个扇区 (256KB), 而两段的边界都落在扇区边界上 (保护区两端与
+        #   base/total 都是 0x20000/32B 对齐的跨度) ⇒ _flash_range 的按扇区擦除不会
         #   误伤保护区 (它在两段各自的范围之外)。
+        #
+        # ⚠⚠ 段边界按**地址**算, 不能再用 `cut = PROTECTED_START - base` 那种切片算术
+        #   (issue #211): `base` 落到受保护区**之内**时 cut 是负数, `blob[:cut]` 于是
+        #   变成"除尾部 |cut| 字节以外的全部", 而它仍被写在 `base` 上 —— 也就是说
+        #   **写进受保护扇区并顺手擦掉它们**; 顺带把下面那条"整体落在保护区内 ⇒ 拒绝"
+        #   也绕过去了 (段非空)。地址算法对任何 base 只有两种结果: 落在保护区之前的
+        #   部分照写, 保护区之后的部分挪到 PROTECTED_END 照写, 中间整块不碰 ——
+        #   没有第三种可能, 也就没有"落在保护区里"的段。
+        #   (写入落在保护区里同样是破坏: flash 只能把 1 写成 0, DNLOAD 进去的字节会
+        #    静默改掉许可证与标定, 而它们**只存在于设备**。)
         segments: list[tuple[bytes, int, int]] = []
         if covers_param and param_policy == PARAM_POLICY_SKIP:
-            cut = PROTECTED_START - base                 # 第一段长度 (32B 对齐)
-            seg1 = blob[:cut]
-            seg2 = blob[cut + PROTECTED_SIZE:]           # 扇区 6+7 整块跳过
-            skipped = total - len(seg1) - len(seg2)
+            head = max(0, min(base + total, PROTECTED_START) - base)   # 保护区之前的部分
+            tail = max(0, base + total - max(base, PROTECTED_END))     # 保护区之后的部分
+            seg1 = blob[:head]
+            seg2 = blob[total - tail:] if tail else b""
+            skipped = total - head - tail
             rep(0, f"⚠ skip 策略: 跳过受保护扇区 6+7 共 {skipped} B "
                    f"(@0x{PROTECTED_START:08X}), 许可证与参数原样保留")
             if seg1:
                 segments.append((seg1, base, 0))
             if seg2:
-                segments.append((seg2, PROTECTED_END, len(seg1)))
+                segments.append((seg2, PROTECTED_END, head))
             if not segments:
                 # 整个镜像都落在受保护区里 —— skip 模式下没有任何可烧的内容。
                 # 静默不烧是危险的(调用方以为烧成功了), 必须明确告知。
@@ -771,16 +819,21 @@ class DfuDevice:
         else:
             segments.append((blob, base, 0))
 
+        # `wipe` 是唯一"我确实要连受保护区一起擦写"的显式授权; 其余策略下
+        # `erase_sectors_covering()` 的守卫会拒绝任何落在扇区 6/7 上的擦除 (issue #211)。
+        allow_protected = param_policy == PARAM_POLICY_WIPE
+
         try:
             for seg_blob, seg_base, done_base in segments:
-                self._flash_range(seg_blob, seg_base, rep, erase, done_base)
+                self._flash_range(seg_blob, seg_base, rep, erase, done_base,
+                                  allow_protected=allow_protected)
         except Exception as e:                                     # noqa: BLE001
             # [2026-09-28] 写中途失败(**不是**校验失败那条)也要擦回空白:
             # 半写状态同样可能含 ECC 坏字; 擦干净后板子仍可被 USB DFU 重烧。
             rep(0, f"⚠ 烧录中断 ({type(e).__name__}: {e}) —— 尝试擦回空白以保住 USB 可重烧性 ...")
             try:
                 if erase:
-                    self._erase_written(segments, rep)
+                    self._erase_written(segments, rep, allow_protected=allow_protected)
                     rep(0, "已擦回空白 ⇒ 板子未砖, 可直接重烧")
             except Exception as e2:                                # noqa: BLE001
                 rep(0, f"⚠ 擦回空白也失败 ({type(e2).__name__}: {e2}) ⇒ 可能需要 SWD 救砖")
@@ -814,7 +867,8 @@ class DfuDevice:
                 if upload_was_ok:
                     erased = False
                     try:
-                        self._erase_written(segments, rep, total)
+                        self._erase_written(segments, rep, total,
+                                            allow_protected=allow_protected)
                         erased = True
                     except Exception as e2:                        # noqa: BLE001
                         rep(total, f"⚠ 擦回空白失败 ({type(e2).__name__}: {e2})")
@@ -847,7 +901,8 @@ class DfuDevice:
                     # ⚠ 所以下面的报错必须同时说清"板子现在是空的, 需要重烧"。
                     erased = False
                     try:
-                        self._erase_written(segments, rep, total)
+                        self._erase_written(segments, rep, total,
+                                            allow_protected=allow_protected)
                         erased = True
                         rep(total, "已把受损扇区擦回空白 —— 板子未砖, 可直接用 DFU 重烧")
                     except Exception as e2:                        # noqa: BLE001

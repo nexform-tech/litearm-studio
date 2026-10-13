@@ -231,6 +231,85 @@ def test_abort_refuses_a_covering_image_before_touching_the_device() -> None:
     assert flash.writes == 0 and flash.erased == []
 
 
+# ------------------------------------------- `base` 落在受保护区内 (issue #211)
+
+
+def test_skip_from_inside_the_protected_area_writes_nothing_there() -> None:
+    """`base` 落在受保护区内、镜像也没伸出保护区: 拒绝, 且一个字节都不碰设备。
+
+    旧分段用 `cut = PROTECTED_START - base` 切片: base 一旦**在保护区内**, cut 就是
+    负数, `blob[:cut]` 变成"除尾部 |cut| 字节以外的全部", 而它仍被写在 `base` 上 ——
+    写进扇区 6/7 并顺手把它们擦掉, 而两者只存在于设备。地址算法下这里没有可烧的内容。
+    """
+    device, flash = open_device()
+    write_licence(flash)
+
+    with pytest.raises(engine.DfuError, match="没有可烧的内容"):
+        device.flash(b"\xff" * 1024, engine.PROTECTED_START + 0x20,
+                     param_policy=engine.PARAM_POLICY_SKIP)
+
+    assert flash.writes == 0 and flash.erased == []
+    assert flash.at(LICENCE)[:4] == b"LTC1"
+    assert flash.at(CALIB)[:2] == b"\xa5\xa5"
+
+
+def test_skip_from_inside_the_protected_area_writes_only_the_tail_after_it() -> None:
+    """`base` 在保护区内、镜像又伸出保护区之外: 只写保护区**之后**那一段。
+
+    写出去的字节必须落在它**自己的地址**上: 伸出保护区的那部分挪到 `PROTECTED_END`,
+    而不是接着 `base` 顺序发下去 (那样写的是受保护扇区)。
+    """
+    device, flash = open_device()
+    write_licence(flash)
+    base = engine.PROTECTED_START + 0x20                  # 32B 对齐, 落在保护区内
+    tail_bytes = 0x800
+    blob = bytes((i * 5 + 1) & 0xFF for i in range(engine.PROTECTED_END - base + tail_bytes))
+
+    device.flash(blob, base, param_policy=engine.PARAM_POLICY_SKIP)
+
+    assert flash.writes > 0
+    # 保护区之后的第一个字节 = 镜像里地址为 PROTECTED_END 的那个字节。
+    assert flash.at(engine.PROTECTED_END)[:8] == blob[len(blob) - tail_bytes:
+                                                      len(blob) - tail_bytes + 8]
+    assert flash.at(LICENCE)[:4] == b"LTC1"
+    assert flash.at(CALIB)[:2] == b"\xa5\xa5"
+    assert LICENCE not in flash.erased and CALIB not in flash.erased
+
+
+def test_erasing_a_protected_sector_needs_an_explicit_opt_in() -> None:
+    """擦除的唯一收口处 fail-closed: 没有 `wipe` 授权就拒绝碰扇区 6/7。
+
+    分段算错这一类缺陷挡不完 (这一次是 `cut` 为负, 下一次可能是别的算法), 所以闸放在
+    唯一收口处: 最坏的结果是烧录失败, 而不是许可证与标定被安静地擦掉。
+    """
+    device, flash = open_device()
+    write_licence(flash)
+
+    with pytest.raises(engine.DfuError, match="受保护区内"):
+        device.erase_sectors_covering(engine.PROTECTED_START, 0x20)
+
+    assert flash.erased == []
+    # 显式授权 (`wipe` 走的就是这条) 才允许 —— 否则这条路本身也没法用了。
+    device.erase_sectors_covering(engine.PROTECTED_START, 0x20, allow_protected=True)
+    assert LICENCE in flash.erased
+
+
+def test_wipe_still_erases_the_protected_sectors_it_was_asked_to() -> None:
+    """`wipe` 的许诺没被守卫一起拦掉: 说好了连扇区 6+7 一起擦, 那就得擦得掉。
+
+    守卫加在唯一收口处, 最容易失手的方式是"把 wipe 也拦了" —— 于是许可证与标定成了
+    谁也写不了的孤岛, 而这条路存在的意义正是"我确认两者都不要了"。
+    """
+    device, flash = open_device()
+    write_licence(flash)
+
+    device.flash(IMAGE, FLASH_BASE, param_policy=engine.PARAM_POLICY_WIPE)
+
+    assert LICENCE in flash.erased and CALIB in flash.erased
+    assert flash.at(FLASH_BASE)[:8] == IMAGE[:8]
+    assert flash.at(engine.PROTECTED_END)[:8] == IMAGE[2 * SECTOR:2 * SECTOR + 8]
+
+
 # --------------------------------------------------------- 三条"擦回空白"恢复路径
 
 
