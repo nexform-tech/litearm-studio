@@ -194,7 +194,8 @@ export function useTelemetryState() {
       for (;;) {
         const page = await telemetryDb.getSamplesAsc(id, { limit: EXPORT_PAGE_SIZE, after: cursor })
         if (page.length === 0) break
-        if (exported === 0) parts.push(`${telemetryCsvHeader().join(',')}\n`)
+        // 表头跟着**第一条样本**的列数走 —— 与下面那些行用的是同一份判据。
+        if (exported === 0) parts.push(`${telemetryCsvHeader(page[0]).join(',')}\n`)
         const last = page[page.length - 1]
         cursor = { ts: last.ts, id: last.id as number }
         exported += page.length
