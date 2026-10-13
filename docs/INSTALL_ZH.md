@@ -125,7 +125,7 @@ chmod +x litearm-studio-0.12.0-linux-amd64
 | 要求 | 说明 |
 | :--- | :--- |
 | glibc 2.35 及以上 | 即 Ubuntu 22.04+、Debian 12+。在 Ubuntu 20.04 上程序无法启动，终端提示缺少 `GLIBC_2.35` |
-| GTK 3 与 WebKitGTK 4.1 | 窗口由系统自带的 WebKitGTK 绘制，可执行文件里不带它。Ubuntu / Debian 上执行 `sudo apt install gir1.2-webkit2-4.1` 即可。缺了它会打印"没有可用的 webview 后端"并退出，而不是打开窗口 |
+| GTK 3 与 WebKitGTK 4.1 | 窗口由系统自带的 WebKitGTK 绘制，可执行文件里不带它。Ubuntu / Debian 上执行 `sudo apt install gir1.2-webkit2-4.1` 即可。缺了它会打印 `无法打开应用窗口: 没有可用的 webview 后端` 与三条出路，并以状态码 3 退出，而不是打开窗口 |
 | `$TMPDIR` 可执行 | 每次启动都会把整包（这一版约 40 MB）解压到 `$TMPDIR`（默认 `/tmp`）并从中运行。`/tmp` 以 `noexec` 挂载时无法启动，请把 `TMPDIR` 指向普通目录 |
 | 浏览器（可选） | 仅当你想用浏览器代替内置窗口时：用 `litearm-studio --no-open` 启动，再打开它打印出的地址 |
 | 串口访问权限 | 仅连接真实机械臂时需要，见 § 5 |
@@ -228,6 +228,6 @@ rm -rf ~/.config/litearm-studio
 | 程序启动后立即退出，提示解压失败 | `$TMPDIR`（通常是 `/tmp`）以 `noexec` 挂载。先创建 `~/tmp`，再执行 `TMPDIR=~/tmp litearm-studio` |
 | 界面能打开，但顶栏一直显示「连接失败」 | 串口设备不存在或没有读取权限。检查 § 5，并用 `--port` 显式指定设备 |
 | 界面能打开，但一直没有状态 | WebSocket 被拦截。握手要求同源，改写来源的代理或浏览器扩展会导致失败 |
-| 终端只提示「无法自动打开浏览器」，没有窗口 | 没有找到浏览器，请手动打开终端打印出的地址 |
+| 没有窗口，终端只提示 `无法打开应用窗口: 没有可用的 webview 后端` | 没有可用的 webview 后端，窗口建不出来。提示里给了三条出路：装系统的 WebKitGTK（`sudo apt install python3-gi gir1.2-webkit2-4.1`）、装自带内核的 Qt（`pip install "litearm-studio-daemon[ui-qt]"`），或者不要窗口地运行（`litearm-studio --no-open`）再打开它打印的地址。程序以状态码 3 退出 —— 它**刻意不静默退回无界面** |
 | 点「使能」没有反应 | 机械臂尚未激活，见 § 7 |
 | 激活页面提示「固件不支持」 | 固件版本低于 1.8.0，需要先升级固件，见 [用户手册](USER_MANUAL_ZH.md) §5.7 |

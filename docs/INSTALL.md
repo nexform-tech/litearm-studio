@@ -155,7 +155,7 @@ opens a window. Use the printed address if that port was taken.
 | Requirement | Why it matters |
 | :--- | :--- |
 | glibc 2.35 or newer | Ubuntu 22.04+, Debian 12+. On Ubuntu 20.04 the program fails to start and the shell reports a missing `GLIBC_2.35` |
-| GTK 3 and WebKitGTK 4.1 | The window is drawn by the system's WebKitGTK, so the executable does not carry one. On Ubuntu or Debian: `sudo apt install gir1.2-webkit2-4.1`. Without it the program prints `没有可用的 webview 后端` / `no usable webview backend` and exits instead of opening a window |
+| GTK 3 and WebKitGTK 4.1 | The window is drawn by the system's WebKitGTK, so the executable does not carry one. On Ubuntu or Debian: `sudo apt install gir1.2-webkit2-4.1`. Without a usable backend the program prints `无法打开应用窗口: 没有可用的 webview 后端` plus three ways to supply one, and exits with status 3 instead of opening a window |
 | An executable `$TMPDIR` | Every start unpacks the whole bundle — around 40 MB for this build — into `$TMPDIR` (default `/tmp`) and runs from there. A `/tmp` mounted `noexec` breaks the start; point `TMPDIR` at a normal directory instead |
 | A browser (optional) | Only if you prefer one over the built-in window: run `litearm-studio --no-open` and open the address it prints |
 | Access to the serial port | Real arm only. See § 5 |
@@ -277,6 +277,6 @@ rm -rf ~/.config/litearm-studio
 | The program exits immediately, mentioning extraction | `$TMPDIR` (usually `/tmp`) is mounted `noexec`. Run it with `TMPDIR=~/tmp litearm-studio` after creating that directory |
 | The UI loads but the badge stays "Connect failed" | The serial device is missing or not readable. Check § 5, then pass `--port` explicitly |
 | The UI loads but never shows state | The WebSocket is blocked. Same-origin handshakes are required; a proxy or a browser extension that rewrites origins breaks it |
-| Nothing opens, only "无法自动打开浏览器" in the terminal | No browser was found. Open the printed address by hand |
+| Nothing opens; the terminal prints `无法打开应用窗口: 没有可用的 webview 后端` | No usable webview backend, so the window cannot be created. The message names three remedies: install the system WebKitGTK (`sudo apt install python3-gi gir1.2-webkit2-4.1`), install the self-contained Qt backend (`pip install "litearm-studio-daemon[ui-qt]"`), or run without a window (`litearm-studio --no-open`) and open the printed address. The program exits with status 3 — there is no silent headless fallback, by design |
 | **Enable** does nothing | The arm is not activated. See § 7 |
 | The activation panel reads **Not supported** | The firmware predates 1.8.0. Update the firmware first (see [user manual](USER_MANUAL.md) §5.7) |
