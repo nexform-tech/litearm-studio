@@ -64,6 +64,7 @@
     "toolFrame": "Tool Frame",
     "simHint": "Sim mode only supports joint space operations",
     "unsupportedHint": "This firmware was built without cartesian planning (linear motion unavailable)",
+    "probeSilentHint": "The controller did not answer the cartesian-planning probe (the reply frames were lost on the USB link). Linear motion is unavailable until a reconnect answers it — check the cable and the USB link first, and re-connect",
     "poseUnavailable": "No cartesian pose: this firmware has no cartesian planning",
     "targetSubMode": "Linear Motion",
     "transStep": "Trans Step",

@@ -671,6 +671,39 @@ def test_ws_connect_on_a_different_port_answers_ok_false() -> None:
         session.close()
 
 
+def test_ws_conn_frame_carries_both_cartesian_causes() -> None:
+    """`conn` 帧必须同时带 `cart` 与 `cartProbeSilent` —— 前端只认这一帧。
+
+    ⚠ `cart` 为假有两种成因 (固件确报不支持 / 探测那几帧丢了), 而**操作员的下一步不同**:
+    一个刷固件, 一个查链路。少发一个字段, 界面上就只能挑一种说法 —— 而那一种恰好是错的
+    那一半时间。
+    """
+    from litearm_studio_daemon.session import Session as _Session
+
+    session = _Session(fake=True)
+    app = create_app(session, version=VERSION, repo_dist=Path("/nonexistent-ui"))
+    try:
+        assert session.connect() is True
+        deadline = time.monotonic() + 5.0
+        while not session.connected and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert session.connected, f"假会话没连上: {session.arm_info()}"
+
+        arm = session._arm
+        arm._cart_supported = False
+        arm._cart_probe_silent = True
+
+        with TestClient(app) as client:
+            with client.websocket_connect("/ws") as ws:
+                assert ws.receive_json()["t"] == "hello"
+                conn = ws.receive_json()
+                assert conn["t"] == "conn", conn
+                assert conn["cart"] is False, conn
+                assert conn["cartProbeSilent"] is True, conn
+    finally:
+        session.close()
+
+
 def test_ws_command_without_a_session_returns_a_structured_error() -> None:
     session, app = _client()
     try:

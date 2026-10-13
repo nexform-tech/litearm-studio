@@ -438,6 +438,12 @@ class Session:
                 "firmware": getattr(arm, "firmware", "") or "",
                 "n": int(getattr(arm, "n", 0) or 0),
                 "cart": bool(getattr(arm, "_cart_supported", False)),
+                # ⚠ 与 `cart` **配对**使用，缺了它前端只能猜。`cart` 为假有两种成因，
+                # SDK 特意把它们分开记 (`cart.py:881` —— 探测那三帧全无应答时置
+                # `_cart_probe_silent`)，并在 `_require_cart_support` 的报错里分两支
+                # 措辞，因为**下一步动作不同**：一个是查链路，一个是刷固件。
+                # 只传 `cart` 就把"没问出来"说成了"固件没编"。
+                "cartProbeSilent": bool(getattr(arm, "_cart_probe_silent", False)),
                 "error": self._last_error,
             }
 
@@ -629,6 +635,10 @@ class Session:
                      fields={"port": target, "firmware": arm.firmware or "",
                              "n": int(getattr(arm, "n", 0) or 0),
                              "cart": bool(getattr(arm, "_cart_supported", False)),
+                             # 现场归因就靠这一条: "笛卡尔不可用"是探测没答还是固件确报,
+                             # 决定下一步查链路还是刷固件 (见 `arm_info`)。
+                             "cart_probe_silent": bool(
+                                 getattr(arm, "_cart_probe_silent", False)),
                              "fake": self._fake},
                      trace_id=trace)
             self._broadcast({"t": "conn", **self.arm_info()})

@@ -18,6 +18,7 @@ import {
   SOLO_SPEED_STORAGE_KEY,
   TRANS_STEPS,
   ZERO_JOINTS,
+  cartUnsupportedHintKey,
   describeArmFault,
   fitJointPct,
   fitJoints,
@@ -116,6 +117,14 @@ export function useSoloState() {
   // **已连接且固件明确报告 cart=false** 时判定为不支持：仿真模式不下发指令，
   // 未连接时也发不出指令，这两种情况都不该冒出"固件没有笛卡尔规划"的说法。
   const cartUnsupported = s.real && connected && conn?.cart === false
+
+  // 不可用的**成因**：是固件确报不支持，还是探测那三帧没答上来（`arm_info` 把 SDK 的
+  // `_cart_probe_silent` 一起发过来了）。两者都要关掉笛卡尔（SDK 同样 fail-closed），
+  // 但说法不同 —— 见 `cartUnsupportedHintKey`。
+  const cartProbeSilent = cartUnsupported && conn?.cartProbeSilent === true
+  const cartHintKey = cartUnsupported
+    ? cartUnsupportedHintKey(cartProbeSilent)
+    : null
 
   // 滑条 0–100 的弧度映射：优先用 daemon get_joint_params 的实际软限位，
   // 未连接/拿不到时回退到固件出厂默认那张表（见 `soloUtils.JOINT_LIMITS`）。
@@ -475,8 +484,12 @@ export function useSoloState() {
 
     poseJoint,
     poseCart,
-    /** 固件未编译笛卡尔规划：笛卡尔面板与笛卡尔读数据此收手。 */
+    /** 笛卡尔不可用（固件确报不支持，或探测没问出来）：面板与笛卡尔读数据此收手。 */
     cartUnsupported,
+    /** 探测没问出来（`conn.cartProbeSilent`）—— 与上一条配对，决定说哪一句话。 */
+    cartProbeSilent,
+    /** 笛卡尔不可用时该显示的文案键；可用时为 `null`。 */
+    cartHintKey,
 
     ...metricsState,
 
@@ -609,10 +622,10 @@ export function useSoloState() {
 
     movelTarget: async (targetPos: [number, number, number], targetRpy: [number, number, number]) => {
       if (!connected || !s.real) return
-      if (cartUnsupported) {
-        // 固件没有笛卡尔规划：movel 一定被拒。与其让操作员看到一句固件内部的报错，
-        // 不如直说是这台控制器不具备该能力。
-        toast.warning(t('common:errors.cartUnsupported'), { id: 'solo-cart-unsupported' })
+      if (cartHintKey) {
+        // 笛卡尔不可用：movel 一定被拒。与其让操作员看到一句固件内部的报错，不如直说。
+        // ⚠ 说哪一句由成因决定 —— "固件没编"与"没探测出来"是两件不同的事。
+        toast.warning(t(cartHintKey), { id: 'solo-cart-unsupported' })
         return
       }
       if (!enableOn) {
@@ -655,8 +668,8 @@ export function useSoloState() {
       if (!s.real || !connected) return
       // 固件没有笛卡尔规划：点动的每一段都会以 movel 下发并被拒。面板已置灰，这里
       // 兜住任何其它调用方，免得变成一串重复的固件报错。
-      if (cartUnsupported) {
-        toast.warning(t('common:errors.cartUnsupported'), { id: 'solo-cart-unsupported' })
+      if (cartHintKey) {
+        toast.warning(t(cartHintKey), { id: 'solo-cart-unsupported' })
         return
       }
       const jog = parseJog(label)

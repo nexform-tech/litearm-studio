@@ -64,6 +64,7 @@
     "toolFrame": "工具坐标系",
     "simHint": "仿真模式仅支持关节空间操作",
     "unsupportedHint": "当前固件未编译笛卡尔规划（直线运动不可用）",
+    "probeSilentHint": "控制器没有应答笛卡尔规划探测（那几帧在 USB 链路上丢了）。重连后才可能问出来 —— 请先检查线缆与 USB 链路，再重新连接",
     "poseUnavailable": "无笛卡尔位姿：当前固件未编译笛卡尔规划",
     "targetSubMode": "直线运动",
     "transStep": "平移步长",

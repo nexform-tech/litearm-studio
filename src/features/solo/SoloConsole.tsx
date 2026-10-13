@@ -67,6 +67,7 @@ export function SoloConsole() {
           <CartesianPanel
             simMode={simMode}
             cartUnsupported={vm.cartUnsupported}
+            cartProbeSilent={vm.cartProbeSilent}
             frames={vm.frames}
             transCells={vm.transCells}
             rotCells={vm.rotCells}

@@ -73,6 +73,18 @@ describe('CartesianPanel capability notice', () => {
     expect(sync.disabled).toBe(true)
   })
 
+  it('blames the link, not the firmware, when the probe went unanswered', () => {
+    // 同样是"笛卡尔不可用"，但成因是探测那几帧丢了 —— 操作员该去看线缆，而不是刷固件。
+    renderPanel({ cartUnsupported: true, cartProbeSilent: true })
+
+    expect(screen.getByText(/没有应答笛卡尔规划探测/)).toBeTruthy()
+    expect(screen.queryByText(/未编译笛卡尔规划/)).toBeNull()
+
+    // 处理不变：不可用就是不可用，两个入口一样关掉。
+    const movel = screen.getByRole('button', { name: /运动到目标位姿/ }) as HTMLButtonElement
+    expect(movel.disabled).toBe(true)
+  })
+
   it('leaves the panel fully usable when the firmware supports cartesian planning', () => {
     renderPanel()
 

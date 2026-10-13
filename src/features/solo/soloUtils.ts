@@ -97,6 +97,22 @@ const MOTOR_ERR_KEY: Record<number, string> = {
 
 /** 把广播里的故障线索翻成人话——故障灯只给一个布尔值时，现场只能去翻日志。
  *  daemon 保证字段齐全，但缺失时一律按空处理。 */
+/**
+ * 笛卡尔不可用时该说的那句话 —— **成因不同，说的话不同**。
+ *
+ * `conn.cart === false` 有两种来路（守护进程的 `arm_info` 把两者都发过来）：
+ *
+ * - 固件**确报**不支持 → 只能改用关节空间，或者刷一份带笛卡尔规划的固件；
+ * - 探测**没问出来**（那三帧在 USB 上丢了，SDK 为此专门记了 `_cart_probe_silent`）
+ *   → 该看的是链路，不是固件。
+ *
+ * 两者的处理一样（笛卡尔都要关掉 —— SDK 那边同样 fail-closed 地拒），所以这里只决定
+ * 文案。以前只有一个 `cart`，第二种被说成了第一种：操作员被推去刷固件，而线缆才是问题。
+ */
+export function cartUnsupportedHintKey(probeSilent: boolean): string {
+  return probeSilent ? 'solo:cartesian.probeSilentHint' : 'solo:cartesian.unsupportedHint'
+}
+
 export function describeArmFault(st: RobotState | null, t: Translate): string | null {
   if (!st) return null
   const reasons: string[] = []
