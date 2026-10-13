@@ -149,8 +149,16 @@ def run_upgrade(*, blob: bytes, base: int, summary, hooks: UpgradeHooks,
             hooks.disarm()
 
             note(PHASE_ENTER_DFU, "发送 CMD_ENTER_DFU (0x15)")
-            hooks.enter_dfu()
+            # ⚠ **先置位再发**。SDK 记着一条已知边界 (`Arm.enter_dfu` 的文档): 固件的
+            #   `ACK{0x15}` 在应答 FIFO 满时会被丢掉 (`usb_cmd.c` 的"满: 丢最新"), 而设备
+            #   **照样跳进 bootloader** —— 这时 `enter_dfu()` 从等 ACK 里抛 `TransportError`,
+            #   标志却永远置不上, `_fail` 于是不去 detach, 板子就留在 bootloader 里"像坏了",
+            #   正是本模块开篇禁止的那个结局。
+            #   代价: 板子其实没跳时也会试一次 detach —— 那只是对应用态的一次多余请求,
+            #   `DfuDevice.detach` 把 `USBError` 吞掉 (见那里); 与"留在 bootloader 里"相比,
+            #   这个代价小到不必权衡。
             in_dfu = True
+            hooks.enter_dfu()
 
         note(PHASE_WAIT_DFU, "打开 DFU 设备 (0483:DF11)" if from_dfu
              else "等待 DFU 设备 (0483:DF11) 枚举")

@@ -1882,6 +1882,24 @@ class Session:
             session, self._dfu_session = self._dfu_session, None
         if session is not None:
             session.leave(reset=True)
+            return
+        # ⚠ 没有会话时**也要试一次**。失败可能落在 `enter_dfu` 与 `wait_for_dfu` 之间:
+        #   板子已经跳进 bootloader 了, 而我们还没把它打开 (`_dfu_wait` 才开) —— 那正是
+        #   "板子留在 bootloader 里像坏了"的那个窗口 (SDK 文档记着它: ACK{0x15} 被丢而设备
+        #   照样跳)。此时唯一能救它的就是在设备上发一条 DFU_DETACH, 所以这里现找一个。
+        try:
+            dev = self._dfu_engine.find_device()
+            if dev is None:
+                return
+            probe = self._dfu_engine.DfuDevice(dev)
+            probe.open()
+        except Exception:                                          # noqa: BLE001
+            # 打不开/找不到都不改变结论: 没有会话可离开, 收尾本来也只是尽力而为。
+            return
+        try:
+            probe.leave(reset=True)
+        except Exception:                                          # noqa: BLE001
+            pass
 
     def _dfu_reconnect(self, is_cancelled: Callable[[], bool]) -> Tuple[str, str]:
         """等 CDC 回来并以**新 `Arm`** 重建会话 —— 旧的那个已进终态, 不可复用。"""
