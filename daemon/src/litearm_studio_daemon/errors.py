@@ -156,13 +156,32 @@ class GripperBusyError(DaemonError):
     """A second long operation (a probe) was requested while one was running."""
 
 
+#: `NotConnectedCommandError.reason` 的两个取值 —— 界面文案只能按短码选 (与激活、
+#: 固件升级同一条纪律)。为什么不合成一句: 这两种"没有会话"的**下一步动作是相反的**
+#: —— 一种要人去查线/点「连接」, 另一种叫人别去点「连接」(板子根本没有应用态可连)。
+NOT_CONNECTED_NO_SESSION = "no_session"
+NOT_CONNECTED_DFU_PRESENT = "dfu_present"
+
+
 class NotConnectedCommandError(DaemonError):
     """会话未连接时就发命令。
 
     ⚠ 与 SDK 的 `NotConnectedError` **不同名不同类**: 后者表达"链路/会话没建起来",
     本类表达"守护进程这一侧没有可用的会话对象"。前端只看 `kind`, 两者都是
     `NotConnectedError` / `NotConnectedCommandError`, 可分辨。
+
+    `reason` 说清是**哪一种**"没有会话"（`error_to_dict` 会把它带出去）:
+
+    * `no_session` —— 就是没连上: 下一步是查线、点「连接」;
+    * `dfu_present` —— **板子停在 ROM bootloader (DFU) 里**: 它没有应用态可连,
+      而把这句话说成"请先连接设备"会把操作员推进一个必然失败的动作里 ——
+      他该做的是烧录固件或断电重上电。
     """
+
+    def __init__(self, detail: str = "会话未连接 —— 请先连接设备", *,
+                 reason: str = NOT_CONNECTED_NO_SESSION):
+        super().__init__(detail)
+        self.reason = reason
 
 
 class PortChangeWhileConnectedError(DaemonError):

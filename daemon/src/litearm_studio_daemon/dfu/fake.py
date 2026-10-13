@@ -29,6 +29,18 @@ class FakePermissionError(Exception):
         self.errno = 13
 
 
+class FakeHandle:
+    """`find_device()` 的返回物 —— 真件是 pyusb 的 `Device`。
+
+    ⚠ 它只带**位置**要用的两个属性 (`bus` / `port_numbers`), 因为 `device_location()`
+      只读这两样, 而"读到位置"是操作员核对板子时唯一要看的东西（见 `dfu.device_location`）。
+      `DfuDevice` 忽略这个对象, 所以它可以是任何形状。
+    """
+
+    bus = 1
+    port_numbers = (3,)
+
+
 class FakeDfuDevice:
     """一个假 DFU 设备：按 `steps` 推进度，可选在某一步失败。"""
 
@@ -86,7 +98,15 @@ class FakeDfuDevice:
 
 
 class FakeEngine:
-    """`dfu.engine` 的同形替身。默认**总能烧成功**。"""
+    """`dfu.engine` 的同形替身。默认**总能烧成功**。
+
+    ⚠ `present` 是"这块假板子在不在 DFU 里"的开关，默认 `True` —— 正是它让 `--fake`
+      在没有硬件时也能把整条升级流程走完（`_dfu_wait` 必须先 `find_device()` 到一个设备，
+      否则会在那里等到超时）。所以 `--fake` 的 `/api/health` 会一直报
+      `dfu.present = true`：模拟器里那块假设备确实一直在。界面只在**没有会话**时才用它
+      （见 `FirmwareSection` 的 `fromDfu`），所以真机上不会出现"连着应用又同时说板子在
+      bootloader 里"。
+    """
 
     DfuError = FakeDfuError
 
@@ -112,7 +132,7 @@ class FakeEngine:
         return "假件 (--fake / 测试)"
 
     def find_device(self):
-        return object() if self.present else None
+        return FakeHandle() if self.present else None
 
     def DfuDevice(self, dev=None, transfer_size=None) -> FakeDfuDevice:  # noqa: N802
         deny = self._denied < self.deny_open_times

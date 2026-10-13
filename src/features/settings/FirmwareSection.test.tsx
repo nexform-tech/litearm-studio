@@ -196,4 +196,62 @@ describe('FirmwareSection', () => {
     expect(screen.getByTestId('firmware-offline')).toBeTruthy()
     expect(screen.queryByTestId('firmware-upgrading')).toBeNull()
   })
+
+  it('calls out a board sitting in the bootloader instead of "not connected"', () => {
+    // ⚠ issue #152：板子停在 ROM bootloader 里时没有串口，以前这里与"没插线"长得
+    //   一模一样 —— 而两者该做的事相反。它要能被认出来，并且**要有入口救它**。
+    mocks.vm = baseVm({ connected: false, dfuPresent: true, summary: SUMMARY })
+    render(<FirmwareSection />)
+
+    expect(screen.queryByTestId('firmware-offline')).toBeNull()
+    const notice = screen.getByTestId('firmware-dfu')
+    expect(notice.textContent).toMatch(/bootloader/i)
+    // 这里说的必须是"它不是没插线"，而不是"去连上再说"。
+    expect(notice.textContent).not.toMatch(/连上之后才能升级|connect before updating/i)
+  })
+
+  it('says where the board it found is plugged in, so the operator can check it', () => {
+    // ⚠ `0483:DF11` 是整个 STM32 系列共用的编号: 这台机器上若有第二块 STM32 也在 DFU 里,
+    //   我们可能找到的是它。位置是唯一能让操作员核对"是不是我插的那块"的东西。
+    mocks.vm = baseVm({ connected: false, dfuPresent: true, dfuLocation: '1-3.2',
+                        summary: SUMMARY })
+    render(<FirmwareSection />)
+    const line = screen.getByTestId('firmware-dfu-location')
+    expect(line.textContent).toContain('1-3.2')
+  })
+
+  it('says nothing about a location the daemon could not determine', () => {
+    // 编一个位置比不说更糟：操作员会拿着一个假的插口名去核对，然后以为对上了。
+    mocks.vm = baseVm({ connected: false, dfuPresent: true, dfuLocation: '',
+                        summary: SUMMARY })
+    render(<FirmwareSection />)
+    expect(screen.getByTestId('firmware-dfu')).toBeTruthy()
+    expect(screen.queryByTestId('firmware-dfu-location')).toBeNull()
+  })
+
+  it('lets the update start with no session when the board is in the bootloader', () => {
+    // ⚠ 这一条就是"死循环"的破法：没有会话（板子没有应用态可连），但烧录仍然可开 ——
+    //   因为从 DFU 起跑正是唯一能把板子弄回应用态的事。
+    mocks.vm = baseVm({ connected: false, dfuPresent: true, summary: SUMMARY })
+    render(<FirmwareSection />)
+
+    const start = screen.getByTestId('firmware-start') as HTMLButtonElement
+    expect(start.disabled).toBe(true)          // 安全确认还没勾
+    fireEvent.click(screen.getByTestId('firmware-safety-arm'))
+    expect(start.disabled).toBe(false)
+
+    // 安全条款也要跟着路径变：这条路不会再去失能一次（应用早就停了）。
+    expect(screen.getByTestId('firmware-safety').textContent)
+      .toMatch(/早已停下|already stopped/)
+
+    fireEvent.click(start)
+    expect(mocks.start).toHaveBeenCalledTimes(1)
+  })
+
+  it('still refuses to start when nothing is connected and no board is in DFU', () => {
+    mocks.vm = baseVm({ connected: false, dfuPresent: false, summary: SUMMARY })
+    render(<FirmwareSection />)
+    fireEvent.click(screen.getByTestId('firmware-safety-arm'))
+    expect((screen.getByTestId('firmware-start') as HTMLButtonElement).disabled).toBe(true)
+  })
 })

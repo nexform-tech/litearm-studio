@@ -12,6 +12,8 @@
 """
 from __future__ import annotations
 
+from typing import Any, List, Optional
+
 from . import engine, fake
 from .image import (APP_BASE, FLASH_END, ImageError, ImageSummary, inspect,
                     extract_fw_version)
@@ -25,7 +27,8 @@ __all__ = [
     "inspect", "extract_fw_version", "PHASES", "PHASE_VALIDATE", "PHASE_DISARM",
     "PHASE_ENTER_DFU", "PHASE_WAIT_DFU", "PHASE_FLASH", "PHASE_DETACH",
     "PHASE_RECONNECT", "PHASE_DONE", "UpgradeError", "UpgradeHooks", "Progress",
-    "Result", "run_upgrade", "engine_status", "REASON_DFU_PERMISSION",
+    "Result", "run_upgrade", "engine_status", "device_location",
+    "REASON_DFU_PERMISSION",
 ]
 
 
@@ -37,3 +40,50 @@ def engine_status() -> tuple[bool, str]:
     """
     ok = bool(engine.available())
     return ok, engine.backend_status()
+
+
+def _as_int(value: Any) -> Optional[int]:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _port_chain(dev: Any) -> List[int]:
+    """端口链 —— 优先整条 (`port_numbers`), 退到单跳 (`port_number`), 再退到空。"""
+    raw = getattr(dev, "port_numbers", None)
+    if isinstance(raw, (list, tuple)) and raw:
+        chain: List[int] = []
+        for item in raw:
+            port = _as_int(item)
+            if port is None:
+                chain = []
+                break
+            chain.append(port)
+        if chain:
+            return chain
+    one = _as_int(getattr(dev, "port_number", None))
+    return [one] if one is not None else []
+
+
+def device_location(dev: Any) -> str:
+    """设备的**物理位置**（"总线-端口链", 形如 `1-3.2`）; 取不到就是空串。
+
+    用途只有一个: 让操作员核对"我们找到的这块板子, 是不是我插的那块"。所以它必须是
+    **插在哪儿**（总线 + 端口链 —— 换个插口它就变），而不是"这次枚举成几号"
+    (`address` 每次重枚举都会变, 拿它对不上任何人眼里的东西)。
+
+    ⚠ **只用枚举时白拿的字段** (`bus` / `port_numbers` / `port_number`): 它们来自
+      libusb 缓存的设备描述符, 不发任何控制传输。**不许**顺手读 `serial_number` 或
+      `manufacturer` / `product` —— 那会发 `GET_DESCRIPTOR`, 而 `engine` 里那条实测
+      教训说得很清楚: 在 DFU 设备上多打一次就会把状态搞乱, 表现为 `open()` 之后
+      `GETSTATUS` 立刻报错、随后所有写入全是 Pipe error (见 `engine._read_transfer_size`)。
+    ⚠ 它在**包级**而不在 `engine.py` 里, 也是因为那条纪律: 那边是**逐字搬运**的上游
+      文件 (逻辑一行未改, 见其文件头), 要改行为得回改上游仓, 不能在本仓就地发明。
+    """
+    bus = _as_int(getattr(dev, "bus", None))
+    if bus is None:
+        # 连总线号都拿不到 ⇒ 这个位置说不出任何可核对的信息, 不如不说 (回空串)。
+        return ""
+    ports = _port_chain(dev)
+    return str(bus) if not ports else f"{bus}-" + ".".join(str(p) for p in ports)

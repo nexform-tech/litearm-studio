@@ -99,6 +99,10 @@ const REASON_KEYS: Record<string, string> = {
   // 开跑之前就被拒。
   confirm_required: 'firmwareConfirmRequired',
   engine_unavailable: 'firmwareEngineUnavailable',
+  // ---- "没有应用态会话"的两种情形（`daemon/errors.py` 的 NOT_CONNECTED_*） ----
+  // ⚠ 两条的下一步动作相反，所以不许合成一句：一种是去查线/点「连接」，另一种是
+  //   **别去点「连接」**（板子停在 bootloader 里，根本没有应用态可连，去烧录或断电）。
+  dfu_present: 'notConnectedDfu',
   // 流水线内部的失败。
   arm_enabled: 'firmwareArmEnabled',
   not_connected: 'notConnected',
@@ -138,6 +142,8 @@ const REJECTED_KEYS: Record<string, string> = {
 /** i18n 缺失时的内置中文兜底（不依赖 i18n 初始化）。 */
 const FALLBACK_ZH: Record<string, string> = {
   notConnected: '机械臂未连接：请先连接本地程序，并在顶栏连接机械臂',
+  notConnectedDfu:
+    '检测到一块停在 bootloader (DFU) 里的控制器：它没有应用态可连，所以「连接」不会成功。请到「设置 → 固件升级」直接烧录，或断电重新上电',
   unknownCommand: '本地程序不支持该命令（不在命令白名单里）',
   motionBusy: '机械臂当前正处于运动中，请等待当前动作完成或急停后再试',
   commandTimeout: '指令执行超时：本地程序未在规定时间内返回响应，请检查机械臂状态',
