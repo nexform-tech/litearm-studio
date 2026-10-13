@@ -17,8 +17,9 @@
 #
 # The window backend is written per platform rather than detected, on purpose:
 # the Linux leg borrows the system WebKitGTK, and a build host missing it fails
-# here instead of quietly shipping the self-contained Qt backend, which is about
-# four times larger. See `LITEARM_STUDIO_WINDOW_BACKEND` below.
+# here instead of quietly shipping the self-contained Qt backend, which carries
+# ~243 MB against this package's ~21 MB. See `LITEARM_STUDIO_WINDOW_BACKEND`
+# below.
 #
 # Versions come from the tag, never from a manifest: `package` reads
 # `needs.release.outputs.new_tag`, and the manifest version field stays a
