@@ -34,7 +34,6 @@ export function useGripperSettings() {
   const mount = 'normal' as const
   const [importPath, setImportPath] = useState('')
   const [channels, setChannels] = useState<string[]>([])
-  const [, setScanning] = useState(false)
   const [applying, setApplying] = useState(false)
 
   const connected = status === 'connected'
@@ -68,7 +67,6 @@ export function useGripperSettings() {
 
   /** 枚举本机 CAN 接口：内核的问题，不需要连接。 */
   const refresh = useCallback(async () => {
-    setScanning(true)
     try {
       const found = await gripperClient.listChannels().catch(() => [] as string[])
       setChannels(found)
@@ -78,8 +76,6 @@ export function useGripperSettings() {
       setChannel((prev) => (prev === '' && found.length ? found[0] : prev))
     } catch (err) {
       toast.error(formatArmError(err) || String(err), { id: 'gripper-settings-error' })
-    } finally {
-      setScanning(false)
     }
   }, [])
 
