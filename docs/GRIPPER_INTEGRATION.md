@@ -108,18 +108,21 @@ Additive. Existing arm frames and commands do not change.
 
 ```jsonc
 {"t":"gripper_conn","status":"disconnected|connecting|connected|error",
- "channel":"can0","canId":8,"mount":"normal|reverse",
- "source":"template|measured|factory|missing|null","path":"/home/u/.litegrip/can0_calibration.json",
- "travelMm":85.0,"error":null}
+ "channel":"can0","canId":8,"mstId":24,"mount":"normal|reverse","declaredMount":"normal|reverse",
+ "template":"normal|null","source":"template|measured|factory|missing|null",
+ "path":"/home/u/.litegrip/can0_calibration.json",
+ "travelMm":85.0,"allowFactory":false,
+ "closedRad":0.052071,"openRad":-1.357481,"fileRadToMm":61.01,
+ "gate":"READY|TEMPLATE|FACTORY|BLOCKED","gateReason":"…","error":null}
 
 {"t":"gripper_state","stamp":123.4,"state":{
-  "positionMm":41.2,"forceN":0.0,"torqueNm":0.0,
+  "positionMm":41.2,"forceN":0.0,"torqueNm":0.0,"velocityMmS":0.0,
   "enabled":true,"state":"ready|moving|grasping|holding|released|fault|disabled|stopped",
   "errorCode":1,"temps":{"mosTemp":31,"coilTemp":34},
   "fresh":true,"gate":"READY|TEMPLATE|FACTORY|BLOCKED","gateReason":"…"}}
 
 {"t":"gripper_calib","probe":"zero","phase":"close|open|done|failed",
- "step":12,"total":80,"detail":"寻找闭合限位"}
+ "step":12,"total":80,"progress":0.15,"detail":"寻找闭合限位"}
 
 {"t":"gripper_alert","level":"info|warn|error|fatal","text":"…",
  "kind":"GripperCalibrationError|null","code":0}
@@ -176,9 +179,8 @@ progress, so the page can say why it is waiting.
 | `gripper.reset_stop` | — | `null` (release the latch) |
 | `gripper.set_motion` | `speedMmS?`, `forceN?` | the settings now in effect |
 | `gripper.load_template` | `mount` (`normal` or `reverse`) | `{"mount":…,"source":"template"}` |
-| `gripper.list_calibrations` | — | `[{"path","source","valid","problems":[],"warnings":[],"closedRad","openRad","fileRadToMm","template","mount"}]` |
 | `gripper.import_calibration` | `path` (on the control machine) | `{"path":…,"source":"measured"}` |
-| `gripper.zero` | `travelMm` | `{"closedRad":…,"openRad":…,"radToMm":…,"source":…,"warnings":[]}` |
+| `gripper.write_zero` | — | `{"ok":true,"beforeRad":…,"afterRad":…}` — writes the current angle as zero (`0xFE`) |
 | `gripper.set_allow_factory` | `allow` (bool) | `{"allowFactory":true}` |
 
 Rules:
@@ -189,23 +191,25 @@ Rules:
   and answers immediately. The tick engages it within one tick (5 ms).
 - `gripper.disable` is a normal queued command; `gripper.stop` is what must never
   queue.
-- `gripper.zero` is long (tens of seconds) and streams `gripper_calib` progress
-  frames. It must not hold the WS read loop: the tick runs the probe as a state
-  machine, one step per tick.
-- Command timeout stays at the daemon's existing 60 s, except `gripper.zero`,
-  which the client must not subject to a 60 s timeout. The daemon waits up to
-  120 s for the probe itself and answers with the calibration it produced.
-- `gripper.set_allow_factory` persists the acknowledgement of the factory
+- `gripper.write_zero` does not block the WS read loop: the tick performs the
+  write and the command waits for its outcome, bounded by
+  `constants.WRITE_ZERO_TIMEOUT_S` (10 s). The longer guided probe is the one that
+  streams `gripper_calib` progress frames, and nothing can start it today — the
+  FSM's only feeder is dormant (`gripper/core/worker.py`, "dormant since 零位写入
+  replaced the guided probe"). The frame exists; treat it as unreachable from the
+  socket rather than as a live surface.
+- `gripper.set_allow_factory` persists the acknowledgement of a `factory`
   calibration (a decision, not a state) and is the only way the `FACTORY` gate
-  opens. It is an addition to the table above, needed by §5.3 row 6.
-- `gripper.list_calibrations` needs no connection: it is a filesystem question,
-  and the settings page asks it while deciding what to load.
-- There is **no** directory-listing command. The import picker is a native dialog
-  raised by the daemon (§6.3), so nothing has to enumerate a directory over the
-  socket; the in-page browser and its `gripper.list_dir` command were retired
-  together and are gone. `gripper.import_calibration` still takes a path on the
-  control machine, and `gripper.list_calibrations` still reports the files the
-  daemon knows about.
+  opens. No shipped path produces that provenance, so the gate cannot fire today
+  — see §5.3.
+- There is **no** directory-listing command and **no** calibration-listing
+  command. The import picker is a native dialog raised by the daemon (§6.3), so
+  nothing has to enumerate a directory over the socket; the in-page browser and
+  its `gripper.list_dir` command were retired together and are gone, and
+  `gripper.list_calibrations` was never implemented — the calibration the daemon
+  is using rides on `gripper_conn` (`source`, `path`, `template`, the two
+  endpoint angles, `allowFactory`, `gate`). `gripper.import_calibration` takes a
+  path on the control machine.
 - `gripper.release` and `gripper.set_zero_gravity{on:true}` put the axis in the
   same physical state and both report `state:"released"`. The live one is
   `set_zero_gravity`: it is the panel's toggle (since #119 the button presses
@@ -286,8 +290,8 @@ The daemon decides which calibration is in effect and tells the SDK explicitly.
 It never asks the SDK what it loaded.
 
 The implementation is `daemon/src/litearm_studio_daemon/gripper/calibration.py`
-(`resolve` / `inspect_file` / `sdk_source`) — the same code the settings page
-reads through `gripper.list_calibrations`.
+(`resolve` / `inspect_file` / `sdk_source`); the result is reported to the page on
+`gripper_conn`.
 
 **Resolution order** (first hit wins, and the result carries its provenance):
 
