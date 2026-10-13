@@ -15,6 +15,7 @@ from __future__ import annotations
 import base64
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -696,5 +697,75 @@ def test_the_dfu_path_refuses_when_the_board_vanished_before_the_start() -> None
             s.execute("firmware_upgrade", {"token": token, "confirm": True})
         assert ei.value.reason == "dfu_device_absent"
         assert s._upgrading is False
+    finally:
+        s.close()
+
+
+def test_a_dropped_ack_on_enter_dfu_still_detaches_the_board() -> None:
+    """`CMD_ENTER_DFU` 的 ACK 被丢 ⇒ `enter_dfu()` 抛错, 而设备**已经跳了**。
+
+    SDK 把这条边界写在自己的文档里 (`Arm.enter_dfu`): 固件在应答 FIFO 满时会丢掉
+    `ACK{0x15}` (`usb_cmd.c` 的"满: 丢最新"), 设备却照样进 bootloader —— 于是这一步抛
+    `TransportError`, 而板子已经在里面了。标志若置在调用**之后**, `_fail` 就不会去
+    detach, 板子留在 bootloader 里"像坏了", 正是本模块开篇禁止的那个结局。
+    """
+    calls: list[str] = []
+
+    class Hooks:
+        def disarm(self) -> None:
+            calls.append("disarm")
+
+        def enter_dfu(self) -> None:
+            calls.append("enter_dfu")
+            raise dfu.job.UpgradeError("dfu_not_entered", "ACK 丢了 (桩)")
+
+        def wait_for_dfu(self, is_cancelled) -> None:
+            calls.append("wait")
+
+        def flash(self, blob, base, on_progress) -> None:
+            calls.append("flash")
+
+        def detach(self) -> None:
+            calls.append("detach")
+
+        def reconnect(self, is_cancelled):
+            calls.append("reconnect")
+            return "/dev/ttyACM0", "1.9.0"
+
+    summary = SimpleNamespace(name="fw.hex", size=1024, sha256="ab" * 32,
+                              version="1.9.0")
+    result = dfu.run_upgrade(blob=b"\x00" * 1024, base=dfu.engine.FLASH_BASE,
+                             summary=summary, hooks=Hooks(), emit=lambda _p: None)
+
+    assert result.ok is False and result.reason == "dfu_not_entered"
+    assert "flash" not in calls
+    assert "detach" in calls, "板子被留在 bootloader 里了"
+
+
+def test_detaching_without_an_open_session_still_leaves_the_board() -> None:
+    """`enter_dfu` 与 `wait_for_dfu` 之间失败时, 我们**还没打开**那个 DFU 设备。
+
+    那个窗口里唯一的救法就是在设备上发一条 `DFU_DETACH`, 所以没有会话时也要现找一个
+    ("没有会话"不等于"没有板子")。
+    """
+    engine = fake_engine.FakeEngine(steps=1)
+    s = Session(fake=True, dfu_engine=engine)
+    try:
+        s._dfu_detach()
+
+        assert engine.devices_made == 1, "没有去设备上发那条 DFU_DETACH"
+        assert engine.last is not None and engine.last.left is True
+        assert engine.last.opened is False            # 用完就关掉, 不占着设备
+    finally:
+        s.close()
+
+
+def test_detaching_with_nothing_attached_is_a_no_op() -> None:
+    """设备不在时 detach 什么都不做 —— 失败收尾本来也只是尽力而为, 不许再抛。"""
+    engine = fake_engine.FakeEngine(steps=1, present=False)
+    s = Session(fake=True, dfu_engine=engine)
+    try:
+        s._dfu_detach()
+        assert engine.devices_made == 0
     finally:
         s.close()

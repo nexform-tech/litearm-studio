@@ -6,14 +6,17 @@ DfuSe 烧录引擎 —— 用 pyusb 直接实现 STM32 ROM bootloader 的 USB-DF
 来源与搬运说明
 -------------
 本文件**逐字搬运**自上游工具仓 `gitee.com/yudao_hz_1/dfu-flash`（HEAD `2dc3fb5`，
-文件 `dfu_usb.py`，搬运日期 2026-10-06）。只做了两处**非逻辑**改动：
+文件 `dfu_usb.py`，搬运日期 2026-10-06），此后在**本仓**做过几处带日期的加固与订正
+（搜 `[2026-` 能找全）：擦除的物理确认与忙时长下界、失败后"擦回空白"、UPLOAD 可用性的
+再判定、以及顶部关于 `DFU_UPLOAD` 那条陈旧结论的更正。
 
-* 顶部这段出处说明；
-* 订正原文件末尾关于 `DFU_UPLOAD` 的**陈旧结论**（见下）。
+⚠ 2026-10-13 又改了一处**逻辑**：恢复擦除与读回校验都改成**按实际写入的分段**进行，
+而不是按整个镜像范围 —— `skip` 策略下两段之间夹着受保护扇区 6+7，按整段擦会把许可证与
+出厂标定一起毁掉（`_erase_written` 与 `flash()` 里那段注释写了全过程）。
 
-**逻辑一行未改。** 里面每一条注释都是真机烧砖换来的：DfuSe 特殊命令的
+⚠ 这些改动**上游还没有**。里面每一条注释都是真机烧砖换来的：DfuSe 特殊命令的
 `wBlockNum`、32 B flash word 对齐、擦除忙时长下界、相位切换。要改这里的行为，
-请**回改上游仓**，不要在本仓就地发明 —— 否则两边的时序会漂移，而漂移的代价是砖机。
+请**回改上游仓**再同步回来 —— 否则两边的时序会漂移，而漂移的代价是砖机。
 
 为什么不用 dfu-util / STM32CubeProgrammer
 ----------------------------------------
@@ -173,6 +176,19 @@ PARAM_POLICY_WIPE  = "wipe"     # 连扇区 6+7 一起擦写 (明确的"许可�
 PARAM_POLICIES = (PARAM_POLICY_ABORT, PARAM_POLICY_SKIP, PARAM_POLICY_WIPE)
 
 DETACH_TIMEOUT_MS = 255
+
+
+def _segment_address(segments, offset: int) -> int:
+    """把"读回的第 offset 个字节"折算回它在 flash 上的地址。
+
+    读回是**分段**的 (见 `flash` 里 `segments` 的构造): 中间可能整块跳过了受保护区, 所以
+    "第几个字节"不等于 `base + offset`。报错要说清是哪个地址坏了, 就得换算。
+    """
+    for seg_blob, seg_base, _done in segments:
+        if offset < len(seg_blob):
+            return seg_base + offset
+        offset -= len(seg_blob)
+    return segments[-1][1]                                     # pragma: no cover - 越界不可达
 
 
 class DfuError(Exception):
@@ -567,6 +583,21 @@ class DfuDevice:
             f"    在未擦完的扇区上写会毁掉 ECC(FLASH_SR1.DBECCERR), 让整片变砖\n"
             f"    (2026-09-28 实测过: 扇区 0 的 101/128 个块读失败, 首坏块是向量表首字)。")
 
+    def _erase_written(self, segments, rep, done_base: int = 0) -> None:
+        """把**这次写过的每一段**擦回空白 —— 而不是整个镜像范围。
+
+        ⚠ 这是三个失败恢复路径共用的落点, 也是 `skip` 策略的成败所在: 两段之间夹着受保护
+          扇区 6+7 (许可证 + 出厂标定, 只存在于设备、擦掉不可恢复)。按 `base, total` 一把
+          擦过去会连它们一起擦掉, 而日志只会说"已擦回空白 ⇒ 板子未砖" —— 板子确实没砖,
+          只是设备侧的身份和标定没了, 且不可恢复。
+
+          恢复擦除要覆盖的是**这次写入可能损坏的东西**, 而那正是 `segments` 已经算好的范围
+          (abort/wipe 策略下它就是整个镜像, 与旧行为一致)。
+        """
+        for seg_blob, seg_base, seg_done in segments:
+            self.erase_sectors_covering(seg_base, len(seg_blob),
+                                        note=lambda m, d=seg_done: rep(d, "  " + m))
+
     def erase_sectors_covering(self, base: int, total: int, note=None) -> None:
         """擦掉 [base, base+total) 覆盖到的**所有**扇区。
 
@@ -749,8 +780,7 @@ class DfuDevice:
             rep(0, f"⚠ 烧录中断 ({type(e).__name__}: {e}) —— 尝试擦回空白以保住 USB 可重烧性 ...")
             try:
                 if erase:
-                    self.erase_sectors_covering(
-                        base, total, note=lambda m: rep(0, "  " + m))
+                    self._erase_written(segments, rep)
                     rep(0, "已擦回空白 ⇒ 板子未砖, 可直接重烧")
             except Exception as e2:                                # noqa: BLE001
                 rep(0, f"⚠ 擦回空白也失败 ({type(e2).__name__}: {e2}) ⇒ 可能需要 SWD 救砖")
@@ -772,14 +802,19 @@ class DfuDevice:
             #     这正是 2026-09-29 实测"加固版 exe 仍把新板子烧砖"的漏点。
             #   ⇒ 判据改成: 之前能用 + 现在读不回 = 内容坏了 = 按校验失败处理(擦回空白)。
             upload_was_ok = self._upload_ok is True
+            # ⚠ 读回的**也只有写过的那些段**: skip 策略下保护区里的字节本来就不是这份
+            #   镜像写的 (原样保留), 按 `base, total` 整段读回比对会**必然**不一致 ——
+            #   于是"跳过扇区 6+7"这个策略永远过不了校验, 等于不可用。比对的是"我们写的"
+            #   与"设备里读到的", 那就得是同两段。
+            expected = b"".join(seg_blob for seg_blob, _, _ in segments)
             try:
-                back = self.read_back(base, total)
+                back = b"".join(self.read_back(seg_base, len(seg_blob))
+                                for seg_blob, seg_base, _ in segments)
             except (usb.core.USBError, DfuError) as e:
                 if upload_was_ok:
                     erased = False
                     try:
-                        self.erase_sectors_covering(
-                            base, total, note=lambda m: rep(total, "  " + m))
+                        self._erase_written(segments, rep, total)
                         erased = True
                     except Exception as e2:                        # noqa: BLE001
                         rep(total, f"⚠ 擦回空白失败 ({type(e2).__name__}: {e2})")
@@ -799,10 +834,12 @@ class DfuDevice:
                 rep(total, "ℹ 读回校验不可用: 本机 bootloader 不支持 DFU_UPLOAD —— "
                            "这不是烧录失败; 复位后串口/版本串能回来即代表烧写成功")
             if back is not None:
-                if len(back) != total:
-                    raise DfuError(f"读回长度不符: 期望 {total} B, 实得 {len(back)} B")
-                if back != blob:
-                    bad = next(i for i in range(total) if back[i] != blob[i])
+                if len(back) != len(expected):
+                    raise DfuError(
+                        f"读回长度不符: 期望 {len(expected)} B, 实得 {len(back)} B")
+                if back != expected:
+                    bad = next(i for i in range(len(expected)) if back[i] != expected[i])
+                    where = _segment_address(segments, bad)
                     # [2026-09-28] 失败保护: 立刻把已写扇区**擦回空白**。
                     # 理由(本工具存在的意义): "空白但 ECC 健康"的板子**仍能用 USB DFU 重烧**
                     #   —— ROM bootloader 在系统存储器, 与主 flash 无关; 而"ECC 已坏"的板子
@@ -810,19 +847,18 @@ class DfuDevice:
                     # ⚠ 所以下面的报错必须同时说清"板子现在是空的, 需要重烧"。
                     erased = False
                     try:
-                        self.erase_sectors_covering(
-                            base, total, note=lambda m: rep(total, "  " + m))
+                        self._erase_written(segments, rep, total)
                         erased = True
                         rep(total, "已把受损扇区擦回空白 —— 板子未砖, 可直接用 DFU 重烧")
                     except Exception as e2:                        # noqa: BLE001
                         rep(total, f"⚠ 擦回空白失败 ({type(e2).__name__}: {e2})")
                     raise DfuError(
-                        f"读回校验失败: 首个不一致处 0x{base + bad:08X} "
-                        f"(写入 0x{blob[bad]:02X}, 读回 0x{back[bad]:02X})。\n"
+                        f"读回校验失败: 首个不一致处 0x{where:08X} "
+                        f"(写入 0x{expected[bad]:02X}, 读回 0x{back[bad]:02X})。\n"
                         + ("    **已把受损扇区擦回空白** ⇒ 板子没砖, 重新执行本工具即可再烧。"
                            if erased else
                            "    ⚠ 擦回空白**也失败了** ⇒ 可能需要 SWD 探针(pyocd erase -r)救砖。"))
-                rep(total, f"✓ 读回校验通过 ({total} B 逐字节一致)")
+                rep(total, f"✓ 读回校验通过 ({len(expected)} B 逐字节一致)")
 
         rep(total, "结束 (manifest) ...")
         self.finish()
