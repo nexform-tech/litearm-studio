@@ -5,7 +5,7 @@ import { useArmConnection } from '@/lib/arm/useArmConnection'
 import { exportFile } from '@/lib/export'
 import { telemetryDb, type TelemetrySample, type TelemetrySession } from './telemetryDb'
 import { telemetryRecorder } from './telemetryRecorder'
-import { telemetryCsvHeader, telemetryCsvRow } from './csv'
+import { EMPTY_CSV_WIDTHS, mergeCsvWidths, telemetryCsvHeader, telemetryCsvRow } from './csv'
 import { RETENTION_MAX_MB, RETENTION_MIN_MB } from './retentionSettings'
 
 const SAMPLES_LIMIT = 200
@@ -186,21 +186,44 @@ export function useTelemetryState() {
     try {
       const sess = await telemetryDb.getSession(id)
       if (!sess) throw new Error(t('common:storage.sessionMissing'))
-      // 分页流式写入 Blob：每页只保留一页对象与已序列化字符串，
+      // 分页流式读写：每页只保留一页对象与已序列化字符串，
       // 避免大会话一次性载入内存导致 WebView 卡死
-      const parts: BlobPart[] = []
+      const step = (after?: { ts: number; id: number }) =>
+        telemetryDb.getSamplesAsc(id, { limit: EXPORT_PAGE_SIZE, after })
+
+      // ---- 第一遍：只量列宽，不写行 ------------------------------------------
+      // ⚠ 表头要先写出去，而它的宽度得由**整段会话**说了算：断线 30s 内重连会延续同一个
+      // 会话（见 telemetryRecorder），其间换过台架（7J → 1J）时，"按第一帧定宽"的表头
+      // 会再次与后面的行错位 —— 那正是这次要修的东西。两遍都按页读，第一遍只记长度。
+      let widths = EMPTY_CSV_WIDTHS
       let cursor: { ts: number; id: number } | undefined
-      let exported = 0
+      let last: { ts: number; id: number } | undefined
       for (;;) {
-        const page = await telemetryDb.getSamplesAsc(id, { limit: EXPORT_PAGE_SIZE, after: cursor })
+        const page = await step(cursor)
         if (page.length === 0) break
-        // 表头跟着**第一条样本**的列数走 —— 与下面那些行用的是同一份判据。
-        if (exported === 0) parts.push(`${telemetryCsvHeader(page[0]).join(',')}\n`)
-        const last = page[page.length - 1]
-        cursor = { ts: last.ts, id: last.id as number }
-        exported += page.length
-        parts.push(`${page.map((s) => telemetryCsvRow(s).join(',')).join('\n')}\n`)
+        for (const s of page) widths = mergeCsvWidths(widths, s)
+        const tail = page[page.length - 1]
+        cursor = { ts: tail.ts, id: tail.id as number }
+        last = cursor
         if (page.length < EXPORT_PAGE_SIZE) break
+      }
+
+      // ---- 第二遍：写行 ------------------------------------------------------
+      const parts: BlobPart[] = []
+      if (last) {
+        parts.push(`${telemetryCsvHeader(widths).join(',')}\n`)
+        cursor = undefined
+        for (;;) {
+          const page = await step(cursor)
+          if (page.length === 0) break
+          parts.push(`${page.map((s) => telemetryCsvRow(s, widths).join(',')).join('\n')}\n`)
+          const tail = page[page.length - 1]
+          cursor = { ts: tail.ts, id: tail.id as number }
+          // 写到第一遍看到的最后一条为止：录制可能还在继续，没参与定宽的新样本
+          // 不掺进来（掺进来就可能比表头宽）。
+          if (cursor.ts === last.ts && cursor.id === last.id) break
+          if (page.length < EXPORT_PAGE_SIZE) break
+        }
       }
       const blob = new Blob(parts, { type: 'text/csv;charset=utf-8' })
       const outcome = await exportFile(blob, `telemetry-session-${id}.csv`)
