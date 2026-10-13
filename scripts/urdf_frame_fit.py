@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
 """Decide what kind of mismatch #56 is, from recorded samples.
 
-This is step 3 of 3. Input is the JSON from `urdf_frame_collect.py` (or a
-hand-made file with the same shape). Nothing here touches the arm; pure stdlib.
+Step 3 of 3, and the step that prints the verdict. ⚠ **That verdict has never
+been recorded**: #56 was closed by hand right after PR #61 merged, and that PR
+states outright that it does not resolve the issue — it aligned the gizmo's
+on-screen directions, and the preview's pose still disagreed with the firmware's
+`get_tcp`. So whether the viewport's frames match the firmware is still an open
+question, and the answer is whatever this script prints when the chain is run on
+a live arm. Record it here (or in `docs/`) when you do.
+
+Input is the JSON from `urdf_frame_collect.py` (or a hand-made file with the same
+shape). Nothing here touches the arm; pure stdlib.
 
     python3 scripts/urdf_frame_fit.py /tmp/frame-samples.json
 

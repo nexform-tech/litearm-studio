@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""Record (joint angles, firmware TCP pose) pairs from a live arm — issue #56.
+"""Record (joint angles, firmware TCP pose) pairs from a live arm.
 
-This is step 2 of 3. Step 1 (`urdf_frame_poses.py`) writes the poses; this script
-drives the arm through them and records one sample per pose; step 3
-(`urdf_frame_fit.py`) decides whether any fixed transform reconciles them.
+Step 2 of 3. Step 1 (`urdf_frame_poses.py`) writes the poses; this script drives
+the arm through them and records one sample per pose; step 3
+(`urdf_frame_fit.py`) decides whether any fixed transform reconciles them — and
+that file carries the standing of the investigation (#56 was closed without a
+verdict being recorded, so this chain is still the way to answer it).
 
-It needs matplotlib? No. It needs `websockets` (the daemon's own dependency):
+It needs matplotlib? No. It needs `websockets` (the daemon's own dependency),
+from the repository root:
 
-    /home/work/litearm/.venv/bin/python scripts/urdf_frame_collect.py \
+    .venv/bin/python scripts/urdf_frame_collect.py \
         --poses /tmp/poses.json --out /tmp/frame-samples.json --speed 0.15
 
 ⚠ The arm moves. Check the workspace is clear before you press Enter, and use
