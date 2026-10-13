@@ -1183,6 +1183,10 @@ def test_a_frame_that_raises_does_not_kill_the_drain_worker() -> None:
 
     worker 一死, 这条连接的命令就再没有消费者: 客户端只会等到自己的 75s 超时, 而守护
     进程这边一条记录都没有 —— 一次看不见的哑掉。兜底必须是"留下痕迹, 继续消费"。
+
+    ⚠ "继续消费"只是兜底的一半 (issue #213): 那条帧自己也得收到一条 `res`, 见下面两条
+    用例 —— 只记日志的话, 被救下的那条命令仍然是一次**看不见的哑掉**, 只是这次哑的
+    是操作员而不是连接。
     """
     seen: list[str] = []
 
@@ -1191,6 +1195,9 @@ def test_a_frame_that_raises_does_not_kill_the_drain_worker() -> None:
             if raw == "boom":
                 raise RuntimeError("帧处理炸了")
             seen.append(raw)
+
+        async def _answer_rescued_frame(self, ws, client, raw, exc):
+            seen.append(f"救下: {raw}")
 
     async def run() -> None:
         queue: asyncio.Queue[str] = asyncio.Queue()
@@ -1209,4 +1216,96 @@ def test_a_frame_that_raises_does_not_kill_the_drain_worker() -> None:
                 await worker
 
     asyncio.run(run())
-    assert seen == ["after"]
+    # 两条都在: 被救下的那条留下了痕迹, 后一条照常处理 (worker 没死)。
+    assert seen == ["救下: boom", "after"]
+
+
+def test_a_rescued_frame_answers_the_client_with_its_own_id() -> None:
+    """被兜底救下的那条帧必须回 `res`, 且 `id` 取自**原始帧**。
+
+    客户端结算一条命令的唯一依据是同 `id` 的 `res` (`src/lib/arm/socket.ts` 的
+    `_resolvePending`, `id` 还得是数字): 不回就只剩它自己的 75 s 超时。`id` 不能从
+    异常里取 —— 异常可能发生在 `_on_upstream` 解析出它之前, 所以这里给的是 stub 里
+    根本看不见 `id` 的抛异常件 (issue #213)。
+    """
+    sent: list[dict] = []
+
+    class Stub:
+        # 复用真实实现, 只把出口 `_send_direct` 换成收帧件 —— 要钉的正是它从原始帧里
+        # 取 id/m 的那几步。
+        _answer_rescued_frame = Daemon._answer_rescued_frame
+
+        async def _on_upstream(self, ws, client, raw, trace_id=None, execute=None):
+            raise RuntimeError("帧处理炸了")
+
+        async def _send_direct(self, ws, client, message):
+            sent.append(message)
+
+    async def run() -> None:
+        queue: asyncio.Queue[str] = asyncio.Queue()
+        queue.put_nowait(json.dumps({"t": "cmd", "id": 7, "m": "enable"}))
+        worker = asyncio.create_task(
+            Daemon._drain(Stub(), object(), _Client(q=asyncio.Queue()), queue))
+        try:
+            for _ in range(200):
+                if sent:
+                    break
+                await asyncio.sleep(0.01)
+        finally:
+            worker.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await worker
+
+    asyncio.run(run())
+    assert len(sent) == 1
+    frame = sent[0]
+    assert frame["t"] == "res"
+    assert frame["id"] == 7
+    assert frame["ok"] is False
+    assert frame["err"]["kind"] == "RuntimeError"
+    assert frame["err"]["method"] == "enable"
+
+
+def test_a_command_whose_value_cannot_be_serialised_still_gets_a_res() -> None:
+    """命令**已经执行完**、只有返回值编不出来时, 那条应答也不能消失。
+
+    `jsonable` 认不出的类型退回 `repr` (它**不抛**), 但它自己会炸: 自引用的 list 让
+    递归没有出口。异常从 `_run_command` 冒到 `_drain` 的兜底 —— 于是命令跑了、应答
+    没了, 界面空转到 75 s, 而操作员无从知道那次点按到底生效没有。
+    """
+    session, app = _client()
+    try:
+        daemon = app.state.daemon
+        client = _Client(q=asyncio.Queue())
+        sent: list[dict] = []
+
+        class WS:
+            async def send_text(self, payload: str) -> None:
+                sent.append(json.loads(payload))
+
+        cyclic: list = []
+        cyclic.append(cyclic)
+
+        async def run() -> None:
+            queue: asyncio.Queue[str] = asyncio.Queue()
+            queue.put_nowait(json.dumps({"t": "cmd", "id": 5, "m": "read_all"}))
+            worker = asyncio.create_task(
+                Daemon._drain(daemon, WS(), client, queue,
+                              execute=lambda *a, **k: cyclic))
+            try:
+                for _ in range(200):
+                    if sent:
+                        break
+                    await asyncio.sleep(0.01)
+            finally:
+                worker.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await worker
+
+        asyncio.run(run())
+
+        assert len(sent) == 1
+        assert sent[0]["t"] == "res" and sent[0]["id"] == 5 and sent[0]["ok"] is False
+        assert sent[0]["err"]["method"] == "read_all"
+    finally:
+        session.close()
