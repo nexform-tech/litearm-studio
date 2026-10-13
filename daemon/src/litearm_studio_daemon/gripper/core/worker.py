@@ -716,7 +716,7 @@ class WorkerLoop:
             velocity_mm_s=rad_per_s_to_mm(
                 v_rad, limits.rad_to_mm, direction=limits.direction
             ),
-            force_n=force_from_torque(sample.torque_nm),
+            force_n=force_from_torque(sample.torque_nm, direction=limits.direction),
             torque_nm=sample.torque_nm,
             temperature_coil=sample.temperature_coil,
             moving=True,

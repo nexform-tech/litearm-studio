@@ -48,7 +48,7 @@ from .. import calibration, constants
 from ..can_link import link_failure
 from ..calibration import CalibrationInfo
 from ..telemetry import Telemetry
-from ..units import Limits, force_from_torque
+from ..units import CLASSIC_DIRECTION, Limits, force_from_torque
 from . import (
     BackendError,
     ConnectFailed,
@@ -308,8 +308,14 @@ class RealBackend(GripperBackend):
             # the probe — works in rad, which is always meaningful.
             position_mm=limits.to_mm(state.position_rad) if limits is not None else 0.0,
             # Well-defined without a calibration: it is a torque scaled by a
-            # constant, and the operator needs it most during the probe.
-            force_n=force_from_torque(state.torque_nm),
+            # constant, and the operator needs it most during the probe.  The
+            # constant carries the mounting's sign, and an uncalibrated unit gets
+            # the SDK's own placeholder orientation (see CLASSIC_DIRECTION) —
+            # the number is approximate, but it is the sign the SDK would report.
+            force_n=force_from_torque(
+                state.torque_nm,
+                direction=(limits.direction if limits is not None
+                           else CLASSIC_DIRECTION)),
             t=time.time(),
         )
 

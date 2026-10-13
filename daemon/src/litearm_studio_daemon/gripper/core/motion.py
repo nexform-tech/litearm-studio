@@ -607,7 +607,7 @@ class MotionFSM:
         not zero: a braking torque is a real motor torque.  Only the settled
         value after the ramp is the grip force.
         """
-        target = clamp_force_torque(self._force_n)
+        target = clamp_force_torque(self._force_n, direction=self.limits.direction)
         alpha = min(dt / constants.FORCE_RAMP_S, 1.0)
         if self._tau_cmd is None:
             # Entering force mode: continue from the torque in flight so the
