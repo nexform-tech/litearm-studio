@@ -29,12 +29,15 @@ script (`build.py`, `checksums.py`).
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
+import io
 import math
 import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Iterable, List, NamedTuple, Optional, Sequence, Tuple, Union
 
@@ -103,6 +106,37 @@ WEBKIT_DEPENDS = "gir1.2-webkit2-4.1"
 #: package says it needs. They must agree: a Qt build that declared the WebKit dependency
 #: would pull 126 MB onto a machine that does not need it.
 WINDOW_BACKEND_ENV = "LITEARM_STUDIO_WINDOW_BACKEND"
+
+#: What the variable may say — the same three words `build.py.window_backend()` accepts.
+#: `native` is not a Linux backend, but the value is shared with the other platforms'
+#: builds, so refusing it here would make one setting fail on one leg and not another.
+WINDOW_BACKENDS = ("gtk", "qt", "native")
+
+#: Used when nothing says otherwise, on a Linux build. The release matrix always passes a
+#: value explicitly (each leg pins its own), so this only covers a hand-run build.
+DEFAULT_WINDOW_BACKEND = "gtk"
+
+
+def window_backend_from_env() -> str:
+    """The window backend from ``LITEARM_STUDIO_WINDOW_BACKEND``, validated.
+
+    Normalised (stripped, lower-cased) and rejected the same way
+    :func:`packaging.build.window_backend` does it, because the two must agree: this value
+    picks the package's `Depends`, and the executable's value picks how it was frozen. A
+    value that means `gtk` to one and something else to the other ships a package that
+    installs, starts, and dies with no usable webview backend.
+
+    An unset variable is the default rather than an error: a hand-run build without it is
+    the GTK path, which is what the help text promises.
+    """
+    forced = os.environ.get(WINDOW_BACKEND_ENV, "").strip().lower()
+    if not forced:
+        return DEFAULT_WINDOW_BACKEND
+    if forced not in WINDOW_BACKENDS:
+        raise SystemExit(
+            f"{WINDOW_BACKEND_ENV} 只接受 {' / '.join(WINDOW_BACKENDS)}，实得 {forced!r}")
+    return forced
+
 
 #: Browsers are a `Suggests`, never a `Depends` or a `Recommends`. The program works with
 #: any browser (it opens a tab when it cannot find a Chromium build) and a `Recommends`
@@ -321,8 +355,12 @@ class Symlink(NamedTuple):
 Entry = Tuple[Path, Union[bytes, Path, Symlink], int]
 
 
-def payload(binary: Path) -> List[Entry]:
-    """Everything the package installs, in a fixed order."""
+def payload(binary: Path, version: str = "0.0.0") -> List[Entry]:
+    """Everything the package installs, in a fixed order.
+
+    `version` reaches only the changelog; the default is for tests, which build a tree
+    without caring which version it claims to be.
+    """
     entries: List[Entry] = [
         *bundled_daemon(binary),
         # The packaged default gripper calibration the launcher points the daemon
@@ -335,13 +373,66 @@ def payload(binary: Path) -> List[Entry]:
         (Path(f"usr/share/applications/{PACKAGE}.desktop"), desktop_entry().encode(), 0o644),
         (Path(f"usr/lib/udev/rules.d/60-{PACKAGE}.rules"), udev_rule().encode(), 0o644),
         (Path(f"usr/share/doc/{PACKAGE}/copyright"), copyright_text().encode(), 0o644),
+        # Policy wants a changelog beside the copyright; without it the package trips
+        # lintian's `no-changelog`, and `apt changelog` has nothing to show.
+        (Path(f"usr/share/doc/{PACKAGE}/changelog.Debian.gz"),
+         changelog_debian(version), 0o644),
     ]
-    for png in sorted(ICON_DIR.glob("icon-*.png")):
+    icons = sorted(ICON_DIR.glob("icon-*.png"))
+    if not icons:
+        # ⚠ 图标缺失要**在这里**失败, 和 `build.py` 对产物做的那道检查同理: 没有图标的
+        #   包照样装得上、跑得起来, 症状只是菜单和 Dock 里一个空白/通用图标 —— 没有测试
+        #   看得见, 无头构建也看不见。
+        raise SystemExit(
+            f"[deb] no icons under {ICON_DIR} — the desktop entry names one, so the "
+            f"package would install with a blank icon. Regenerate them with `pnpm icon`.")
+    for png in icons:
         size = png.stem.partition("-")[2]
+        if not size.isdigit():
+            raise SystemExit(
+                f"[deb] {png.name} does not carry its size — expected `icon-<px>.png`, "
+                f"so the file can be placed under hicolor/<px>x<px>/")
         entries.append(
             (Path(f"usr/share/icons/hicolor/{size}x{size}/apps/{LAUNCHER}.png"), png, 0o644)
         )
     return entries
+
+
+#: Debian changelog dates are RFC 2822 in English. Spelled out rather than taken from
+#: `strftime`, whose `%a`/`%b` follow the locale — a build on a non-C locale would write
+#: a changelog `dpkg-parsechangelog` cannot read.
+_WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def changelog_debian(version: str) -> bytes:
+    """A one-entry Debian changelog, gzipped, for the version being packaged.
+
+    The project's own history is on GitHub (semantic-release owns the real changelog), so
+    this is not a second copy of it: it exists so the package is a good Debian citizen —
+    `dpkg` metadata, `apt changelog`, lintian — and it says where the real history is.
+
+    The gzip mtime is pinned to 0 and the timestamp comes from `SOURCE_DATE_EPOCH` when
+    the caller sets it, so two builds of the same tree produce the same bytes.
+    """
+    epoch = os.environ.get("SOURCE_DATE_EPOCH", "")
+    stamp = time.gmtime(int(float(epoch)) if epoch.strip() else int(time.time()))
+    date = (f"{_WEEKDAYS[stamp.tm_wday]}, {stamp.tm_mday:02d} "
+            f"{_MONTHS[stamp.tm_mon - 1]} {stamp.tm_year} "
+            f"{stamp.tm_hour:02d}:{stamp.tm_min:02d}:{stamp.tm_sec:02d} +0000")
+    text = (
+        f"{PACKAGE} ({version}) unstable; urgency=medium\n"
+        "\n"
+        "  * Package built from the repository source at this version. The project's\n"
+        "    changelog lives with the releases on GitHub.\n"
+        "\n"
+        f" -- {MAINTAINER}  {date}\n"
+    )
+    buffer = io.BytesIO()
+    with gzip.GzipFile(fileobj=buffer, mode="wb", mtime=0) as gz:
+        gz.write(text.encode("utf-8"))
+    return buffer.getvalue()
 
 
 def bundled_daemon(binary: Path) -> List[Entry]:
@@ -408,11 +499,13 @@ def _bundle_relative_link(source: Path, root: Path) -> Optional[str]:
 def write_tree(root: Path, entries: Iterable[Entry]) -> int:
     """Write the payload under `root`, plus the control files. Returns Installed-Size in KiB.
 
-    `Installed-Size` is what `du` would report for an installed package, so the sizes are
-    read back from the written files rather than from the sources: hard links, sparse
-    files and block rounding are all irrelevant here, and this keeps the number honest.
-    A symlink counts as its own length, which is also what `du` counts for it — its target
-    is counted where that file actually lives.
+    The number is an **approximation**, which is all policy asks of it (it tells an
+    installer whether the package fits, not what it weighs on disk): the summed apparent
+    size of the payload, rounded up to KiB. It agrees with `du --apparent-size -sk`, and
+    deliberately not with `du -sk` (which rounds every file up to a block) or with
+    dpkg-gencontrol's own algorithm — all three differ, so do not read it as any of the
+    other two. Reading the sizes back from the written files, and counting a symlink as
+    its own length, keeps the number the same across filesystems and bundle shapes.
     """
     total = 0
     for relative, source, mode in entries:
@@ -455,7 +548,7 @@ def stage(root: Path, binary: Path, *, version: str, arch: str,
           window_backend: str = "gtk") -> Tuple[Path, int]:
     """Build the package tree under `root`; return it and its Installed-Size in KiB."""
     shutil.rmtree(root, ignore_errors=True)
-    installed_kb = write_tree(root, payload(binary))
+    installed_kb = write_tree(root, payload(binary, version))
     control = root / "DEBIAN" / "control"
     control.write_text(
         control_text(version=version, arch=arch, installed_size_kb=installed_kb,
@@ -504,11 +597,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help=f"where to write the .deb (default: {OUT_DIST})")
     parser.add_argument("--work", default=str(WORK), metavar="DIR",
                         help=f"scratch directory for the package tree (default: {WORK})")
-    parser.add_argument("--window-backend", choices=("gtk", "qt"),
-                        default=os.environ.get(WINDOW_BACKEND_ENV, "").strip() or "gtk",
+    parser.add_argument("--window-backend", choices=WINDOW_BACKENDS, default=None,
                         help="which window backend the executable was built with; decides "
                              "whether the package depends on the system's WebKitGTK "
-                             f"(default: {WINDOW_BACKEND_ENV}, else gtk)")
+                             f"(default: {WINDOW_BACKEND_ENV}, else {DEFAULT_WINDOW_BACKEND})")
     return parser
 
 
@@ -524,16 +616,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if shutil.which("dpkg-deb") is None:
         raise SystemExit("[deb] dpkg-deb not found: this step needs Debian or Ubuntu")
 
+    # ⚠ Resolved after parsing, not as the argument's `default=`: a default is evaluated
+    # when the parser is built, so an invalid environment value would abort even
+    # `--help` — and argparse applies `choices` to a supplied value only, never to a
+    # default, which is how `LITEARM_STUDIO_WINDOW_BACKEND=GTK` used to slip through and
+    # select the wrong `Depends`.
+    window_backend = args.window_backend or window_backend_from_env()
+
     version = deb_version(args.version or resolve_version())
     out_dir = Path(args.outdir)
     out_dir.mkdir(parents=True, exist_ok=True)
     root, installed_kb = stage(Path(args.work) / "root", binary, version=version,
-                               arch=args.arch, window_backend=args.window_backend)
+                               arch=args.arch, window_backend=window_backend)
 
     target = out_dir / f"{PACKAGE}_{version}_{args.arch}.deb"
     print(f"[deb] staged {root} (Installed-Size {installed_kb} KiB)")
-    print(f"[deb] window backend = {args.window_backend} "
-          f"(Depends: {', '.join(depends_for(args.window_backend))})")
+    print(f"[deb] window backend = {window_backend} "
+          f"(Depends: {', '.join(depends_for(window_backend))})")
     subprocess.run(
         ["dpkg-deb", "--build", "--root-owner-group", str(root), str(target)],
         check=True, cwd=ROOT)

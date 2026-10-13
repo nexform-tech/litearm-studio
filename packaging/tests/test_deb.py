@@ -6,6 +6,7 @@ test builds a real `.deb` with `dpkg-deb`, which is why it is skipped off Debian
 """
 from __future__ import annotations
 
+import gzip
 import importlib.util
 import os
 import pathlib
@@ -390,3 +391,96 @@ def test_builds_a_debian_package_with_the_expected_layout(tmp_path):
     launcher = extract / "usr/bin/litearm-studio"
     assert launcher.stat().st_mode & 0o111
     assert f"/usr/lib/litearm-studio/{deb.BINARY_NAME}" in launcher.read_text(encoding="utf-8")
+
+
+# ------------------------------------------------- the window-backend variable (#188)
+
+
+def test_the_window_backend_is_normalised_the_way_build_py_normalises_it(monkeypatch):
+    """One variable drives the frozen bundle **and** the package's `Depends`.
+
+    `build.py` strips and lower-cases it; this side has to agree. `=GTK` used to slip
+    through here (argparse applies `choices` only to a supplied value, never to a
+    `default`), so a GTK bundle shipped in a package that omitted `gir1.2-webkit2-4.1` —
+    it installs, starts, and dies with no usable webview backend.
+    """
+    monkeypatch.setenv(deb.WINDOW_BACKEND_ENV, "  GTK  ")
+    assert deb.window_backend_from_env() == "gtk"
+    assert deb.WEBKIT_DEPENDS in deb.depends_for(deb.window_backend_from_env())
+
+
+@pytest.mark.parametrize("value", ["gtk", "qt", "native"])
+def test_every_value_build_py_accepts_is_accepted_here(monkeypatch, value):
+    monkeypatch.setenv(deb.WINDOW_BACKEND_ENV, value)
+    assert deb.window_backend_from_env() == value
+
+
+def test_an_unset_variable_is_the_documented_default(monkeypatch):
+    monkeypatch.delenv(deb.WINDOW_BACKEND_ENV, raising=False)
+    assert deb.window_backend_from_env() == deb.DEFAULT_WINDOW_BACKEND == "gtk"
+
+
+def test_an_unknown_window_backend_fails_the_way_it_does_in_build_py(monkeypatch):
+    monkeypatch.setenv(deb.WINDOW_BACKEND_ENV, "gtk2")
+    with pytest.raises(SystemExit):
+        deb.window_backend_from_env()
+
+
+def test_the_parser_leaves_the_environment_alone_until_it_is_asked(monkeypatch):
+    """`--help` must not die on a bad environment, and `main()` must still refuse it.
+
+    Reading the environment as the argument's `default=` would evaluate it while the
+    parser is being built — and would keep argparse's `choices` out of the decision.
+    """
+    monkeypatch.setenv(deb.WINDOW_BACKEND_ENV, "bogus")
+    assert deb.build_parser().parse_args([]).window_backend is None
+    with pytest.raises(SystemExit):
+        deb.window_backend_from_env()
+
+
+# ----------------------------------------------------------- icons and doc files (#193)
+
+
+def test_a_missing_icon_set_fails_the_build(monkeypatch, tmp_path):
+    """A package with no icons still installs and runs — the only symptom is a blank icon
+    in the menu and the dock, which no test and no headless build can see."""
+    empty = tmp_path / "icon-png"
+    empty.mkdir()
+    monkeypatch.setattr(deb, "ICON_DIR", empty)
+    with pytest.raises(SystemExit, match="no icons"):
+        deb.payload(_fake_binary(tmp_path))
+
+
+def test_an_icon_without_a_size_fails_the_build(monkeypatch, tmp_path):
+    icons = tmp_path / "icon-png"
+    icons.mkdir()
+    (icons / "icon-final.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    monkeypatch.setattr(deb, "ICON_DIR", icons)
+    with pytest.raises(SystemExit, match="does not carry its size"):
+        deb.payload(_fake_binary(tmp_path))
+
+
+def test_the_package_ships_a_debian_changelog(tmp_path):
+    entries = {path.as_posix() for path, _source, _mode in deb.payload(_fake_binary(tmp_path))}
+    assert f"usr/share/doc/{deb.PACKAGE}/changelog.Debian.gz" in entries
+
+
+def test_the_changelog_is_one_debian_can_parse(monkeypatch, tmp_path):
+    """lintian wants the file; `dpkg-parsechangelog` is the check that it is a changelog."""
+    parser = shutil.which("dpkg-parsechangelog")
+    if parser is None:
+        pytest.skip("dpkg-parsechangelog is not installed")
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "1700000000")
+    path = tmp_path / "changelog.Debian"
+    path.write_bytes(gzip.decompress(deb.changelog_debian("1.2.3")))
+    fields = subprocess.run([parser, "-l", str(path)], capture_output=True, text=True,
+                            check=True).stdout
+    assert "Version: 1.2.3" in fields
+    assert deb.MAINTAINER in fields
+
+
+def test_the_changelog_is_reproducible(monkeypatch):
+    """Same tree, same bytes: the gzip mtime is pinned and the date comes from
+    `SOURCE_DATE_EPOCH`."""
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "1700000000")
+    assert deb.changelog_debian("1.2.3") == deb.changelog_debian("1.2.3")
