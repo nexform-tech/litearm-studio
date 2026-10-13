@@ -25,11 +25,15 @@
 
 ⚠ 开发构建 (源码直跑、包元数据是占位符) 的版本号彼此相同, 所以同一个 venv 里两个不同
 checkout 的守护进程分不开。桌面场景里每个构建都有自己的版本号, 不受影响。
+
+⚠ **这一圈探测在窗口之前** (`__main__.main` 的调用顺序), 所以它的耗时是启动时间的一部分
+—— 逐个探时上界是 `tries × PROBE_TIMEOUT_S` (默认 50 × 0.3 = 15 s)。见 `find_running`。
 """
 from __future__ import annotations
 
 import json
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict, Optional
 
 #: 复用判据的唯一来源。它**不需要会话**, 断线、未连接时照样答 (见 `server._health`)。
@@ -86,11 +90,33 @@ def find_running(host: str, start: int, tries: int, *, version: str, fake: bool 
 
     `probe_fn` 是注入点: 单测用它走遍"命中/版本不符/不是我们的应答"几条分支, 不必真的
     起服务。
+
+    ⚠ **整段一起探, 不是逐个探。** 逐个探时扫描的上界是 `tries × timeout`
+    (默认 50 × 0.3 = 15 s), 而这段等待**发生在窗口之前** —— 探不到东西的那一圈是
+    最慢的一圈, 也就是"第一次双击"那一圈。有机器会让这个代价全部兑现: 一台 Windows
+    上实测**连一个没人监听的环回端口都要 ~2 s 才回 `ECONNREFUSED`** (不是亚毫秒的
+    拒绝), 于是每个探测都只能等到自己的 0.3 s 超时, 50 个串起来就是 15.5 s 的黑屏,
+    而这与程序自身快不快毫无关系。
+
+    并发之后上界变成**一次** `timeout`: 实测同一台机器上 50 个并发探测一起 0.32 s
+    (串行 15.58 s), 因为那 2 s 是**每个连接各自**的延迟, 连接之间并不互相排队。
+    机器正常 (拒绝是立刻的) 时两种写法都是几十毫秒, 所以这条改动对谁都不亏。
+
+    命中的判据不变, 而且仍然取**端口最小**的那一个 —— 并发只是把"谁先被问到"换成了
+    "谁先被答到", 选择规则不能跟着变成"谁先答到"。`probe` 本身不抛 (`probe` 的文档),
+    所以这里也不替它兜: 注入的 `probe_fn` 真的抛了, 那是我方的缺陷, 要在测试里看见。
     """
-    for port in range(int(start), int(start) + int(tries)):
-        health = probe_fn(host, port, timeout)
-        if health is not None and is_same_instance(health, version=version, fake=fake):
-            return f"http://{host}:{port}/"
+    ports = list(range(int(start), int(start) + int(tries)))
+    if not ports:
+        return None
+    #: 一个端口一条线程: 探测是纯等待的 I/O, 而并发的意义就是让 N 个等待重叠成 1 个。
+    #: 线程池小一点就等于把上界又拉回 `ceil(tries / workers) × timeout`。
+    with ThreadPoolExecutor(max_workers=len(ports)) as pool:
+        answers = [pool.submit(probe_fn, host, port, timeout) for port in ports]
+        for port, answer in zip(ports, answers):
+            health = answer.result()
+            if health is not None and is_same_instance(health, version=version, fake=fake):
+                return f"http://{host}:{port}/"
     return None
 
 

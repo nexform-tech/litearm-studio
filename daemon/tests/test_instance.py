@@ -68,9 +68,11 @@ def test_is_same_instance_needs_ok_the_same_version_and_a_real_session() -> None
 def test_find_running_walks_past_other_services_and_other_builds() -> None:
     """`start` 被别的服务占着时, 上一个实例就挪到了后面 —— 探测必须走得到那里。"""
     seen: list[int] = []
+    lock = threading.Lock()
 
     def probe_fn(host: str, port: int, timeout: float):
-        seen.append(port)
+        with lock:
+            seen.append(port)
         if port == 8765:
             return {"ok": True, "daemon": "1.2.3", "fake": True}   # 假会话, 不是我们要的
         if port == 8766:
@@ -81,7 +83,44 @@ def test_find_running_walks_past_other_services_and_other_builds() -> None:
 
     url = find_running("127.0.0.1", 8765, 10, version="1.2.3", probe_fn=probe_fn)
     assert url == "http://127.0.0.1:8767/"
-    assert seen == [8765, 8766, 8767]
+    # ⚠ 整个范围都被探过 (并发), 所以这里只能断集合 —— 断"探到 8767 就停"会把那条
+    #   并发性质钉反 (见 `test_find_running_probes_the_range_concurrently`)。
+    assert set(seen) == set(range(8765, 8775))
+
+
+def test_find_running_picks_the_lowest_matching_port() -> None:
+    """同时有两个实例在答 (图标被连点、旧版本没退干净) ⇒ 仍然取端口最小的那个。
+
+    并发把"谁先被问到"换成了"谁先被答到", 选择规则不能跟着一起变 —— 否则同一台机器
+    上两次启动可能指向不同的实例。
+    """
+    def probe_fn(host: str, port: int, timeout: float):
+        if port not in (8765, 8771):
+            return None
+        # 让**较大**的那个先答, 好把"谁先答到"与"端口最小"分开。
+        time.sleep(0.05 if port == 8765 else 0.0)
+        return {"ok": True, "daemon": "1.2.3", "fake": False}
+
+    assert find_running("127.0.0.1", 8765, 10, version="1.2.3",
+                        probe_fn=probe_fn) == "http://127.0.0.1:8765/"
+
+
+def test_find_running_probes_the_range_concurrently() -> None:
+    """扫描的上界是**一次**超时, 不是 `tries` 次。
+
+    ⚠ 这是产品行为而不是实现细节: 这一圈探测排在窗口**之前**, 逐个探时上界是
+    `tries × timeout` —— 在一台"连没人监听的环回端口也要 ~2 s 才回 RST"的 Windows 上
+    实测 50 个端口串行 15.6 s, 也就是每次双击都要先黑着等这么久。串行时这一条是
+    40 × 0.1 = 4 s, 并发是 ~0.1 s; 1 s 的界两边都离得很远。
+    """
+    def slow_probe(host: str, port: int, timeout: float):
+        time.sleep(timeout)          # 那台机器上真实 probe 的形状: 一直等到自己的超时
+        return None
+
+    started = time.monotonic()
+    assert find_running("127.0.0.1", 8765, 40, version="1.2.3", timeout=0.1,
+                        probe_fn=slow_probe) is None
+    assert time.monotonic() - started < 1.0
 
 
 def test_find_running_ignores_a_daemon_of_another_version() -> None:
