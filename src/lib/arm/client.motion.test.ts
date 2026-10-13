@@ -184,7 +184,8 @@ describe('ArmClient motion mutex and notify throttle', () => {
     now.mockReturnValue(1_050)
     ws.receive({ t: 'state', state: { q: [2], errs: [1], state: 'ready' } })
     // 状态本身已更新，命令式消费方（3D 预览）每帧跟随；但 React 侧的订阅被 100ms
-    // 节流挡住，窗口内的普通遥测不重复通知 —— 否则 10Hz 广播会把整页反复重渲染。
+    // 节流挡住，窗口内的普通遥测不重复通知 —— 否则 daemon 的 50Hz 广播
+    // （session.STATE_PUSH_INTERVAL_S）会把整页反复重渲染。
     expect(client.state?.q).toEqual([2])
     expect(fast).toBe(2)
     expect(notifications).toBe(1)

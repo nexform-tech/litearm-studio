@@ -618,18 +618,21 @@ describe('ArmClient (daemon WebSocket)', () => {
 
   it('parses a full daemon state frame into RobotState', () => {
     const { client, ws } = connectedClient()
+    // 帧必须取自固件真能发出的组合: `flagNames` 只列 bit 0..5 的故障位,
+    // 使能是 bit 9 (`_protocol.py` 的 FLAG_NAMES / FLAG_ENABLED_BIT)，所以
+    // 0x208 = TEMP_WARN + ENABLED，而不是 `flags: 1`(=FAULT) 加一个 "ENABLED"。
     ws.receive({
       t: 'state',
       stamp: 1.5,
       state: {
         q: [0.1], dq: [0.2], tau: [0.3], errs: [1], temps: [{ mosTemp: 40, coilTemp: 35 }],
-        fault: [], mode: 3, modeName: 'MOVE_J', flags: 1, flagNames: ['ENABLED'], jointFault: 0,
+        fault: [], mode: 3, modeName: 'MOVE_J', flags: 520, flagNames: ['TEMP_WARN'], jointFault: 0,
         faultAxes: [], enabled: true, cartBusy: false, faulted: false, faultDetail: '', seq: 12, state: 'ready',
       },
     })
     expect(client.state).toEqual({
       q: [0.1], dq: [0.2], tau: [0.3], errs: [1], temps: [{ mosTemp: 40, coilTemp: 35 }],
-      fault: [], mode: 3, modeName: 'MOVE_J', flags: 1, flagNames: ['ENABLED'], jointFault: 0,
+      fault: [], mode: 3, modeName: 'MOVE_J', flags: 520, flagNames: ['TEMP_WARN'], jointFault: 0,
       faultAxes: [], enabled: true, cartBusy: false, faulted: false, faultDetail: '', seq: 12, state: 'ready',
     })
   })

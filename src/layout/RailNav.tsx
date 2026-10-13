@@ -32,7 +32,10 @@ export function RailNav() {
 
   return (
     <div className="flex w-20 flex-none basis-20 flex-col items-center gap-1.5 bg-[#141b26] px-0 pt-3.5 pb-3">
-      <img src="/logo.svg" alt="Logo" className="mb-3 h-5 w-auto brightness-0 invert" />
+      {/* 装饰性图标：它不链接到任何地方, 也不标注任何控件, 所以不进可访问名 ——
+          否则读屏在中文界面里念出一句写死的英文 "Logo"。产品的名字由窗口标题
+          (index.html 的 <title>) 承担。 */}
+      <img src="/logo.svg" alt="" aria-hidden="true" className="mb-3 h-5 w-auto brightness-0 invert" />
 
       {RAIL_ITEMS.map((r) => {
         const Icon = r.icon

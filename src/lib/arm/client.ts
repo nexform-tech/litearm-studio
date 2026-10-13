@@ -73,6 +73,10 @@ export type RobotState = {
 /** SDK 原生 6 元组 `[x, y, z, rx, ry, rz]`（计划 3.4）。 */
 export type Pose6 = [number, number, number, number, number, number]
 
+/** 逆解结果：固件模型的 **7 轴**关节角，与所连机械臂的关节数无关
+ *  （daemon 原样回传 SDK `Arm.ik()` 的输出）。 */
+export type JointVector7 = [number, number, number, number, number, number, number]
+
 /** 读到了授权记录时的形状（daemon `license` 命令，见 `docs/ACTIVATION.md`）。 */
 export type LicenseRecord = {
   supported: true
@@ -249,8 +253,9 @@ export class ArmClient {
   private _lastRawState: unknown = null
   private _cachedNormalizedState: RobotState | null = null
 
-  /** 遥测状态（关节角/温度/力矩等）的最大通知频率：daemon 约 10Hz 推送，
-   *  安全相关字段（状态串/故障）变化立即通知，其余最多每 100ms 一次。 */
+  /** 遥测状态（关节角/温度/力矩等）的最大通知频率：**本客户端**把通知压在
+   *  每 100ms 一次（daemon 那边以 50Hz 推送，见 `session.STATE_PUSH_INTERVAL_S`，
+   *  别把两者混为一谈）。安全相关字段（状态串/故障）变化立即通知，不受此限。 */
   private static readonly STATE_NOTIFY_INTERVAL_MS = 100
 
   private statusListeners = new Set<Listener>()
@@ -561,8 +566,9 @@ export class ArmClient {
     return this._sendCmd('get_tcp') as Promise<Pose6>
   }
 
-  ik(pose: Pose6): Promise<Pose6> {
-    return this._sendCmd('ik', { pose }) as Promise<Pose6>
+  /** 固件后台逆解：`pose` + 种子 → 7 轴关节角（不是位姿，见 `JointVector7`）。 */
+  ik(pose: Pose6): Promise<JointVector7> {
+    return this._sendCmd('ik', { pose }) as Promise<JointVector7>
   }
 
   async zeroGStart(): Promise<unknown> {

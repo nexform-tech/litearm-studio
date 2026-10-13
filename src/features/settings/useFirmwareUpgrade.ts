@@ -250,5 +250,3 @@ export function useFirmwareUpgrade() {
     refreshEngine,
   }
 }
-
-export type FirmwareUpgradeState = ReturnType<typeof useFirmwareUpgrade>

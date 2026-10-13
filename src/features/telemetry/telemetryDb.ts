@@ -230,14 +230,6 @@ class TelemetryDb {
     return { ...row, sampleCount: count }
   }
 
-  async countSamples(sessionId: number): Promise<number> {
-    const db = await this.open()
-    const tx = db.transaction(SAMPLE_STORE, 'readonly')
-    const index = tx.objectStore(SAMPLE_STORE).index('sessionId')
-    const count = await this.request(index.count(IDBKeyRange.only(sessionId)))
-    return Number(count)
-  }
-
   async totalSamples(): Promise<number> {
     const db = await this.open()
     const tx = db.transaction(SAMPLE_STORE, 'readonly')
