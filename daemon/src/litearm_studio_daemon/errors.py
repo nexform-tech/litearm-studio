@@ -17,11 +17,9 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-#: 本进程自造的错误类名 —— 它们**不来自** SDK, 前端可以把它们与固件/SDK 异常分开看。
-#: ⚠ 刻意保留 `kind` 字段本身用 `type(e).__name__`: 这张表只用于文档与判据提示,
-#: 不做任何翻译。
-LOCAL_KIND_UNKNOWN_COMMAND = "UnknownCommandError"
-LOCAL_KIND_MOTION_BUSY = "MotionBusyError"
+#: 本进程自造的错误类 (`UnknownCommandError` / `MotionBusyError` 等) 也走 `kind`,
+#: 它们**不来自** SDK, 前端可以把它们与固件/SDK 异常分开看。这里不维护清单:
+#: `kind` 取的就是 `type(e).__name__`, 写一份硬编码的表只会与类名漂移。
 
 
 def error_to_dict(exc: BaseException, method: Optional[str] = None) -> dict:

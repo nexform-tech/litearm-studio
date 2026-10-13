@@ -268,5 +268,3 @@ export function useTelemetryState() {
     exportSession,
   }
 }
-
-export type TelemetryStateReturn = ReturnType<typeof useTelemetryState>

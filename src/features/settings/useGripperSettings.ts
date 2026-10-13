@@ -13,8 +13,6 @@ function dirOf(path: string): string | undefined {
   return cut <= 0 ? undefined : trimmed.slice(0, cut)
 }
 
-export type GripperSettingsVm = ReturnType<typeof useGripperSettings>
-
 /**
  * 设置页里夹爪那一段的视图模型（§6.2）。
  *
@@ -24,7 +22,7 @@ export type GripperSettingsVm = ReturnType<typeof useGripperSettings>
  */
 export function useGripperSettings() {
   const { t } = useTranslation(['common', 'gripper'])
-  const { conn, status, present, connect, disconnect } = useGripperConnection()
+  const { conn, status, present } = useGripperConnection()
   const state = useGripperState()
   const calib = useGripperCalibration()
   useGripperAlerts()
@@ -36,7 +34,7 @@ export function useGripperSettings() {
   const mount = 'normal' as const
   const [importPath, setImportPath] = useState('')
   const [channels, setChannels] = useState<string[]>([])
-  const [scanning, setScanning] = useState(false)
+  const [, setScanning] = useState(false)
   const [applying, setApplying] = useState(false)
 
   const connected = status === 'connected'
@@ -179,12 +177,10 @@ export function useGripperSettings() {
   return {
     present,
     connected,
-    status,
     conn,
     state,
     enabled,
     probing,
-    calib,
     // 表单
     channel,
     setChannel,
@@ -197,16 +193,12 @@ export function useGripperSettings() {
     travel,
     importPath,
     setImportPath,
-    scanning,
     applying,
     // 动作
-    refresh,
     apply,
     pickCalibration,
     importCalibration,
     setAllowFactory,
     writeZero,
-    connect,
-    disconnect,
   }
 }
