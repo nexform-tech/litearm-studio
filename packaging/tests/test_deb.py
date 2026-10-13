@@ -10,6 +10,7 @@ import gzip
 import importlib.util
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 
@@ -508,8 +509,45 @@ def test_the_changelog_is_one_debian_can_parse(monkeypatch, tmp_path):
     assert deb.MAINTAINER in fields
 
 
+def _gzip_mtime(blob: bytes) -> int:
+    """The MTIME field of a gzip member (bytes 4..8) — 0 when the writer pinned it."""
+    return int.from_bytes(blob[4:8], "little")
+
+
 def test_the_changelog_is_reproducible(monkeypatch):
-    """Same tree, same bytes: the gzip mtime is pinned and the date comes from
-    `SOURCE_DATE_EPOCH`."""
+    """Same tree, same bytes: the date comes from `SOURCE_DATE_EPOCH`, the mtime is 0.
+
+    ⚠ Comparing two pinned calls proves neither half (issue #215): two `gzip.GzipFile`
+    calls made in the same second write the same mtime whether or not `mtime=0` is there,
+    so the old version of this case stayed green with the pin removed. Compare a pinned
+    build against an **unpinned** one — the date text is what must differ — and then read
+    the gzip header, which is what must not.
+    """
     monkeypatch.setenv("SOURCE_DATE_EPOCH", "1700000000")
-    assert deb.changelog_debian("1.2.3") == deb.changelog_debian("1.2.3")
+    pinned = deb.changelog_debian("1.2.3")
+    assert deb.changelog_debian("1.2.3") == pinned
+    assert b"Tue, 14 Nov 2023 22:13:20 +0000" in gzip.decompress(pinned)
+
+    monkeypatch.delenv("SOURCE_DATE_EPOCH", raising=False)
+    unpinned = deb.changelog_debian("1.2.3")
+    assert unpinned != pinned, "unset SOURCE_DATE_EPOCH did not fall back to the build clock"
+    assert _gzip_mtime(pinned) == 0 and _gzip_mtime(unpinned) == 0
+
+
+def test_the_build_entry_point_forwards_the_epoch_into_the_container():
+    """`deb.py` reads `SOURCE_DATE_EPOCH`, and `make deb` runs it inside a container.
+
+    `docker run` does not pass the host environment, so a variable that is not forwarded
+    is a variable `deb.py` never sees: every `make deb` stamped the build clock while only
+    a direct `python packaging/deb.py` with it exported was reproducible. Reading the
+    entry point is the only way a unit test can see the forwarding — the container is not
+    available here.
+    """
+    script = (ROOT / "scripts" / "build-deb.sh").read_text(encoding="utf-8")
+    docker_run = script.split("docker run", 1)[1]
+    assert re.search(r'-e\s+"?SOURCE_DATE_EPOCH', docker_run), (
+        "scripts/build-deb.sh does not forward SOURCE_DATE_EPOCH to `docker run`: the "
+        "changelog date would go back to stamping the build clock on every `make deb`")
+    # Forwarded with a default, not only when the caller happened to export one —
+    # otherwise a plain `make deb` is still not reproducible.
+    assert "${SOURCE_DATE_EPOCH:-" in script
