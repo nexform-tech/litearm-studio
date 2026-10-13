@@ -2,7 +2,7 @@
  * 固件升级（USB DFU）在**前端这一侧**的类型与归一化。
  *
  * 契约见 `daemon/src/litearm_studio_daemon/session.py` 的固件段与
- * `FIRMWARE-UPGRADE-PLAN.md` §3。三条要点：
+ * `daemon/README.md` 的「固件升级（USB DFU）」一节。三条要点：
  *
  * - 进度与结果走**广播帧**（`firmware_progress` / `firmware_result`），不是 `res`
  *   应答 —— 烧录可能几十秒，超过 daemon 的命令超时，而且进 DFU 之后**没有机械臂

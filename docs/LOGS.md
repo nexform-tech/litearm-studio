@@ -159,8 +159,11 @@ fails the suite, which is stronger than "we remembered to redact".
 
 1. Add `(name, kind, default_severity, summary)` to `schema.EVENTS` and a
    constant beside the others. The catalogue is the single source for the
-   page's labels and `GET /api/logs/events`, so a name that is not in it is a
-   bug rather than an extension point.
+   daemon's vocabulary and for `GET /api/logs/events`, so a name that is not in
+   it is a bug rather than an extension point. The Logs page does not read it:
+   its kind filter is its own list (`src/lib/log/schema.ts`, `KIND_SET`), that
+   filter's labels come from the i18n bundle (`logs:kind.*`), and the event name
+   itself is displayed as it is.
 2. Emit it from an existing decision point; do not add a parallel check whose
    only job is to log.
 3. Put machine-readable detail in `fields` (snake_case, values already

@@ -397,8 +397,8 @@ python packaging/build.py      # 产物：packaging/dist/litearm-studio-daemon[.
   盖住 24.04 的，24.04 的系统 WebKitGTK 于是加载失败、窗口开不出来（issue #123）。
   窗口后端本来就借目标机的 WebKitGTK（`libwebkit2gtk` 94 MB 从不进包），那套依赖会把
   整条 GTK 栈一起装上 —— 所以包里那份是纯副本。少了这个参数不会有任何报错，包只是白白
-  多带一份（落地时实测 `.deb` 45.4 MB → 16.0 MB，安装体积 124 MB → 40 MB），还会在 24.04
-  上坏掉。
+  多带一份（这套钩子落地时实测 `.deb` 45.4 MB → 16.0 MB、安装体积 124 MB → 40 MB；那两个数
+  都是**当时**的实测值，当前体积见「依赖」一节引的 21 MB），还会在 24.04 上坏掉。
 - **版本单一来源**：`LITEARM_STUDIO_VERSION`（CI 传 git tag）> `git describe --tags` >
   `0.0.0+dev`，写进构建时生成的 `_build_version.py`（不入库）。于是 `hello` 帧报的版本
   就是发出去的那个 tag，而不是 `pyproject.toml` 里的占位符。
