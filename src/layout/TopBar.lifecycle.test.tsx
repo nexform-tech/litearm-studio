@@ -99,8 +99,8 @@ describe('TopBar port picker, real lifecycle', () => {
     expect(document.getElementById('topbar-connection-status')?.textContent).toMatch(/Connected|已连接/)
     expect(screen.getByTestId('topbar-error').textContent).toMatch(/断开|Disconnect/)
 
-    // 断开: 真客户端会**先等 daemon 确认**（带 id 的请求, #82）再关掉那条共用 WebSocket
-    // —— 关掉之后 `listPorts()` 一律被拒。
+    // 断开: 真客户端会**先等 daemon 确认**（带 id 的请求, #82）。⚠ 会话结束、**链路不关**
+    // —— 那条 WebSocket 是与本地守护进程唯一的命令通道, 会话只是它的用途之一。
     act(() => fireEvent.click(disconnectButton()))
     const discFrame = ws.lastFrame('disconnect')!
     expect(typeof discFrame.id).toBe('number') // 没有 id 就没有"确认"可言
@@ -111,24 +111,29 @@ describe('TopBar port picker, real lifecycle', () => {
     // 「断开」也要把那条拒绝提示收掉 (它描述的是上一条链路的事)。
     expect(armClient.connectError).toBeNull()
     expect(screen.queryByTestId('topbar-error')).toBeNull()
+    expect(ws.readyState).toBe(FakeWebSocket.OPEN)
 
-    // 打开下拉会触发一次重新枚举。等过 5×400ms 的重试窗口: 旧实现在这里
-    // `setPorts([])`, 于是下拉塌成只有「自动发现」一项。
+    // 打开下拉会触发一次重新枚举: 断开之后这次枚举仍然真的走得到 daemon (旧实现把链路
+    // 一起关掉, 这条命令当场被拒 —— 而那正是操作员要换口的时候)。
     act(() => fireEvent.click(screen.getByTestId('topbar-port')))
+    await waitFor(
+      () => expect(ws.frames().filter((f) => f.m === 'list_ports')).toHaveLength(2),
+      { timeout: 3000 },
+    )
+    const reListed = ws.frames().filter((f) => f.m === 'list_ports').at(-1)!
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 2600))
+      ws.receive({ t: 'res', id: reListed.id, ok: true, v: ['/dev/ttyACM0', '/dev/ttyACM1'] })
     })
     expect(screen.getByRole('option', { name: '/dev/ttyACM0' })).toBeTruthy()
     expect(screen.getByRole('option', { name: '/dev/ttyACM1' })).toBeTruthy()
 
-    // 选另一个口再连: 新 socket 的 connect 帧必须带上**新选的口**, 而不是自动发现。
+    // 选另一个口再连: 同一条链路上补发一条带**新选的口**的 connect 帧 —— 链路既没关,
+    // 也不需要重开。
     act(() => fireEvent.click(screen.getByRole('option', { name: '/dev/ttyACM0' })))
     act(() => fireEvent.click(connectButton()))
 
-    const reopened = FakeWebSocket.instances.at(-1)!
-    expect(reopened).not.toBe(ws)
-    act(() => reopened.open())
-    expect(reopened.lastFrame('connect')).toMatchObject({
+    expect(FakeWebSocket.instances).toHaveLength(1)
+    expect(ws.lastFrame('connect')).toMatchObject({
       t: 'connect',
       port: '/dev/ttyACM0',
     })

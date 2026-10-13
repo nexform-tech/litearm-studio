@@ -25,8 +25,8 @@ const MAX_ATTEMPTS = 5
  * ⚠ 旧版 daemon 没有这条命令（回 `UnknownCommandError`）: 那时 `ports` 为空、`error`
  * 有值, 下拉只剩"自动发现"一项 —— 连接本身照常可用, 而不是整块界面报错。
  *
- * ⚠ 失败**不**清掉已经枚举到的口 (见失败分支的说明): 按「断开」之后 `listPorts` 就再也
- * 问不动 daemon 了, 而那正是要换口的时候。
+ * ⚠ 失败**不**清掉已经枚举到的口 (见失败分支的说明): 列不出来只说明"这一次问不着",
+ * 不等于机器上没有设备 —— 而换口恰恰发生在连不上、正在重连的时候。
  */
 export function useArmPorts(): ArmPortsState {
   const [ports, setPorts] = useState<string[]>([])
@@ -56,11 +56,9 @@ export function useArmPorts(): ArmPortsState {
             timer = setTimeout(attempt, RETRY_DELAY_MS)
             return
           }
-          // ⚠ **保留上一次成功枚举的结果, 不清空**: 按「断开」会关掉那条共用 WebSocket
-          //   (`ArmClient.disconnect`), 之后每次 `listPorts()` 都当场被拒 —— 而那恰恰是
-          //   操作员要换口的时候。清空的话下拉只剩「自动发现」, 换口这条真实工作流就断了。
-          //   重开 socket 不行: `ArmClient` 的 `onOpen` 会自动补一条 `connect`, 那会把
-          //   操作员刚断开的臂又连回去。所以只记失败原因, 让上一次的列表留在原地。
+          // ⚠ **保留上一次成功枚举的结果, 不清空**: 走到这里只说明这一次问不着 (旧版
+          //   daemon 没有 `list_ports`、libusb 枚举失败、链路正在重连)。清空的话下拉只剩
+          //   「自动发现」, 换口这条真实工作流就断了 —— 而那正是操作员最需要它的时候。
           setError(formatArmError(err) || String(err))
           setLoading(false)
         },

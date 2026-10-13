@@ -112,12 +112,20 @@ class UpgradeHooks(Protocol):
 
 def run_upgrade(*, blob: bytes, base: int, summary, hooks: UpgradeHooks,
                 emit: Callable[[Progress], None],
-                is_cancelled: Callable[[], bool] = lambda: False) -> Result:
+                is_cancelled: Callable[[], bool] = lambda: False,
+                from_dfu: bool = False) -> Result:
     """跑完整条升级流水线。**不抛异常** —— 一切终局都折成 `Result`。
 
     `summary` 是 `image.ImageSummary`（只用于显示与版本核对，判据在 `image.inspect`
     里已经过了）。`emit` 会被多次调用；`is_cancelled` 在相位之间与"等待类"相位内
     被查询，**烧录相位内不生效**（擦一半中断比烧完更糟，引擎自己也带"擦回空白"保护）。
+
+    `from_dfu=True` 是**板子已经在 ROM bootloader 里**的那条起跑线（没有应用态
+    会话，`0483:DF11` 就是它）：跳过 `disarm`/`enter_dfu`，从 `wait_dfu` 起接着走。
+
+    ⚠ 这条近路的正当性只有一条，别照着推广：**应用没在跑**（TIM3 停 ⇒ 电机早已按
+      `RID_TIMEOUT` 松力、没有帧在发），所以没有"要先失能"的东西。由应用态进 DFU 时
+      这条**不成立** —— 那时仍然必须先失能，见文件头的不变量。
     """
     expected_version = getattr(summary, "version", None)
 
@@ -131,16 +139,21 @@ def run_upgrade(*, blob: bytes, base: int, summary, hooks: UpgradeHooks,
     if is_cancelled():
         return Result(False, REASON_CANCELLED, "已取消（尚未开始）")
 
-    entered_dfu = False
+    #: 失败收尾要不要把设备拉出 DFU。从 DFU 起跑时初值就是 `True` —— 板子**本来**
+    #: 就在里面，而"留在 bootloader 里像坏了"是这里最坏的结局，与"是不是我们推进
+    #: 去的"无关（见 `_fail`）。
+    in_dfu = bool(from_dfu)
     try:
-        note(PHASE_DISARM, "失能全部关节")
-        hooks.disarm()
+        if not from_dfu:
+            note(PHASE_DISARM, "失能全部关节")
+            hooks.disarm()
 
-        note(PHASE_ENTER_DFU, "发送 CMD_ENTER_DFU (0x15)")
-        hooks.enter_dfu()
-        entered_dfu = True
+            note(PHASE_ENTER_DFU, "发送 CMD_ENTER_DFU (0x15)")
+            hooks.enter_dfu()
+            in_dfu = True
 
-        note(PHASE_WAIT_DFU, "等待 DFU 设备 (0483:DF11) 枚举")
+        note(PHASE_WAIT_DFU, "打开 DFU 设备 (0483:DF11)" if from_dfu
+             else "等待 DFU 设备 (0483:DF11) 枚举")
         hooks.wait_for_dfu(is_cancelled)
 
         note(PHASE_FLASH, "开始烧录", 0, summary.size)
@@ -152,17 +165,17 @@ def run_upgrade(*, blob: bytes, base: int, summary, hooks: UpgradeHooks,
         else:
             note(PHASE_DETACH, "复位回应用")
         hooks.detach()
-        entered_dfu = False
+        in_dfu = False
 
         note(PHASE_RECONNECT, "等待串口重新枚举并重建会话")
         port, version = hooks.reconnect(is_cancelled)
     except UpgradeError as e:
-        return _fail(e.reason, str(e), hooks, entered_dfu, note)
+        return _fail(e.reason, str(e), hooks, in_dfu, note)
     except Exception as e:                                     # noqa: BLE001
         # 引擎抛的是 `DfuError`, 但这里的边界是"任何一步都不许把异常漏出去":
         # 漏出去就只剩一条 WS 断连，操作员看不到是哪一步坏的。
         return _fail(REASON_FLASH_FAILED, f"{type(e).__name__}: {e}",
-                     hooks, entered_dfu, note)
+                     hooks, in_dfu, note)
 
     warning = None
     if expected_version and version and version != expected_version:
@@ -176,7 +189,7 @@ def run_upgrade(*, blob: bytes, base: int, summary, hooks: UpgradeHooks,
                   version=version, port=port, warning=warning)
 
 
-def _fail(reason: str, message: str, hooks: UpgradeHooks, entered_dfu: bool,
+def _fail(reason: str, message: str, hooks: UpgradeHooks, in_dfu: bool,
           note: Callable[..., None]) -> Result:
     """失败收尾：**尽力把设备拉出 DFU**，然后把失败如实交出去。
 
@@ -184,7 +197,7 @@ def _fail(reason: str, message: str, hooks: UpgradeHooks, entered_dfu: bool,
     而它其实只是等着一条 `DFU_DETACH`。这一步失败只记在 detail 上，不覆盖
     真正的失败原因 —— 后者才是操作员要看的。
     """
-    if entered_dfu:
+    if in_dfu:
         note(PHASE_DETACH, "失败后复位回应用 ...")
         try:
             hooks.detach()

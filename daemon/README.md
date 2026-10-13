@@ -459,9 +459,15 @@ litearm-studio-daemon --fake --fake-unactivated
 | 命令 | 要会话吗 | 说明 |
 | --- | --- | --- |
 | `firmware_inspect` | 不要 | 上传镜像字节（base64），离线解析并给出摘要与 token |
-| `firmware_upgrade` | 要 | 确认后开跑；**立即返回** job 号，进度与终局走广播帧 |
-| `firmware_status` | 不要 | 当前快照（界面重开/重连后据此把进度条接回去） |
+| `firmware_upgrade` | 要，**或**板子停在 DFU 里 | 确认后开跑；**立即返回** job 号，进度与终局走广播帧 |
+| `firmware_status` | 不要 | 当前快照（界面重开/重连后据此把进度条接回去），带 `dfuPresent` |
 | `firmware_cancel` | 不要 | 请求取消（进入擦写相位后无效） |
+
+`/api/health` 里多一段 `dfu`：`{present, location, engine, engineReady}` —— `present`
+与 `connected` 是**两个独立的问题**（见下面「板子停在 bootloader 里」）。
+`location` 是**板子插在哪儿**（`1-3.2` 这样的总线-端口链：取 `bus` / `port_numbers`，
+不发任何 `GET_DESCRIPTOR`，见 `dfu.device_location`）—— 这台机器上可能不止一块 STM32，
+而 `0483:DF11` 整个系列共用，所以界面把它显示出来让操作员核对是哪一块。
 
 下行新增两类帧：`firmware_progress {job, phase, done, total, detail}` 与
 `firmware_result {job, ok, reason, msg, version, port, warning}`。`reason` 是短码，
@@ -469,6 +475,14 @@ litearm-studio-daemon --fake --fake-unactivated
 
 几条必须知道的：
 
+- **板子停在 bootloader 里是它自己的一个状态, 不是"未连接"。** 烧录中途失败/断电后，
+  控制器会留在 ROM bootloader（`0483:DF11`）：没有应用态 ⇒ 串口不枚举 ⇒ 顶栏必然连不上。
+  它与"没插线"的处置相反（查线 vs 烧录/断电重上电），所以 `dfu.present` / 连接失败的那句
+  话 / `NotConnectedCommandError.reason="dfu_present"` 三处都要把它说出来。
+  ⚠ **没有应用态会话时 `firmware_upgrade` 也允许开跑**（唯一一条这样的硬件命令）：流水线
+  从 `flash` 起跳，跳过 `disarm`/`enter_dfu`（`dfu/job.py` 的 `from_dfu`）。那条近路只在
+  "应用没在跑"时成立 —— 由应用态进 DFU 时仍然必须先失能。没有它，停在 bootloader 里的
+  板子就成了死循环：连不上 ⇒ 不能升级 ⇒ 只有升级才能重新连上。
 - **升级会把设备交出去**，所以进度不走命令应答：烧录可能几十秒（超过
   `COMMAND_TIMEOUT_S`），而且进 bootloader 之后**没有机械臂会话**，普通命令一律以
   「未连接」被拒 —— `firmware_status` / `firmware_cancel` 因此是**会话无关**的。

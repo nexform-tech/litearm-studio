@@ -218,4 +218,22 @@ describe('formatArmError (activation reasons)', () => {
     expect(text).toMatch(/激活|凭据/)
     await i18n.changeLanguage('zh')
   })
+
+  it('separates "no session" from "the board is in the bootloader"', async () => {
+    // ⚠ 两种"没有会话"的**下一步动作相反**：一种去查线/点「连接」，另一种要**别去点**
+    //   「连接」（板子没有应用态可连）。合成一句就把操作员推进一个必然失败的动作里。
+    await i18n.changeLanguage('zh')
+    const plain = daemonErr('NotConnectedCommandError', '会话未连接', { reason: 'no_session' })
+    const inDfu = daemonErr('NotConnectedCommandError', '检测到…', { reason: 'dfu_present' })
+
+    expect(formatArmError(plain)).toBe('机械臂未连接：请先在顶栏连接本地程序与机械臂')
+    expect(formatArmError(inDfu)).toContain('bootloader')
+    expect(formatArmError(inDfu)).not.toBe(formatArmError(plain))
+
+    await i18n.changeLanguage('en')
+    expect(formatArmError(inDfu)).toContain('bootloader')
+    // 中文那句不许被拼进英文句子（`msg` 是守护进程写的中文）。
+    expect(formatArmError(inDfu)).not.toContain('机械臂')
+    await i18n.changeLanguage('zh')
+  })
 })
