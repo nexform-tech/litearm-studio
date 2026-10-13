@@ -446,6 +446,36 @@ def test_zero_gravity_start_stop_marks_the_state(fake_session: Session) -> None:
     assert _wait(lambda: (fake_session.state() or {}).get("state") != "zero_gravity")
 
 
+def test_zero_gravity_state_asks_the_sdks_public_flag(fake_session: Session,
+                                                      monkeypatch) -> None:
+    """"零重力中吗"只问 SDK 的公开属性 (`Arm.zero_g_active`)。
+
+    这一条是那份"由 `tests/test_session_fake.py` 钉住"的注释欠下的债: 那条用例从来没有
+    存在过, 而当时的实现读的是 SDK 的私有 `_zg_thread`。私有名改了, 读取会静默变成
+    `None` → "不在零重力里", 与事实相反且只持续半个窗口。
+
+    注入公开属性是唯一能证明"问的是 SDK"的判据: 私有名再改也不影响它, 而如果有人换回
+    私有读法, 这条会红。
+    """
+    monkeypatch.setattr(type(fake_session._arm), "zero_g_active",
+                        property(lambda self: True))
+    fake_session._zero_g_since = None          # 只留 SDK 那一条判据
+    with fake_session._lock:
+        assert fake_session._zero_g_active_locked() is True
+
+
+def test_zero_gravity_ends_when_the_sdk_says_it_ended(fake_session: Session) -> None:
+    """保活断了 (SDK 那边置假) ⇒ 就算会话自己的 0.5s 窗口还没过, 也必须如实报假。"""
+    fake_session.execute("zero_g_start", {})
+    fake_session._zero_g_since = None
+    with fake_session._lock:
+        assert fake_session._zero_g_active_locked() is True
+
+    fake_session.execute("zero_g_stop", {})
+    with fake_session._lock:
+        assert fake_session._zero_g_active_locked() is False
+
+
 # ------------------------------------------------------------------ 状态推送
 
 def test_state_push_rate_feeds_the_3d_preview() -> None:

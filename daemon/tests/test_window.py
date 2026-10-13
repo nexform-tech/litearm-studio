@@ -554,3 +554,58 @@ def test_a_frozen_directory_that_exists_is_left_alone(monkeypatch, tmp_path) -> 
     window._use_the_system_stack()
 
     assert os.environ["GI_TYPELIB_PATH"] == str(present)
+
+
+def test_focus_refuses_another_origin() -> None:
+    """别的网页不该能把窗口抬到操作员脸上 (与 `/ws`、`/api/export` 同一套判据)。
+
+    这是唯一一条有副作用却没有同源判据的路由: `fetch(..., {mode:"no-cors"})` 是简单请求,
+    不发预检, 响应不透明但副作用照落 —— 而它抬起的是握着机械臂控制的那张窗口。
+    """
+    from fastapi.testclient import TestClient
+
+    session = Session(port_finder=lambda: None)
+    handle = _Handle()
+    app = create_app(session, version="9.9.9-test", repo_dist=None,
+                     focus=lambda: (handle.raise_window(), True)[1])
+
+    response = TestClient(app).post("/api/focus",
+                                    headers={"Origin": "http://evil.example"})
+
+    assert response.status_code == 403
+    assert response.json()["error"] == "cross-origin"
+    assert handle.raised == 0
+
+
+def test_focus_still_answers_the_second_process() -> None:
+    """本机第二个实例的抬窗请求不带 `Origin` —— 那条路必须照常走通。
+
+    带 Origin 才判: `instance.py` 用的是 urllib, 它不发这个头; 把"没有 Origin"读成
+    跨源会让"图标被点了两次"变成一个突兀的 403。
+    """
+    from fastapi.testclient import TestClient
+
+    session = Session(port_finder=lambda: None)
+    handle = _Handle()
+    app = create_app(session, version="9.9.9-test", repo_dist=None,
+                     focus=lambda: (handle.raise_window(), True)[1])
+    response = TestClient(app).post("/api/focus")
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "focused": True}
+    assert handle.raised == 1
+
+
+def test_focus_accepts_an_origin_that_was_explicitly_allowed() -> None:
+    """`--allow-origin` 放行过的开发期页面照常能抬窗 (与 `/api/export` 一致)。"""
+    from fastapi.testclient import TestClient
+
+    session = Session(port_finder=lambda: None)
+    handle = _Handle()
+    app = create_app(session, version="9.9.9-test", repo_dist=None,
+                     focus=lambda: (handle.raise_window(), True)[1],
+                     allow_origins=("http://localhost:5173",))
+    response = TestClient(app).post(
+        "/api/focus", headers={"Origin": "http://localhost:5173",
+                               "Host": "127.0.0.1:8765"})
+    assert response.status_code == 200
+    assert handle.raised == 1

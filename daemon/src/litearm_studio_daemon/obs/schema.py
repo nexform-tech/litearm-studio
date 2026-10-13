@@ -260,6 +260,8 @@ EVENTS: Final[Tuple[Tuple[str, str, str, str], ...]] = (
      "命令超过等待上限"),
     ("daemon.log.dropped", KIND_SYSTEM, "WARN",
      "慢客户端导致 log 帧被丢弃"),
+    ("daemon.uplink.dropped", KIND_SYSTEM, "WARN",
+     "客户端上行过快导致命令帧被挤掉"),
     ("daemon.started", KIND_SYSTEM, "INFO",
      "守护进程已启动"),
     ("daemon.window.closed", KIND_SYSTEM, "INFO",
@@ -329,6 +331,7 @@ WS_DISCONNECTED: Final[str] = "daemon.ws.disconnected"
 UPSTREAM_INVALID: Final[str] = "daemon.upstream.invalid"
 COMMAND_TIMEOUT: Final[str] = "daemon.command.timeout"
 LOG_DROPPED: Final[str] = "daemon.log.dropped"
+UPLINK_DROPPED: Final[str] = "daemon.uplink.dropped"
 DAEMON_STARTED: Final[str] = "daemon.started"
 DAEMON_WINDOW_CLOSED: Final[str] = "daemon.window.closed"
 STARTUP_REFUSED: Final[str] = "daemon.startup_refused"

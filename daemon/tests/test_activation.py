@@ -14,6 +14,7 @@ import pytest
 from litearm_studio_daemon import activation
 from litearm_studio_daemon.activation import (
     ACTIVATION_PATH,
+    CODE_MAX_LEN,
     CONSENT_TEXT_VERSION,
     ActivationError,
     LicenseFileError,
@@ -193,6 +194,19 @@ def test_build_request_carries_the_versions_in_the_same_consent() -> None:
 def test_build_request_passes_an_order_code_through_when_present() -> None:
     """预留字段: 站点将来按它核对订单。今天界面上没有这个输入框。"""
     assert build_request(payload(code=" ORDER-42 "))["code"] == "ORDER-42"
+
+
+def test_build_request_caps_the_order_code_where_the_service_caps_it() -> None:
+    """本地判据不许比服务端宽松 —— 上限以 `litearm-activation` 的 schema 为准。
+
+    这里曾截到 200, 而站点是 `z.string().max(128)`: 129–200 字的输入能过本地校验, 然后
+    被服务端**整份**拒掉, 报错还说不出是哪个字段。
+    """
+    request = build_request(payload(code="x" * 300))
+    assert len(request["code"]) == CODE_MAX_LEN == 128
+
+    # 恰好等于上限的照常通过, 不被削掉一个字。
+    assert build_request(payload(code="y" * 128))["code"] == "y" * 128
 
 
 # --------------------------------------------------------------------- 服务调用

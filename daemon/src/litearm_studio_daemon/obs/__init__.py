@@ -98,6 +98,7 @@ from .schema import (  # re-exported: emitters use `obs.CONNECT_STARTED`
     UPGRADE_CRASHED,
     UPGRADE_FINISHED,
     UPGRADE_STARTED,
+    UPLINK_DROPPED,
     UPSTREAM_INVALID,
     WS_CONNECTED,
     WS_DISCONNECTED,

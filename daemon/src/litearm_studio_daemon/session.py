@@ -1143,17 +1143,21 @@ class Session:
         * 会话记录 (`zero_g_start` 收到过、`zero_g_stop` 之后才清) 且**仍在保活窗口内**
           —— 窗口宽于 SDK 的保活周期 (默认 40ms) 一个量级, 免得 50Hz 轮询与 25Hz 保活
           正好错开时闪成 "非零重力";
-        * `Arm._zg_thread` 还活着 (SDK 侧的权威证据)。读的是 SDK 的**私有**属性 ——
-          公开面上没有"零重力是否激活"这个查询 (`zero_g_active` 是方法不是属性),
-          ⚠ 这是一处已知的私有依赖, 由 `tests/test_session_fake.py` 钉住; SDK 若改了
-          这里, 那条用例会红而不是静默失效。
+        * SDK 自己的回答: `Arm.zero_g_active` (公开属性, `arm.py`)。
+
+        ⚠ 这里曾经读 SDK 的**私有** `_zg_thread` (保活线程还活着吗), 换掉它有两个理由。
+        一是当时的注释就是错的: 它说公开面上没有这个查询, 而 `zero_g_active` 是个
+        **属性**, 一直在。二是线程的活性本来也不等价于"还在零重力里": 线程只有两条出口
+        (保活写失败、`zero_g_stop`), 两条都把 `zero_g_active` 置假, 所以线程死 ⇒ 必假;
+        反过来不成立 —— `zero_g_stop` 在"线程没在超时内停下"那条路上会置假并把句柄**还**
+        回去, 线程还活着 (见 `arm.py` 的 `ZeroGStop` 报错分支), 那时报"零重力中"正是
+        操作员最不该看到的答案。
         """
         window = max(0.5, self._poll_period * 25)
         if self._zero_g_since is not None and (time.monotonic() - self._zero_g_since) < window:
             return True
         arm = self._arm
-        th = getattr(arm, "_zg_thread", None) if arm is not None else None
-        return bool(th is not None and th.is_alive())
+        return bool(arm is not None and arm.zero_g_active)
 
     # ------------------------------------------------------------------ 命令执行
     def execute(self, m: str, p: Optional[dict] = None, *,
