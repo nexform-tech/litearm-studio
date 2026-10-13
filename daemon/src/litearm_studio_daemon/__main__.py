@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from . import __version__, activation, obs
+from . import __version__, activation, fatal, obs
 from .instance import find_running, focus as focus_running
 from .obs import handlers as obs_handlers
 from .obs import schema as obs_schema
@@ -192,6 +192,13 @@ def build_gripper_session(args: argparse.Namespace):
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    # ⚠ 这两件必须最先做, 且排在 `obs.configure` / `logging.basicConfig` **之前**:
+    # 打出来的 Windows 产物是 GUI 子系统的 exe (见 `packaging/build.py` 的
+    # `console_build_args`), 从终端启动时两个流都还没接上, 而那两个处理器在构造时就把
+    # `sys.stderr` 抓走了。接不上父控制台 (双击) 时 `ensure_streams` 给它们一个落点 ——
+    # **少了它程序根本起不来**: uvicorn 配日志时要 `sys.stdout.isatty()`。
+    fatal.attach_parent_console()
+    fatal.ensure_streams()
     parser = build_parser()
     args = parser.parse_args(argv)
     #: 一份"什么都没指定"的对照 —— 复用判据要拿它逐项比较 (见 `_SESSION_SHAPING`)。
@@ -209,15 +216,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
     if not _is_loopback(args.host):
         # 早退: 与其把异常抛到 uvicorn 那一层, 不如在这里把理由说清楚。
-        print(f"只允许监听本机 (127.0.0.1), 拒绝 --host {args.host!r}", file=sys.stderr)
+        # ⚠ 走 `show_fatal` 而不是 `print`: GUI 子系统的产物里 stderr 是 `None`,
+        #   而这条拒绝 (与下面的组合错误) 是"程序没起来"的全部解释。
+        fatal.show_fatal(f"只允许监听本机 (127.0.0.1), 拒绝 --host {args.host!r}")
         obs.error(obs.STARTUP_REFUSED, body="拒绝监听非本机地址",
                   fields={"host": args.host, "reason": "non_loopback_host"})
         return 2
     if not args.fake and not args.fake_activated:
         # 组合无意义时明确报错, 而不是静默忽略: 用户以为"未激活的假设备"起来了,
         # 实际上会去连真硬件 (或者连不上), 排障时这是最费时间的一种失败。
-        print("--fake-unactivated 只在 --fake 下有意义 (它说的是**假设备**的状态)",
-              file=sys.stderr)
+        fatal.show_fatal("--fake-unactivated 只在 --fake 下有意义 (它说的是**假设备**的状态)")
         obs.error(obs.STARTUP_REFUSED, body="--fake-unactivated 未配合 --fake",
                   fields={"reason": "invalid_option_combination"})
         return 2
@@ -245,7 +253,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     except WindowUnavailable as exc:
         # ⚠ **不静默退回无界面**: 那正是"操作员以为程序关了、进程还握着串口"这个缺陷的
         # 形状。没有界面就说清楚为什么, 并且告诉他怎么显式地无界面运行。
-        print(f"[litearm-studio-daemon] {exc}", file=sys.stderr)
+        # ⚠ 也走 `show_fatal`: Windows 的产物没有控制台, 而这一条是"双击没反应"的
+        #   全部解释 —— 消息里带着该装什么 / 该加哪个参数。
+        fatal.show_fatal(str(exc))
         obs.error(obs.STARTUP_REFUSED, body="没有可用的 webview 后端, 拒绝以无界面方式继续",
                   fields={"reason": "window_unavailable"})
         return 3

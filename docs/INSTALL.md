@@ -184,6 +184,14 @@ The full list is in `litearm-studio --help`, or
 Download `litearm-studio-<version>-windows-amd64.exe` from the same release and
 double-click it. Nothing else is needed; the same window opens.
 
+Only the application window appears. The executable is built for the graphical
+subsystem, so Windows opens no console alongside it. Expect a few seconds between the
+double-click and the window: the single-file build unpacks itself into `%TEMP%` on every
+launch, and the embedded browser initialises after that. If the program cannot start, the
+reason arrives as a dialog box; the full record is the log file named in
+[docs/LOGS.md](LOGS.md). To read those messages as text instead, start the executable from
+`cmd` or PowerShell — it attaches to that terminal.
+
 To verify the download, run this in the directory holding the file and compare the
 value with the content of the `.sha256` file:
 

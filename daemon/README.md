@@ -378,7 +378,7 @@ pnpm build                     # 先构建界面：打包脚本会拒绝在没�
 python packaging/build.py      # 产物：packaging/dist/litearm-studio-daemon[.exe]
 ```
 
-`packaging/build.py` 做四件事：
+`packaging/build.py` 做这几件事：
 
 - **把界面打进包**：`dist/` 以 `--add-data` 放到 `_MEIPASS/dist`，`server.resolve_ui_dir()`
   认识这个冻结路径，所以打包后不需要手工传 `--ui-dir`。
@@ -399,6 +399,23 @@ python packaging/build.py      # 产物：packaging/dist/litearm-studio-daemon[.
   整条 GTK 栈一起装上 —— 所以包里那份是纯副本。少了这个参数不会有任何报错，包只是白白
   多带一份（这套钩子落地时实测 `.deb` 45.4 MB → 16.0 MB、安装体积 124 MB → 40 MB；那两个数
   都是**当时**的实测值，当前体积见「依赖」一节引的 21 MB），还会在 24.04 上坏掉。
+- **Windows 按图形子系统打包**（`--windowed`，判据在 `console_build_args()`，只在
+  `win32` 生效）：双击只出应用窗口，不再连带一个控制台黑窗。实测那份控制台 **0.25 s**
+  就出现了，而应用窗口 **4.45 s** 才出来，中间它一直是全黑的 —— 单文件引导器正在解包，
+  还没有 Python 代码在跑，所以一个字都打不出来。代价说清楚：`sys.stdout` / `sys.stderr`
+  变成 `None`。这两种后果都接在 `daemon/src/litearm_studio_daemon/fatal.py` 里，三条
+  缺一不可：
+
+  - `ensure_streams()` 给 `None` 补一个 `os.devnull` 落点。**少了它程序根本起不来**：
+    uvicorn 的 `DefaultFormatter.__init__` 无条件读 `sys.stdout.isatty()`，抛在
+    `serve()` 里配日志的时候（实测 `AttributeError: 'NoneType' object has no attribute
+    'isatty'`）。也就是说"换个开关少一个窗口"这件事，靠的是这一步在。
+  - `show_fatal()`：没有可用的控制台时，窗口起不来的原因走对话框 —— 写进 `nul` 等于没报，
+    所以那个落点要被 `is` 认出来、排除掉。
+  - `attach_parent_console()`：从终端启动时把两个流接回那个终端（`AttachConsole`）。
+
+  权威历史不受影响，那是 `obs` 写的 JSONL 文件（位置见 `docs/LOGS.md`）。Linux 不加这个
+  开关：那边从文件管理器启动本来就不开终端，而从终端启动时那份输出正是操作员要的。
 - **版本单一来源**：`LITEARM_STUDIO_VERSION`（CI 传 git tag）> `git describe --tags` >
   `0.0.0+dev`，写进构建时生成的 `_build_version.py`（不入库）。于是 `hello` 帧报的版本
   就是发出去的那个 tag，而不是 `pyproject.toml` 里的占位符。

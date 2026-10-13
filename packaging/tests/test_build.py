@@ -247,6 +247,24 @@ def test_the_bundle_shape_defaults_to_onefile_and_refuses_nonsense(monkeypatch) 
     assert "onefile" in str(excinfo.value)
 
 
+def test_only_windows_gets_the_gui_subsystem(monkeypatch) -> None:
+    """Windows 上要 `--windowed`, 别处不要。
+
+    PyInstaller 默认打控制台子系统的可执行文件, 双击时 Windows 就分配一个控制台窗口
+    给这个 GUI 程序。实测 (0.23.8 的发布产物): 那个黑窗 0.25 s 就出现了, 而窗口 4.45 s
+    才出来 —— 前面那 1.5 s 是单文件引导器在解包, 一个字都打不出来。
+
+    Linux 不跟: 那边没有"控制台子系统", 从文件管理器启动本来就不开终端, 而从终端启动
+    时那份输出正是操作员要的。写死平台, 免得将来有人"顺手对齐"两个平台。
+    """
+    monkeypatch.setattr(build.sys, "platform", "win32")
+    assert build.console_build_args() == ["--windowed"]
+
+    for platform in ("linux", "darwin"):
+        monkeypatch.setattr(build.sys, "platform", platform)
+        assert build.console_build_args() == []
+
+
 def test_the_directory_shape_reports_the_size_of_the_whole_tree(monkeypatch, tmp_path) -> None:
     """目录形态的体积要连 `_internal/` 一起算。
 
