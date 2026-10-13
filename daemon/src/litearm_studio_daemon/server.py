@@ -1009,10 +1009,21 @@ def create_app(session: Session, *, gripper: Optional[Any] = None,
     # 见 `instance` 与 `__main__._reuse_the_running_instance`。关掉窗口就是退出, 所以
     # 正常路径上不会有第二个进程; 但"图标被点了两次"和"上一个版本的进程还活着"都会走到
     # 这里。抬不起来 (无界面运行) 就如实说 `focused: false`, 由调用者去告诉操作员。
+    # ⚠ 这是**唯一**一条有副作用却没有同源判据的路由 —— 补上, 与 `/ws`、`/api/export`、
+    # `/api/pick-file` 同一套。别的网页 `fetch(..., {mode:"no-cors"})` 就能反复把窗口抬到
+    # 操作员脸上: 这是不发预检的简单请求, 响应虽然不透明, 副作用已经落地。抬窗口本身还是
+    # 针对一张握着机械臂控制的窗口的 UI-redress 原语。
+    # ⚠ 判据只在**带 Origin 时**生效: 第二个进程 (`instance.FOCUS_PATH`) 用 urllib 发,
+    # 不带这个头, 那是本机自己的调用。
     @app.api_route("/api/focus", methods=["POST"])
-    async def _focus_window() -> JSONResponse:
+    async def _focus_window(request: Request) -> JSONResponse:
+        origin = request.headers.get("origin")
+        if origin is not None and not origin_allowed(
+                origin, request.headers.get("host", ""), allow_origins):
+            return JSONResponse({"ok": False, "error": "cross-origin"}, status_code=403)
         return JSONResponse({"ok": True,
                              "focused": bool(focus is not None and focus())})
+
 
     # ── 导出落点: 页面把字节交回来, 由**本进程**弹对话框并写文件 (#104 / #100) ──
     #
