@@ -24,6 +24,11 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-22.04
+    env:
+      # 机器人模型 (public/description/) 不在仓里: dev/build/test 各自去上游取。CI 按
+      # description.lock.json 取那一版并核对哈希 —— 与发布产物同一份, 而且上游挪了 tag
+      # 会在这里判失败, 不会静默换掉字节。
+      LITEARM_DESCRIPTION_MODE: locked
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4

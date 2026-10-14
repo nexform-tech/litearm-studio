@@ -60,7 +60,9 @@ fi
 
 if [ "$BUILD_UI" = 1 ]; then
     echo "[deb] building the UI (pnpm build)"
-    (cd "$ROOT" && pnpm build >/dev/null)
+    # ⚠ 锁住机器人模型: 本地构建会自动跟随上游最新 tag, 发布产物不能 —— 同一个 commit
+    #   的两次构建必须装进同一份模型 (description.lock.json 钉的就是这个)。
+    (cd "$ROOT" && LITEARM_DESCRIPTION_MODE=locked pnpm build >/dev/null)
 fi
 if [ ! -f "$ROOT/dist/index.html" ]; then
     echo "[deb] no UI build at dist/index.html — run without --no-ui" >&2

@@ -18,7 +18,7 @@
 # The window backend is written per platform rather than detected, on purpose:
 # the Linux leg borrows the system WebKitGTK, and a build host missing it fails
 # here instead of quietly shipping the self-contained Qt backend, which carries
-# ~243 MB against this package's ~21 MB. See `LITEARM_STUDIO_WINDOW_BACKEND`
+# ~253 MB against this package's ~28 MB. See `LITEARM_STUDIO_WINDOW_BACKEND`
 # below.
 #
 # Versions come from the tag, never from a manifest: `package` reads
@@ -84,6 +84,9 @@ jobs:
       # Actions → Variables），不必改工作流，也不必让用户设环境变量。
       # 不设置 = 用 daemon 里的内置生产地址（见 activation.PRODUCTION_ACTIVATION_URL）。
       LITEARM_ACTIVATION_URL: ${{ vars.LITEARM_ACTIVATION_URL }}
+      # ⚠ 机器人模型也是产物输入: 本地构建会自动跟随上游最新 tag, 发布构建必须按
+      # description.lock.json 取那一版 —— 这个 tag 发布了哪份模型, 事后要能重建出来。
+      LITEARM_DESCRIPTION_MODE: locked
     steps:
       - name: Checkout Studio
         uses: actions/checkout@v4
@@ -118,7 +121,7 @@ jobs:
 
       - name: Install the window stack (Linux)
         if: runner.os == 'Linux'
-        # ⚠ 这一条决定 Linux 产物是 ~21 MB 还是 243 MB。借系统的 WebKitGTK 就把
+        # ⚠ 这一条决定 Linux 产物是 ~28 MB 还是 253 MB。借系统的 WebKitGTK 就把
         # `libwebkit2gtk`（94 MB）留在用户机器上、由 `.deb` 的 `Depends` 要过来；
         # 装不上它时 `LITEARM_STUDIO_WINDOW_BACKEND=gtk` 会让构建**判失败**，而不是
         # 静默换成自带 Qt 的 243 MB 产物（见 packaging/build.py）。
