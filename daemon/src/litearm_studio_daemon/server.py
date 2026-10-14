@@ -968,14 +968,16 @@ class _SpaStaticFiles(StaticFiles):
 
         ⚠ **除 `assets/` 外的一切静态文件都必须在每次加载时重新验证, 一个都不能漏。**
         窗口用持久化的 webview 存储 (`window.run_window` 的 `private_mode=False` +
-        `storage_path`), WebKit 顺手把整包界面也写进磁盘缓存。`/description/litearm.urdf`
-        与 `/description/meshes/*.stl`、`/favicon.svg` 这些 URL **不随内容变** —— 没有
+        `storage_path`), WebKit 顺手把整包界面也写进磁盘缓存。
+        `/description/urdf/litearm_description.urdf` 与 `/description/meshes/*.stl`、
+        `/favicon.svg` 这些 URL **不随内容变** —— 没有
         `Cache-Control` 时它按启发式新鲜度 (距取回时长的 10%) 直接复用旧字节, 连一条
         请求都不发。于是升级后 3D 预览拿到的还是上一版的 URDF: `package://` 的名字一
         对不上, 网格一个都挂不上, 画面只剩地面和底座坐标轴 (issue #150)。
 
         带上 `no-cache` 后每次加载都会带 `If-None-Match` / `If-Modified-Since` 回来问
-        一次: 没变就是 304 (11 KB 的 URDF 与 6.8 MB 的网格都不重传), 变了就是新字节。
+        一次: 没变就是 304 (12 KB 的 URDF 与 60 MB 的网格一个字节都不重传), 变了就是
+        新字节 —— 网格越大这一条越值钱。
         入口文档另外还有 `_window_entry_url` 的构建令牌 —— 令牌管"上一版的入口 URL 不再
         命中", 这里管"**同一个** URL 也必须回来问一遍", 两道缺一不可。
 

@@ -1,0 +1,17 @@
+{
+  "ref": "v2.0.0",
+  "repo": "nexform-tech/litearm-description",
+  "path": "SE/litearm_description",
+  "files": {
+    "urdf/litearm_description.urdf": "sha256:655afc333d781dc1b046bade96c75e587f5a9f0fe535e9b6a369c4af153ad90b",
+    "meshes/base_link.STL": "sha256:08cf6a4258af41e20787780928813e1c9d608344da704613d88932495392f34e",
+    "meshes/joint1.STL": "sha256:d552978e38aa6ab4c5f5fd92679c59324aea53bffb5c8c1c4c34a47e0944f4a1",
+    "meshes/joint2.STL": "sha256:ef097aa49da8cce7b812f4721d3a1cb08b0875a361550ec530dfef9a366be945",
+    "meshes/joint3.STL": "sha256:65e72b9c14855fa02a8d2a844f121b85d12ce5c206efbc0c53b426b8a1abc3fe",
+    "meshes/joint4.STL": "sha256:62026fcd82fdd465d289f9396c300b551291be5e39c9f7c659618d66a49805aa",
+    "meshes/joint5.STL": "sha256:c76b823af6c4f8741f132e8dcb0adb77e8c37ac569c43eaefb9a52b10b384cb0",
+    "meshes/joint6.STL": "sha256:255ec3ce33e69c48ad423c673b49008b2a7cb0608a3048b6f9d21b808c3368a3",
+    "meshes/joint7.STL": "sha256:4e702c13c6b72089c762e24dee1e036a44aee397efcad2b88fa14187e6560a5c",
+    "meshes/ee_link.STL": "sha256:5ddee36ce28df27459cd1783581aa0a4f3262af4f6741718f3da1ac9b9ea85f4"
+  }
+}

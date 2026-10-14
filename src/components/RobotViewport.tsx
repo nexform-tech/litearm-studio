@@ -5,12 +5,8 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import URDFLoader from 'urdf-loader'
 import type { URDFRobot } from 'urdf-loader'
 import { defaultPreviewView, fitFrameDistance } from './previewCamera'
+import { END_EFFECTOR_LINK, JOINT_NAMES, MODEL_URL, WORKING_PATH } from './robotModel'
 
-const URDF_URL = `${import.meta.env.BASE_URL}description/litearm.urdf`
-const WORKING_PATH = `${import.meta.env.BASE_URL}description/`
-
-// 关节名顺序，需与 URDF 中的 joint 名称一致（支持 Joint1..Joint7 与 joint1..joint7）
-const JOINT_NAMES = ['Joint1', 'Joint2', 'Joint3', 'Joint4', 'Joint5', 'Joint6', 'Joint7']
 
 export interface RobotViewportHandle {
   /** 重置视角到默认朝向 */
@@ -242,7 +238,7 @@ export const RobotViewport = forwardRef<RobotViewportHandle, RobotViewportProps>
       const robot = robotRef.current
       if (!robot) return
       JOINT_NAMES.forEach((name, i) => {
-        const joint = robot.joints?.[name] ?? robot.joints?.[`joint${i + 1}`] ?? robot.joints?.[`Joint${i + 1}`]
+        const joint = robot.joints?.[name]
         if (joint && typeof angles[i] === 'number') {
           joint.setJointValue(angles[i])
         }
@@ -472,7 +468,7 @@ export const RobotViewport = forwardRef<RobotViewportHandle, RobotViewportProps>
     }
 
     const addEndEffectorAxes = (root: URDFRobot) => {
-      const target = root.links?.['ee_frame_link'] ?? root.getObjectByName('ee_frame_link')
+      const target = root.links?.[END_EFFECTOR_LINK] ?? root.getObjectByName(END_EFFECTOR_LINK)
       if (!target || target.getObjectByName('__end_effector_axes')) return
       const group = createLabeledAxes(0.08, '__end_effector_axes')
       group.visible = showAxesRef.current
@@ -561,7 +557,7 @@ export const RobotViewport = forwardRef<RobotViewportHandle, RobotViewportProps>
     // 这里只可能加载打包进来的那一份模型, 所以任何包名都指向它所在的目录即可。
     loader.packages = () => WORKING_PATH.replace(/\/$/, '')
     loader.workingPath = WORKING_PATH
-    loader.load(URDF_URL, onModelLoad, undefined, onModelError)
+    loader.load(MODEL_URL, onModelLoad, undefined, onModelError)
 
     scheduleRender()
 

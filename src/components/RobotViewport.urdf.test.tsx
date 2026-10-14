@@ -11,7 +11,8 @@
  * this file pins the half that keeps a stale template renderable.
  *
  * Read this before turning `packages` back into a map, or before moving the bundled
- * description to another path.
+ * description to another path. (`description.model.test.ts` is the other half: it checks
+ * the model that was fetched actually carries the names this component asks for.)
  */
 import { render } from '@testing-library/react'
 import { beforeEach, expect, it, vi } from 'vitest'
@@ -65,7 +66,7 @@ it('resolves the bundled meshes whatever package name the URDF declares', () => 
 
   // The premise: the component really did hand the bundled model to the loader.
   expect(loads).toHaveLength(1)
-  expect(loads[0].url).toBe('/description/litearm.urdf')
+  expect(loads[0].url).toBe('/description/urdf/litearm_description.urdf')
   expect(loads[0].workingPath).toBe('/description/')
 
   // The name the bundled URDF carries today, and the one a pre-#126 template carries.

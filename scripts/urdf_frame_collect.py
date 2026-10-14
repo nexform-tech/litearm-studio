@@ -27,7 +27,7 @@ What one sample contains, and why each field is needed:
                    firmware's `kin_rpy_to_rot` convention).
 * `cmd_q`        — what we asked for, kept so "the arm did not go there" is
                    visible in the file instead of being silently averaged away.
-* `urdf_fk`      — the URDF's `ee_frame_link` pose for that same `q`, so step 3
+* `urdf_fk`      — the URDF's `ee_link` pose for that same `q`, so step 3
                    does not have to re-parse the URDF or trust a second tool.
 * `settled_s` / `samples_seen` — evidence that the pose was actually still when
                    it was recorded. A sample taken mid-motion is worse than no
@@ -47,7 +47,15 @@ from typing import Any
 
 import websockets
 
-DEFAULT_URDF = Path(__file__).resolve().parent.parent / "public" / "description" / "litearm.urdf"
+#: The model is not in git — the build fetches it from `nexform-tech/litearm-description`
+#: into `public/description/` (see `scripts/fetch-description.mjs`). On a fresh checkout,
+#: run `node scripts/fetch-description.mjs` before this script. It is the current
+#: generation of the arm; earlier runs of this chain used the older `Link*` model, whose
+#: zeroes and link lengths differ, so their numbers are not comparable to new ones.
+DEFAULT_URDF = (
+    Path(__file__).resolve().parent.parent
+    / "public" / "description" / "urdf" / "litearm_description.urdf"
+)
 DEFAULT_WS = "ws://127.0.0.1:8765/ws"
 
 #: 到位判据: 全部关节速度低于它 (rad/s) 且与指令角之差小于容差。
@@ -128,7 +136,7 @@ def urdf_ee_pose(
     chain: list[tuple[str, str, list[float], list[float], list[float] | None]],
     q: list[float],
 ) -> dict[str, list[float]]:
-    """Pose of the last link (URDF `ee_frame_link`) for joint vector `q`."""
+    """Pose of the last link (URDF `ee_link`) for joint vector `q`."""
     t = _eye()
     revolute_index = 0
     for name, kind, xyz, rpy, axis in chain:
