@@ -61,7 +61,7 @@ def test_window_build_args_collects_the_qt_backend(monkeypatch):
 
 
 def test_window_build_args_uses_the_system_gtk_when_it_is_there(monkeypatch):
-    """有 GTK 就走 GTK —— 这条决定包是 ~21 MB 还是 ~243 MB。
+    """有 GTK 就走 GTK —— 这条决定包是 ~28 MB 还是 ~253 MB。
 
     借系统的 WebKitGTK 意味着产物里**不能**再塞一个 Qt；GTK 那条链由 PyInstaller 的
     `hook-gi.repository.*` 收，WebKit2 没有钩子，它的库与 typelib 由 `.deb` 的

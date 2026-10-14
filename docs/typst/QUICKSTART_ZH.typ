@@ -464,7 +464,7 @@ chmod +x "litearm-studio-${version}-linux-amd64"
 
 - *Python SDK*：#link("https://github.com/nexform-tech/litearm-python")[https://github.com/nexform-tech/litearm-python]
 - *ROS / ROS2 驱动包*：#link("https://github.com/nexform-tech/litearm-ros2")[https://github.com/nexform-tech/litearm-ros2]
-- *URDF / 机械臂仿真模型库*：#link("https://github.com/nexform-tech/litearm-description")[https://github.com/nexform-tech/litearm-description]
+- *URDF / 机械臂仿真模型库*：#link("https://github.com/nexform-tech/litearm-description")[https://github.com/nexform-tech/litearm-description] —— 上位机的 3D 预览用的就是它：构建时自动取回最新 tag，并把版本钉在 `description.lock.json` 里。
 
 == 官方联系方式
 

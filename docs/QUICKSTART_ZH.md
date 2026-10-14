@@ -48,13 +48,19 @@ pip install -e "daemon[test,ui]"
 sudo apt install python3-gi gir1.2-webkit2-4.1   # 仅 Linux：窗口的渲染内核
 ```
 
-`ui` 这个 extra 就是 `pywebview`，窗口本身。Linux 上它还需要一个渲染内核，小的那个是系统的 WebKitGTK（`python3-gi` + `gir1.2-webkit2-4.1`）。**不要**顺手换成 `daemon[ui-qt]`：它自带一个 Chromium，会把 `.deb` 从约 21 MB 撑到约 240 MB。只有当你永远用 `--no-open` 无界面运行时才可以把窗口整个省掉；没有渲染内核时程序会直接报错退出，而不是开一个窗口。
+`ui` 这个 extra 就是 `pywebview`，窗口本身。Linux 上它还需要一个渲染内核，小的那个是系统的 WebKitGTK（`python3-gi` + `gir1.2-webkit2-4.1`）。**不要**顺手换成 `daemon[ui-qt]`：它自带一个 Chromium，会把 `.deb` 从约 28 MB 撑到约 250 MB。只有当你永远用 `--no-open` 无界面运行时才可以把窗口整个省掉；没有渲染内核时程序会直接报错退出，而不是开一个窗口。
 
 构建本地程序要托管的界面（`dist/` 已存在可跳过）：
 
 ```bash
 pnpm install && pnpm build
 ```
+
+首次构建会先从
+[litearm-description](https://github.com/nexform-tech/litearm-description) 下载机器人模型
+（约 60 MiB、十个文件、国内网络约 30 秒）—— 它不在本仓，`pnpm build` 在编译任何东西之前
+先取它。之后的构建复用本地副本，只在检查上游有没有更新时联网。**这一步失败时坏的是 3D
+面板**，见本文末尾的常见问题。
 
 ---
 
@@ -133,6 +139,21 @@ litearm-studio-daemon --port /dev/ttyACM1 --http-port 9000 --no-open
 - 确认设备以 VID:PID `1d50:606f` 枚举。
 - 若它出现在别的设备路径下，显式指定：`litearm-studio-daemon --port /dev/ttyACM1`。
 - Linux 下确认当前用户有权限打开串口设备（`dialout` 组）。
+
+### 3D 面板只有地面，没有机械臂
+
+模型没取回来。`pnpm build` 会先从 GitHub 下载它（约 60 MiB），失败时以
+`[description] error: …` 中止 —— 所以通常是构建失败，而不是构建出一个没有臂的界面。仍然
+看到空面板时：
+
+- 跑一次 `make description` 再重新构建，它会打印取了什么、从哪儿取的；
+- 在连不上 GitHub 的代理或内网里，把 `LITEARM_DESCRIPTION_BASE_URL`（文件）与
+  `LITEARM_DESCRIPTION_GIT_URL`（tag 列表）指向镜像，或把有网的机器上的
+  `public/description/` 拷过来；
+- `pnpm exec vitest run src/description.model.test.ts` 会指出磁盘上那份模型哪里不对。
+
+面板只画出地面与底座坐标轴、**没有臂**，也正是"模型的 link 名变了"的样子（issue #150）
+—— 上面那条守卫测试就是为了在发布之前拦住它。
 
 ### 点「使能」没有反应
 

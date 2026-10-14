@@ -67,6 +67,11 @@ Trajectory teaching/playback, dexterous-hand panels and per-joint impedance or h
   [nvm](https://github.com/nvm-sh/nvm) or NodeSource's repository — and only run
   `corepack enable` once `node -v` prints `v20.` or later.
 - **Python** 3.10+ for the local daemon
+- **Network access on the first build.** The robot model (URDF + meshes, 60 MiB) is not in
+  this repository — `pnpm dev`, `pnpm build` and `pnpm test` fetch it from
+  [litearm-description](https://github.com/nexform-tech/litearm-description) into
+  `public/description/` before they run, and reuse it afterwards. See
+  [The robot model](#the-robot-model) for the pinning and the offline options.
 - **The two SDKs** (`litearm-python`, `litegrip-python`) — not on PyPI: they ship as git
   submodules under `sdk/`, pinned by tag. `make sdk` fetches and installs them; there is
   nothing to clone by hand.
@@ -106,7 +111,46 @@ consent document, and the `ERR{0x10,0x08}` refusal when you press Enable.
 
 To move to a newer SDK: check the tag out inside `sdk/<repo>` and commit the updated
 submodule pointer. `.gitmodules` plus that pointer is the only place the two versions live,
-and every build path — dev, CI, `.deb`, Windows — follows it.
+and every build path — dev, CI, `.deb`, Windows — follows it. (The robot model is the other
+external input, and it is **not** pinned that way — see below.)
+
+### The robot model
+
+The 3D viewport's model is a package in a repository we do not own,
+[`nexform-tech/litearm-description`](https://github.com/nexform-tech/litearm-description)
+(`SE/litearm_description`). It is **not committed here**: `scripts/fetch-description.mjs`
+fetches ten files from it into `public/description/` before every `pnpm dev`, `pnpm build`
+and `pnpm test`, and the `dist/` the daemon serves is built from that copy.
+
+Two modes, and which one you get depends on who is building:
+
+| | resolves | use it for |
+| :--- | :--- | :--- |
+| **track** (default) | the newest upstream tag; rewrites `description.lock.json` when it moved | local dev, `pnpm test` — you see a model change the next time you build |
+| **locked** (`LITEARM_DESCRIPTION_MODE=locked`) | exactly the ref `description.lock.json` pins, hash-checked | `make deb`, the release workflow, CI — same tree, same package |
+
+`description.lock.json` pins each file's sha256, not just the tag, so a tag that moves upstream
+cannot silently change what a release contains. When tracking moves it, **commit that file** —
+it is the only thing that decides what a release ships.
+
+Every run re-hashes the ten files against the lock, about 1.5 s. Track mode also asks upstream
+for its tag list — one small request — and downloads nothing when the answer has not moved;
+locked mode makes no request at all once the files are there. A machine that never had the
+model downloads about 60 MiB once — ten files in parallel, ~30 s on a domestic connection. If
+GitHub is not reachable, point
+`LITEARM_DESCRIPTION_BASE_URL` (the files) and `LITEARM_DESCRIPTION_GIT_URL` (the tag list) at
+a mirror, or run the fetch once somewhere that can reach it and copy `public/description/`
+over.
+
+```bash
+make description                # fetch the newest tag now, and update the lock
+make description-locked         # fetch exactly what the lock pins, and verify the hashes
+```
+
+⚠ `public/description/` is a build artifact in both cases and stays out of git
+(`.gitignore`), so do not "fix" the model there by hand: the next fetch overwrites it, and
+`src/description.model.test.ts` fails when what is on disk disagrees with the lock, or with
+the link and joint names the viewport drives.
 
 The console prints the URL it bound to (default `http://127.0.0.1:8765/`, auto-incrementing if busy) and opens a window.
 
@@ -220,6 +264,8 @@ so an untracked icon silently falls back to PyInstaller's default executable ico
 | `pnpm lint` | Static analysis (oxlint) |
 | `pnpm exec tsc -b` | TypeScript typecheck |
 | `make deb` | Installable Debian package into `packaging/dist/` (Docker, ~90 s) |
+| `make description` | Fetch the robot model at the newest upstream tag, updating `description.lock.json` |
+| `make description-locked` | Fetch the model exactly as the lock pins it, hashes checked |
 | `python -m pytest daemon/tests -q` | Daemon unit tests (no hardware needed) |
 
 **On a machine with ROS 2 installed, `pytest` dies during collection and none of this repository
