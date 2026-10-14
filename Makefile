@@ -11,6 +11,8 @@
 #   make build      Build production web bundle (tsc + Vite, output to dist/)
 #   make preview    Preview production web build locally
 #   make sdk        Install the pinned SDK submodules into the venv
+#   make description  Fetch the robot model the UI serves (build steps do this too)
+#   make description-locked  Same, but pinned to description.lock.json (what releases use)
 #   make deb        Build the installable Debian package (Docker, Ubuntu 22.04 base)
 
 SHELL := /bin/bash
@@ -61,6 +63,15 @@ sdk: ## Install the pinned SDK submodules (litearm-python + litegrip-python) int
 	# 开发 venv / CI / .deb 打包容器 / Windows 构建都走这一条, 不再各自 clone。
 	git submodule update --init --recursive
 	$(PY) -m pip install ./sdk/litearm-python ./sdk/litegrip-python
+
+description: ## Fetch the robot model from litearm-description (newest tag; build steps do this too)
+	# 模型不在本仓 (public/description/ 已进 .gitignore), 每次 pnpm dev/build/test 会自动
+	# 跟随上游最新 tag。这条目标只是"现在就去取一次", 取完记得把 description.lock.json
+	# 的改动提交进去 —— 发布构建按它钉住版本。
+	node scripts/fetch-description.mjs
+
+description-locked: ## Fetch the robot model exactly as description.lock.json pins it, hashes checked
+	node scripts/fetch-description.mjs --locked
 
 pdf: ## Build documentation PDFs (Quickstart + User Manual)
 	$(MAKE) -C docs pdf

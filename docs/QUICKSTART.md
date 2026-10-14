@@ -52,7 +52,7 @@ sudo apt install python3-gi gir1.2-webkit2-4.1   # Linux only: the window's rend
 The `ui` extra is `pywebview`, the window itself. On Linux it still needs a renderer, and
 the small one is the system's WebKitGTK (`python3-gi` plus `gir1.2-webkit2-4.1`). Do not
 reach for `daemon[ui-qt]` unless those packages are unavailable: it bundles a Chromium and
-takes the `.deb` from about 21 MB to about 240 MB. Leave the window out entirely only if you
+takes the `.deb` from about 28 MB to about 250 MB. Leave the window out entirely only if you
 always run headless with `--no-open`; without a renderer the program exits with an error
 rather than opening a window.
 
@@ -61,6 +61,12 @@ Build the UI that the daemon will serve (skip only if `dist/` already exists):
 ```bash
 pnpm install && pnpm build
 ```
+
+The first build downloads the robot model (about 60 MiB, ten files, ~30 s) from
+[litearm-description](https://github.com/nexform-tech/litearm-description) — it is not in this
+repository, and `pnpm build` fetches it before it compiles anything. Later builds reuse it and
+touch the network only to check whether upstream moved. **If that download fails**, the 3D
+panel is what breaks — see the troubleshooting entry at the end of this document.
 
 ---
 
@@ -143,6 +149,22 @@ Open the **Telemetry** page: a session is created automatically when the arm con
 ### "Enable" does nothing
 
 This arm has not been activated yet. Go to **Settings → Activation** and follow step 1 of §4. Nothing except Enable is affected in the meantime.
+
+### The 3D panel shows the ground plane and no arm
+
+The model was not fetched. `pnpm build` downloads it from GitHub first (about 60 MiB) and stops
+with `[description] error: …` if that fails — so the build usually fails rather than producing a
+UI without an arm. If you see the panel empty anyway:
+
+- run `make description` and build again; it prints what it fetched and from where;
+- behind a proxy or in a network that cannot reach GitHub, point
+  `LITEARM_DESCRIPTION_BASE_URL` (the files) and `LITEARM_DESCRIPTION_GIT_URL` (the tag list) at
+  a mirror, or copy a `public/description/` from a machine that has one;
+- `pnpm exec vitest run src/description.model.test.ts` says what is wrong with what is on disk.
+
+The panel drawing the ground plane and the base axes with **no arm** is also what a model whose
+link names changed looks like (issue #150) — that is the failure the guard test above exists to
+catch before it ships.
 
 ### The UI loads but never shows state
 

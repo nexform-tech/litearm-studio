@@ -57,7 +57,7 @@ VERSION_FILE = DAEMON_SRC / "litearm_studio_daemon" / "_build_version.py"
 ACTIVATION_URL_FILE = DAEMON_SRC / "litearm_studio_daemon" / "_build_activation_url.py"
 EXE_NAME = "litearm-studio-daemon"
 
-#: 窗口后端的选择。`gtk` 借系统的 WebKitGTK（产物小），`qt` 自带 Chromium（产物 ~240 MB）。
+#: 窗口后端的选择。`gtk` 借系统的 WebKitGTK（产物小），`qt` 自带 Chromium（产物 ~250 MB）。
 #: 没设就自动：有 GTK 用 GTK，否则 Qt。见 `window_backend()`。
 WINDOW_BACKEND_ENV = "LITEARM_STUDIO_WINDOW_BACKEND"
 
@@ -312,7 +312,7 @@ def window_build_args() -> list[str]:
     * `gtk`：整个桌面栈都借系统的（WebKitGTK 那 94 MB、GTK/GLib 的库与 typelib 都在
       目标机上，由 `.deb` 的 `Depends` 提供，见 `deb.control_text`）。产物里只有 Python
       侧与 PyGObject。
-    * `qt`：把 Qt WebEngine（一整个 Chromium）打进产物，不依赖任何系统库，代价是 `~240 MB`。
+    * `qt`：把 Qt WebEngine（一整个 Chromium）打进产物，不依赖任何系统库，代价是 `~250 MB`。
 
     选哪个由 `LITEARM_STUDIO_WINDOW_BACKEND` 决定，没设就自动：有 GTK 用 GTK，否则 Qt。
     """
@@ -332,14 +332,14 @@ def window_build_args() -> list[str]:
     raise SystemExit(
         "没有任何可用的窗口后端。二选一：\n"
         "    借系统的 GTK:  apt install python3-gi gir1.2-webkit2-4.1   （产物小）\n"
-        '    自带的 Qt:     pip install -e "daemon[ui-qt]"             （产物 ~240 MB）')
+        '    自带的 Qt:     pip install -e "daemon[ui-qt]"             （产物 ~250 MB）')
 
 
 def window_backend() -> str | None:
     """`gtk` / `qt` / `native`；一个都没有时返回 `None`。
 
     ⚠ Linux 上 `auto` 优先 GTK 是因为体积，不是因为 GTK 更好用：`libwebkit2gtk` 有
-    94 MB，自带的 Qt 有 240 MB，而两者都要在系统里放一份 WebKit/Chromium 才能渲染。
+    94 MB，自带的 Qt 有 250 MB，而两者都要在系统里放一份 WebKit/Chromium 才能渲染。
     Windows 与 macOS 没有这个取舍 —— 它们**自带**内核（WebView2 / WKWebView），
     pywebview 直接用，既不用 GTK 也不用 Qt，所以那两个平台是 `native`。
     """

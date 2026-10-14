@@ -29,6 +29,10 @@ litearm-python ──USB CDC (1d50:606f)──> STM32 ──CAN──> 电机
 - `fastapi` / `uvicorn`（随本包安装）
 - `pyusb` + `libusb-package`（随本包安装）—— 固件升级的 USB 烧录引擎。
   **Windows 上另外需要 ST 的 WinUSB 驱动**（这是系统驱动，不是 Python 包，见「固件升级」一节）。
+- **界面里的机器人模型**（`dist/description/`，约 60 MiB）由 `pnpm build` 在构建时从
+  [litearm-description](https://github.com/nexform-tech/litearm-description) 取回，不入本仓；
+  首次构建需要网络。守护进程只负责把 `dist/` 整个托管出去，模型的部分它不参与 ——
+  取回与钉版本见[主 README 的「机器人模型」一节](../README.md#the-robot-model)。
 - **两个 SDK 都不在 PyPI 上**（`litearm` / `litegrip`），它们以 git submodule 的形式
   随本仓（`sdk/`，版本由 tag 钉住），在仓库根目录一条命令取回并安装：
 
@@ -47,8 +51,9 @@ pip install -e "daemon[test]"
 ```bash
 pip install -e "daemon[ui]"                       # pywebview 本体
 
-# Linux: 借系统的 WebKitGTK。整条 GTK 栈都在目标机上，`.deb` 只有约 21 MB
-# （v0.23.4 的发布产物实测；`gh release view v0.23.4 --json assets`）。
+# Linux: 借系统的 WebKitGTK。整条 GTK 栈都在目标机上，`.deb` 约 28 MB
+# （`make deb` 实测，其中约 14 MB 是压缩后的机器人模型 —— 模型从 6.7 MB 换成
+#  当前的 60 MiB 之后，同一个命令从 15.5 MB 涨到这里）。
 sudo apt install python3-gi gir1.2-webkit2-4.1
 
 litearm-studio-daemon             # 开窗口；关掉窗口就是退出
@@ -56,8 +61,8 @@ litearm-studio-daemon --no-open   # 无界面运行；界面用浏览器连它�
 ```
 
   ⚠ Linux 上还有一个**自带内核**的备选：`pip install -e "daemon[ui-qt]"`（Qt WebEngine）。
-  它不需要 apt，但把一整个 Chromium 打进产物 —— 借系统 GTK 时 `.deb` 约 **21 MB**，换成
-  它就回到 **~240 MB** 那个量级（见 `packaging/build.py` 的 `window_build_args()`）。
+  它不需要 apt，但把一整个 Chromium 打进产物 —— 借系统 GTK 时 `.deb` 约 **28 MB**，换成
+  它就回到 **~250 MB** 那个量级（见 `packaging/build.py` 的 `window_build_args()`）。
   只在拿不到系统 GTK 时才用它。
 
   Windows 的 WebView2 与 macOS 的 WKWebView 都是系统自带的，两边什么都不用装。
@@ -395,7 +400,7 @@ python packaging/build.py      # 产物：packaging/dist/litearm-studio-daemon[.
   `--collect-all litegrip` 把三份 JSON 与 `py.typed` 一起收进去；缺了它会**直接判
   失败**——一个"忘了装 SDK"的 Linux 产物会静默地没有夹爪。Windows 上不装、也不收：
   那个平台没有 `PF_CAN`，夹爪是**缺席**的（不是禁用）。版本钉在 `.gitmodules` 指向的
-  submodule tag 上，全仓只有这一处版本来源 —— 即 `litegrip-python` v0.14.0，含
+  submodule tag 上，夹爪 SDK 全仓只有这一处版本来源 —— 即 `litegrip-python` v0.14.0，含
   `LiteGrip.write_zero()`（"写零位"，CAN `0xFE`）的首个 release；"按名字载入标定模板
   + 每通道标定文件"始于 `v0.4.0`。
 - **桌面栈一份都不带**：`--additional-hooks-dir packaging/hooks` 里的那几条钩子**替掉**

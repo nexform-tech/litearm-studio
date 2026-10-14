@@ -58,6 +58,11 @@ litearm-python  ──USB CDC (1d50:606f)──>  STM32  ──CAN──>  电�
   [nvm](https://github.com/nvm-sh/nvm) 或 NodeSource 的仓库装，装完 `node -v` 打出 `v20.`
   以上再执行 `corepack enable`。
 - **Python** 3.10+（运行本地程序）
+- **首次构建需要网络**。机器人模型（URDF + 网格，60 MiB）不在本仓：`pnpm dev` /
+  `pnpm build` / `pnpm test` 会先从
+  [litearm-description](https://github.com/nexform-tech/litearm-description) 取到
+  `public/description/` 再往下跑，之后复用。钉版本的方式与离线办法见
+  [机器人模型](#机器人模型)。
 - **两个 SDK**（`litearm-python`、`litegrip-python`）——**不在 PyPI 上**：它们以 git
   submodule 的形式随本仓（`sdk/`）发布，版本由 tag 钉住。`make sdk` 一次取回并安装，
   不需要手工 clone。
@@ -97,7 +102,41 @@ litearm-studio-daemon --fake       # 离线：用 SDK 的假传输跑完整会�
 
 升级 SDK：切到 `sdk/<repo>` 里新版本的 tag，然后提交更新后的 submodule 指针即可 ——
 `.gitmodules` 加这个指针是两个版本号唯一的落点，开发、CI、`.deb`、Windows 四条构建路径
-都跟着它走。
+都跟着它走。（机器人模型是另一个外部输入，钉法**不是** submodule，见下。）
+
+### 机器人模型
+
+3D 视口用的模型是别人仓库里的一个包：
+[`nexform-tech/litearm-description`](https://github.com/nexform-tech/litearm-description)
+(`SE/litearm_description`)。它**不入本仓**：每次 `pnpm dev` / `pnpm build` / `pnpm test`
+之前，`scripts/fetch-description.mjs` 会从那取十个文件到 `public/description/`，守护进程
+托管的 `dist/` 就是从这份副本构建出来的。
+
+两种模式，谁在构建决定拿到哪种：
+
+| | 取哪个版本 | 用在哪 |
+| :--- | :--- | :--- |
+| **track**（默认） | 上游最新的 tag；它一动就改写 `description.lock.json` | 本地开发、`pnpm test` —— 上游换了模型，下次构建就能看见 |
+| **locked**（`LITEARM_DESCRIPTION_MODE=locked`） | 恰好是 `description.lock.json` 钉住的 ref，逐个核对哈希 | `make deb`、发布工作流、CI —— 同一棵树，同一个包 |
+
+`description.lock.json` 钉的是每个文件的 sha256 而不只是 tag，所以上游挪了 tag 也不会
+悄悄换掉发布产物里的字节。track 模式把它改动之后，**记得提交这个文件** —— 发布构建装哪份
+模型，只由它决定。
+
+每次构建都会拿这些哈希核对磁盘上的副本，约 1.5 秒。track 模式还会向上游要一次 tag 列表
+（一个小请求），没更新就不下载任何东西；locked 模式在文件齐全时一条请求都不发。从没取过
+的机器首次要下约 60 MiB —— 十个文件并行，国内网络约 30 秒。连不上 GitHub 时，把
+`LITEARM_DESCRIPTION_BASE_URL`（文件）与 `LITEARM_DESCRIPTION_GIT_URL`（tag 列表）指向
+镜像，或者在能连的地方跑一次 `make description` 再把 `public/description/` 拷过来。
+
+```bash
+make description                # 现在就去取最新 tag，并更新锁文件
+make description-locked         # 严格按锁文件取，并核对哈希
+```
+
+⚠ `public/description/` 两种模式下都是构建产物，不入 git（`.gitignore`），所以别在里面
+手动"修"模型：下次取回就覆盖，而 `src/description.model.test.ts` 会在它与锁文件对不上、
+或者与视口要驱动的 link / joint 名对不上时判失败。
 
 **连接机械臂是由前端触发的**，本地程序自己不发起连接 —— 界面加载后经 WebSocket 发一帧
 `{"t":"connect"}` 才去连。所以在 `pnpm build` 之前启动，它看起来一切正常，实际谁也没去连臂：
@@ -200,6 +239,8 @@ PyInstaller 悄悄退回它自带的默认图标。
 | `pnpm test` | 运行 Vitest 单元测试 |
 | `pnpm lint` | 执行 oxlint 静态检查 |
 | `pnpm exec tsc -b` | TypeScript 类型检查 |
+| `make description` | 按上游最新 tag 取回机器人模型，并更新 `description.lock.json` |
+| `make description-locked` | 严格按锁文件取回模型，并核对哈希 |
 | `python -m pytest daemon/tests -q` | 本地程序单元测试（不需要硬件） |
 
 **本机装了 ROS 2 时 `pytest` 会在收集阶段崩掉，与本仓库无关**：pytest 按 entry point

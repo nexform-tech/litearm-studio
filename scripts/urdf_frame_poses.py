@@ -31,7 +31,13 @@ from pathlib import Path
 #: 这样每条指令的开始与结束都在操作员熟悉的位置附近。
 READY_POSE = [0.0, 0.5, 0.0, -1.0, 0.0, 0.6, 0.0]
 
-DEFAULT_URDF = Path(__file__).resolve().parent.parent / "public" / "description" / "litearm.urdf"
+#: The model is not in git — the build fetches it from `nexform-tech/litearm-description`
+#: into `public/description/` (see `scripts/fetch-description.mjs`). On a fresh checkout,
+#: run `node scripts/fetch-description.mjs` before this script.
+DEFAULT_URDF = (
+    Path(__file__).resolve().parent.parent
+    / "public" / "description" / "urdf" / "litearm_description.urdf"
+)
 
 
 def joint_limits(urdf: Path) -> list[tuple[str, float, float]]:

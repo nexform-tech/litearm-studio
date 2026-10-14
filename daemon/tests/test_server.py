@@ -263,9 +263,10 @@ def _spa_client(tmp_path: Path):
     (ui / "index.html").write_text("<!doctype html><title>liteart-ui</title>",
                                    encoding="utf-8")
     (ui / "assets" / "app.js").write_text("// app\n", encoding="utf-8")
+    (ui / "description" / "urdf").mkdir(parents=True)
     (ui / "description" / "meshes").mkdir(parents=True)
-    (ui / "description" / "litearm.urdf").write_text(
-        '<robot name="litearm"><link name="base_link"/></robot>', encoding="utf-8")
+    (ui / "description" / "urdf" / "litearm_description.urdf").write_text(
+        '<robot name="litearm_description"><link name="base_link"/></robot>', encoding="utf-8")
     (ui / "description" / "meshes" / "base_link.stl").write_bytes(b"solid base\n")
     (ui / "favicon.svg").write_text("<svg/>", encoding="utf-8")
     session = Session(port_finder=lambda: None)
@@ -323,7 +324,7 @@ def test_non_route_paths_keep_their_404(tmp_path: Path, path: str) -> None:
 # ------------------------------------------------- 静态资源的缓存指令 (issue #150)
 
 @pytest.mark.parametrize("path", [
-    "/description/litearm.urdf",       # 打包的模型本体
+    "/description/urdf/litearm_description.urdf",   # 打包的模型本体
     "/description/meshes/base_link.stl",   # 模型引用的网格
     "/favicon.svg",                    # dist/ 根下同类的固定名字文件
     "/index.html",                     # 入口文档
@@ -333,7 +334,7 @@ def test_fixed_url_files_are_revalidated(tmp_path: Path, path: str) -> None:
     """URL 不随内容变的文件, 必须每次加载都回来重新验证 (issue #150)。
 
     ⚠ 缺了这一句的实测后果: 窗口的 webview 磁盘缓存里留着升级前的
-    `/description/litearm.urdf`, 重启后**一条静态请求都不发**, 3D 预览用旧模板的
+    `/description/urdf/litearm_description.urdf`, 重启后**一条静态请求都不发**, 3D 预览用旧模板的
     `package://` 名字去解析网格, 一个都挂不上 —— 画面上只剩地面与底座坐标轴。没有
     `Cache-Control` 时 WebKit 按启发式新鲜度复用旧字节, ETag 再准也没机会被问到。
     """
@@ -374,8 +375,8 @@ def test_a_revalidation_learns_to_revalidate_again(tmp_path: Path) -> None:
     session, app = _spa_client(tmp_path)
     try:
         with TestClient(app) as client:
-            first = client.get("/description/litearm.urdf")
-            again = client.get("/description/litearm.urdf",
+            first = client.get("/description/urdf/litearm_description.urdf")
+            again = client.get("/description/urdf/litearm_description.urdf",
                                headers={"if-none-match": first.headers["etag"]})
             assert again.status_code == 304
             assert again.headers["cache-control"] == "no-cache"
