@@ -31,6 +31,7 @@ import base64
 import binascii
 import logging
 import secrets
+import struct
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -249,11 +250,73 @@ def build_fake_transport_factory(*, activated: bool = True):
     `activated=False` 把假设备变成**未激活**的一台 (`--fake-unactivated`): 授权记录照回
     (含 UID), 但 `ENABLE` 会被拒 `ERR{0x10,0x08}` —— 于是"未激活"整条界面路径 (授权面板、
     注册表单、使能被拒的提示) 在没有硬件时也能走一遍。
+
+    ⚠ **桩固件的 `G(q)` 不认 gravity 向量** (见 `litearm.testing`: 它只为断言帧格式,
+    不做 RNEA)。真固件则相反 —— `dyn_gravity` 读的就是 `params.gravity` (0x28 item 6),
+    真机实测把 9.81 改成 4.0 时 G(q) 各轴等比缩小。于是「安装方向」下发后的自检
+    (写前/写后各读一次 G(q), 变了才算真的进了模型) 在 `--fake` 下**必然**报
+    "G(q) 没有按预期变化" —— 那是假件的缺陷, 不是操作员的。这里补上: G(q) 按当前
+    gravity 向量重算 (见 `_StudioFakeTransport`), 并让假设备出厂就是正装。
     """
+    from litearm import _protocol as P
     from litearm.testing import FakeTransport
 
+    class _StudioFakeTransport(FakeTransport):
+        """`--fake` 用的假传输 —— 在 SDK 桩上补齐两条 Studio 需要的固件行为。
+
+        1. **gravity 出厂值** 是 `(0, 0, -9.81)`（真固件 `params`/`flash_store` 的
+           默认值）。SDK 桩的标量表初始为空 ⇒ item 6 读回 `[0,0,0]`，而 `[0,0,0]`
+           不是一个装向；「安装方向」页会一直说"尚未读取"。
+        2. **`G(q)` 跟着 gravity 向量走**。桩的 G 只跟姿态/机身质量有关；这里把它乘上
+           gravity 在一个固定"力臂方向"上的分量（三轴不同权重）—— 不是 RNEA，但保证
+           "方向或量级变了 ⇒ G(q) 变；写同值 ⇒ G(q) 不变"，也就是自检需要的那条判据。
+
+        ⚠ 重写在 `_push`（帧**入队之前**），不是 `write_frame` 返回之后：SDK 的读线程
+           会并发地 `pop` 这个队列，事后再改就可能改到已经被取走的那一帧。
+        """
+
+        #: 真固件的 gravity 出厂值 (m/s²)。
+        _DEFAULT_GRAVITY = (0.0, 0.0, -9.81)
+
+        #: 每个关节的代表力臂方向 —— 只要这 7 个方向张满 x/y/z，任何重力方向变化都会
+        #: 改变至少一个关节的 G。写同值不会变。
+        _LEVER = (
+            (1.0, 0.0, 1.0),
+            (0.0, 1.0, 1.0),
+            (-1.0, 0.0, 1.0),
+            (0.0, -1.0, 1.0),
+            (1.0, 1.0, 1.0),
+            (-1.0, 1.0, 1.0),
+            (1.0, -1.0, 1.0),
+        )
+
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            for sub, value in enumerate(self._DEFAULT_GRAVITY):
+                self.ff_scalar.setdefault((6, sub), value)
+
+        def _push(self, frame: bytes) -> None:
+            parsed = P.unpack_frame(frame)
+            if parsed is None or parsed[0] != P.RSP_GRAVITY:
+                super()._push(frame)
+                return
+            body = parsed[1]
+            if len(body) != 1 + 4 * 7:
+                super()._push(frame)
+                return
+            base = struct.unpack_from("<7f", body, 1)
+            g = [self.ff_scalar.get((6, k), v)
+                 for k, v in enumerate(self._DEFAULT_GRAVITY)]
+            scaled = [
+                base[i] * (g[0] * w[0] + g[1] * w[1] + g[2] * w[2]) / 9.81
+                for i, w in enumerate(self._LEVER)
+            ]
+            super()._push(P.pack_frame(
+                P.RSP_GRAVITY,
+                bytes([P.RSP_GRAVITY]) + struct.pack("<7f", *scaled)))
+
     def factory(port: str) -> Any:
-        tr = FakeTransport(port=port, timeout=0.2, fw="Litearm1.8.0-7J", n=7)
+        tr = _StudioFakeTransport(port=port, timeout=0.2, fw="Litearm1.8.0-7J", n=7)
         # ⚠ 桩的 `activated` 默认是 True (它模拟的是一台出厂已授权的板子) —— 这里按需翻掉。
         tr.activated = bool(activated)
         return tr
