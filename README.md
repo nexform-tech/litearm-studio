@@ -67,10 +67,11 @@ Trajectory teaching/playback, dexterous-hand panels and per-joint impedance or h
   [nvm](https://github.com/nvm-sh/nvm) or NodeSource's repository — and only run
   `corepack enable` once `node -v` prints `v20.` or later.
 - **Python** 3.10+ for the local daemon
-- **Network access on the first build.** The robot model (URDF + meshes, 60 MiB) is not in
-  this repository — `pnpm dev`, `pnpm build` and `pnpm test` fetch it from
+- **Network access on the first build.** The robot model (URDF + meshes, about 60 MiB
+  upstream) is not in this repository — `pnpm dev`, `pnpm build` and `pnpm test` fetch it from
   [litearm-description](https://github.com/nexform-tech/litearm-description) into
-  `public/description/` before they run, and reuse it afterwards. See
+  `.cache/description/` and derive the ~6 MiB decimated preview that ships under
+  `public/description/` before they run, then reuse both. See
   [The robot model](#the-robot-model) for the pinning and the offline options.
 - **The two SDKs** (`litearm-python`, `litegrip-python`) — not on PyPI: they ship as git
   submodules under `sdk/`, pinned by tag. `make sdk` fetches and installs them; there is
@@ -118,11 +119,18 @@ external input, and it is **not** pinned that way — see below.)
 
 The 3D viewport's model is a package in a repository we do not own,
 [`nexform-tech/litearm-description`](https://github.com/nexform-tech/litearm-description)
-(`SE/litearm_description`). It is **not committed here**: `scripts/fetch-description.mjs`
-fetches ten files from it into `public/description/` before every `pnpm dev`, `pnpm build`
-and `pnpm test`, and the `dist/` the daemon serves is built from that copy.
+(`SE/litearm_description`). It is **not committed here**, and it takes two steps to get from
+upstream to the shipped panel:
 
-Two modes, and which one you get depends on who is building:
+1. `scripts/fetch-description.mjs` fetches the ten files into `.cache/description/` — the raw
+   upstream bytes, which the lock pins and verifies.
+2. `scripts/build-description.mjs` decimates those meshes and writes the preview into
+   `public/description/` (about 6 MiB / 129k triangles, down from 60 MiB / 1.26M). The URDF
+   and every file name stay unchanged, so urdf-loader and the daemon need no special case.
+
+Both steps run before every `pnpm dev`, `pnpm build` and `pnpm test`; `dist/` the daemon
+serves is built from the derived copy. Two modes, and which one you get depends on who is
+building:
 
 | | resolves | use it for |
 | :--- | :--- | :--- |
@@ -133,24 +141,26 @@ Two modes, and which one you get depends on who is building:
 cannot silently change what a release contains. When tracking moves it, **commit that file** —
 it is the only thing that decides what a release ships.
 
-Every run re-hashes the ten files against the lock, about 1.5 s. Track mode also asks upstream
-for its tag list — one small request — and downloads nothing when the answer has not moved;
-locked mode makes no request at all once the files are there. A machine that never had the
-model downloads about 60 MiB once — ten files in parallel, ~30 s on a domestic connection. If
-GitHub is not reachable, point
+Every run re-hashes the ten cached files against the lock, about 1.5 s. The preview step is
+cached too: it costs about 2.5 s the first time and under 0.1 s after that. Track mode also
+asks upstream for its tag list — one small request — and downloads nothing when the answer has
+not moved; locked mode makes no request at all once the files are there. A machine that never
+had the model downloads about 60 MiB once — ten files in parallel, ~30 s on a domestic
+connection. If GitHub is not reachable, point
 `LITEARM_DESCRIPTION_BASE_URL` (the files) and `LITEARM_DESCRIPTION_GIT_URL` (the tag list) at
-a mirror, or run the fetch once somewhere that can reach it and copy `public/description/`
+a mirror, or run the fetch once somewhere that can reach it and copy `.cache/description/`
 over.
 
 ```bash
-make description                # fetch the newest tag now, and update the lock
-make description-locked         # fetch exactly what the lock pins, and verify the hashes
+make description                # fetch the newest tag now, update the lock, derive the preview
+make description-locked         # fetch exactly what the lock pins, verify hashes, derive the preview
 ```
 
-⚠ `public/description/` is a build artifact in both cases and stays out of git
-(`.gitignore`), so do not "fix" the model there by hand: the next fetch overwrites it, and
-`src/description.model.test.ts` fails when what is on disk disagrees with the lock, or with
-the link and joint names the viewport drives.
+⚠ `public/description/` is a derived build artifact in both cases and stays out of git
+(`.gitignore`), so do not "fix" the model there by hand: the next build overwrites it, and
+`src/description.model.test.ts` fails when what is on disk disagrees with the lock, with the
+link and joint names the viewport drives, or with the preview's triangle budget. The pinned
+upstream bytes live in `.cache/description/`, which is also gitignored.
 
 The console prints the URL it bound to (default `http://127.0.0.1:8765/`, auto-incrementing if busy) and opens a window.
 

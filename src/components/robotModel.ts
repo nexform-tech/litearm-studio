@@ -2,9 +2,11 @@
  * The model the 3D viewport loads — which is not in this repository.
  *
  * `scripts/fetch-description.mjs` pulls it from upstream (`nexform-tech/litearm-description`,
- * the version pinned in `description.lock.json`) into `public/description/` before every
- * dev, build and test run. The directory layout and the file names are byte-identical to
- * upstream's package, so what is written here is that package's layout.
+ * the version pinned in `description.lock.json`) into `.cache/description/` before every
+ * dev, build and test run; `scripts/build-description.mjs` then decimates the meshes into
+ * `public/description/`, which is what the viewport loads. The directory layout and the file
+ * names are identical to upstream's package — only the mesh bytes are derived — so what is
+ * written here is that package's layout.
  *
  * These live in their own module rather than in `RobotViewport.tsx` for two reasons:
  * a component file should export only components (react-refresh), and

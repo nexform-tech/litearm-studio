@@ -65,13 +65,15 @@ sdk: ## Install the pinned SDK submodules (litearm-python + litegrip-python) int
 	$(PY) -m pip install ./sdk/litearm-python ./sdk/litegrip-python
 
 description: ## Fetch the robot model from litearm-description (newest tag; build steps do this too)
-	# 模型不在本仓 (public/description/ 已进 .gitignore), 每次 pnpm dev/build/test 会自动
-	# 跟随上游最新 tag。这条目标只是"现在就去取一次", 取完记得把 description.lock.json
-	# 的改动提交进去 —— 发布构建按它钉住版本。
+	# 原始模型不在本仓 (.cache/description/ 已进 .gitignore), 每次 pnpm dev/build/test 会自动
+	# 跟随上游最新 tag; 减面后的预览写入 public/description/。这条目标只是"现在就去取一次",
+	# 取完记得把 description.lock.json 的改动提交进去 —— 发布构建按它钉住版本。
 	node scripts/fetch-description.mjs
+	node scripts/build-description.mjs
 
 description-locked: ## Fetch the robot model exactly as description.lock.json pins it, hashes checked
 	node scripts/fetch-description.mjs --locked
+	node scripts/build-description.mjs
 
 pdf: ## Build documentation PDFs (Quickstart + User Manual)
 	$(MAKE) -C docs pdf

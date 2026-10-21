@@ -59,8 +59,8 @@ pnpm install && pnpm build
 首次构建会先从
 [litearm-description](https://github.com/nexform-tech/litearm-description) 下载机器人模型
 （约 60 MiB、十个文件、国内网络约 30 秒）—— 它不在本仓，`pnpm build` 在编译任何东西之前
-先取它。之后的构建复用本地副本，只在检查上游有没有更新时联网。**这一步失败时坏的是 3D
-面板**，见本文末尾的常见问题。
+先取它，再减面成 3D 面板实际加载的约 6 MiB 预览。之后的构建复用两者，只在检查上游有没有
+更新时联网。**这一步失败时坏的是 3D 面板**，见本文末尾的常见问题。
 
 ---
 
@@ -142,14 +142,14 @@ litearm-studio-daemon --port /dev/ttyACM1 --http-port 9000 --no-open
 
 ### 3D 面板只有地面，没有机械臂
 
-模型没取回来。`pnpm build` 会先从 GitHub 下载它（约 60 MiB），失败时以
-`[description] error: …` 中止 —— 所以通常是构建失败，而不是构建出一个没有臂的界面。仍然
-看到空面板时：
+模型没取回来。`pnpm build` 会先从 GitHub 下载它（约 60 MiB），再派生出面板实际加载的
+约 6 MiB 减面预览，失败时以 `[description] error: …` 中止 —— 所以通常是构建失败，而不是
+构建出一个没有臂的界面。仍然看到空面板时：
 
 - 跑一次 `make description` 再重新构建，它会打印取了什么、从哪儿取的；
 - 在连不上 GitHub 的代理或内网里，把 `LITEARM_DESCRIPTION_BASE_URL`（文件）与
   `LITEARM_DESCRIPTION_GIT_URL`（tag 列表）指向镜像，或把有网的机器上的
-  `public/description/` 拷过来；
+  `.cache/description/` 拷过来；
 - `pnpm exec vitest run src/description.model.test.ts` 会指出磁盘上那份模型哪里不对。
 
 面板只画出地面与底座坐标轴、**没有臂**，也正是"模型的 link 名变了"的样子（issue #150）
