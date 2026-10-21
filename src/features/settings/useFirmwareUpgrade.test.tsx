@@ -210,6 +210,23 @@ describe('useFirmwareUpgrade', () => {
     expect(mocks.firmwareCancel).toHaveBeenCalledTimes(1)
   })
 
+  it('clears a failed cancel once the retry succeeds', async () => {
+    // 取消失败是一条**命令错误**，不是升级终局：重试成功之后还挂着它，界面就成了
+    // 与事实相反的说法（取消其实已经生效）。
+    const { result } = renderHook(() => useFirmwareUpgrade())
+
+    mocks.firmwareCancel.mockRejectedValueOnce(new Error('取消失败'))
+    await act(async () => {
+      await result.current.cancel()
+    })
+    expect(result.current.error).toContain('取消失败')
+
+    await act(async () => {
+      await result.current.cancel()
+    })
+    expect(result.current.error).toBeNull()
+  })
+
   it('picks a running job back up so a reloaded page keeps its progress bar', async () => {
     mocks.firmwareStatus.mockResolvedValue({
       job: 'fw-9', engine: 'e', engineReady: true, running: true, phase: 'flash',
