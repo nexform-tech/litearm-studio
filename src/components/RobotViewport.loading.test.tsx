@@ -83,10 +83,10 @@ function makeRobot(meshCount: number) {
   return robot
 }
 
-/** Attach link `i`'s mesh at x = 1, so framing recentres the robot to x = -1. */
-function attachMesh(robot: THREE.Object3D, i: number) {
+/** Attach link `i`'s mesh at x, so framing recentres the robot. */
+function attachMesh(robot: THREE.Object3D, i: number, x = 1) {
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1), new THREE.MeshBasicMaterial())
-  mesh.position.set(1, 0, 0)
+  mesh.position.set(x, 0, 0)
   robot.children[i].add(mesh)
 }
 
@@ -168,4 +168,33 @@ it('frames what did load when a mesh fails instead of waiting forever', () => {
   expect(robot.position.x).toBeCloseTo(-1)
   expect(error).toHaveBeenCalledWith(expect.stringContaining('1 mesh(es) failed to load'))
   expect(error).toHaveBeenCalledWith(expect.stringContaining('mesh-8.STL'))
+})
+
+it('frames a stalled load at the watchdog, then reframes when the last mesh arrives', async () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  render(<RobotViewport />)
+  const manager = state.manager!
+  const robot = state.robot as THREE.Object3D
+
+  for (let i = 0; i < 8; i++) {
+    attachMesh(robot, i)
+    manager.itemEnd(state.meshUrls[i])
+  }
+
+  // A request that neither succeeds nor fails keeps one item pending. The 2 s
+  // heuristic is gone; there is no frame on the partial model at that scale.
+  await vi.advanceTimersByTimeAsync(29_000)
+  expect(robot.position.x).toBe(0)
+
+  // The watchdog is generous enough not to mistake a slow cold start for a hang.
+  await vi.advanceTimersByTimeAsync(2_000)
+  expect(robot.position.x).toBeCloseTo(-1)
+  expect(warn).toHaveBeenCalledWith(expect.stringContaining('framing after 30 s'))
+  expect(warn).toHaveBeenCalledWith(expect.stringContaining('mesh-8.STL'))
+
+  // The hung request finally completes: the model is complete, so fit it again
+  // instead of leaving the camera on the partial envelope.
+  attachMesh(robot, 8, 3)
+  manager.itemEnd(state.meshUrls[8])
+  expect(robot.position.x).toBeCloseTo(-2)
 })

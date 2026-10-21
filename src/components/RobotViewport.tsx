@@ -479,7 +479,7 @@ export const RobotViewport = forwardRef<RobotViewportHandle, RobotViewportProps>
     // 取景必须等**加载器自己**报告完成，而不是数网格 + 猜时间。
     //
     // URDFLoader 的 onComplete 在 XML 解析完就触发，此时 9 个 STL 网格仍在
-    // 异步加载（本模型约 61 MB，每个 link 一个文件）。每个网格挂进场景后
+    // 异步加载（本模型减面后约 6 MB，每个 link 一个文件）。每个网格挂进场景后
     // FileLoader 才 itemEnd，所以 manager.onLoad 触发时网格已经全部到齐；
     // 加载失败也会 itemError + itemEnd，不会把面板永远卡在“加载中”。
     //
@@ -488,22 +488,74 @@ export const RobotViewport = forwardRef<RobotViewportHandle, RobotViewportProps>
     // 模型**的包围盒上，后到的关节全部落在视野外（客户反馈的“只显示一部分
     // 关节”）。加载慢不是失败，不能靠时间区分。manager 必须每个视口一个，
     // 否则两个视口（小窗与全屏）会互相把 pending 计数算进同一个 onLoad。
+    //
+    // ⚠ 但“只等 onLoad”也不够：LoadingManager 没有超时。一个既不成功也不
+    // 失败的请求（连接卡死、代理不回）会让 pending 永远不归零，onLoad 永不
+    // 触发，面板就永远停在默认机位。所以另设一个 30 s 看门狗：到点还没完成
+    // 就按已加载的部分取景，并记下还挂着哪些 URL。30 s 远大于真实冷启动，
+    // 不会把“慢”误判成“挂”；看门狗之后如果那个请求终于完成，onLoad 会再取
+    // 一次景，把完整模型的机位纠正回来。
+    const LOADING_WATCHDOG_MS = 30_000
     const manager = new THREE.LoadingManager()
     const failedMeshes: string[] = []
+    const pending = new Set<string>()
+    // 跟踪 itemStart/itemEnd，看门狗才能说出到底还挂着谁；LoadingManager
+    // 本身只给出计数，不保留 URL 集合。
+    const itemStart = manager.itemStart.bind(manager)
+    const itemEnd = manager.itemEnd.bind(manager)
+    manager.itemStart = (url) => { pending.add(url); itemStart(url) }
+    manager.itemEnd = (url) => { pending.delete(url); itemEnd(url) }
+
     let framed = false
-    const finalize = () => {
-      if (disposed || framed) return
+    let stalled = false
+    let watchdog: ReturnType<typeof setTimeout> | null = null
+
+    const frame = () => {
       const robot = robotRef.current
-      // URDF 本身失败时 onModelError 已经摆好了降级模型，这里不再插一手。
       if (!robot) return
+      frameRobot(robot, camera, controls)
+      scheduleRender()
+    }
+    const clearWatchdog = () => {
+      if (watchdog) {
+        clearTimeout(watchdog)
+        watchdog = null
+      }
+    }
+    const finalize = () => {
+      if (disposed || !robotRef.current) return
+      if (framed) {
+        // 看门狗已经按部分模型取过景；迟到的网格现在到齐了，纠正机位。
+        if (stalled) {
+          stalled = false
+          frame()
+        }
+        return
+      }
+      clearWatchdog()
       framed = true
       if (failedMeshes.length > 0) {
         console.error(
           `RobotViewport: ${failedMeshes.length} mesh(es) failed to load: ${failedMeshes.join(', ')}`,
         )
       }
-      frameRobot(robot, camera, controls)
-      scheduleRender()
+      frame()
+    }
+    const startWatchdog = () => {
+      clearWatchdog()
+      watchdog = setTimeout(() => {
+        watchdog = null
+        if (disposed || framed || !robotRef.current) return
+        framed = true
+        stalled = true
+        const outstanding = [...pending]
+        console.warn(
+          `RobotViewport: framing after ${LOADING_WATCHDOG_MS / 1000} s with ` +
+          `${outstanding.length} mesh(es) pending` +
+          (outstanding.length > 0 ? `: ${outstanding.join(', ')}` : ''),
+        )
+        frame()
+      }, LOADING_WATCHDOG_MS)
     }
     // 每完成一个网格排一帧，让模型随加载进度逐步出现，而不是一直停在
     // 空白/网格底座的画面。
@@ -522,6 +574,8 @@ export const RobotViewport = forwardRef<RobotViewportHandle, RobotViewportProps>
       addBaseAxes(robot)
       scene.add(robot)
       robotRef.current = robot
+      // 网格的 itemStart 在 parse 里已经全部发出；从这里开始计时。
+      startWatchdog()
     }
 
     const onModelError = (err: unknown) => {
@@ -584,6 +638,7 @@ export const RobotViewport = forwardRef<RobotViewportHandle, RobotViewportProps>
       disposed = true
       scheduleRenderRef.current = () => {}
       setPausedRef.current = () => {}
+      clearWatchdog()
       if (frameId) cancelAnimationFrame(frameId)
       if (resizeRafId) cancelAnimationFrame(resizeRafId)
       if (contextLostTimer) clearTimeout(contextLostTimer)
