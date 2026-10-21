@@ -257,6 +257,66 @@ describe('useSoloState cartesian jog', () => {
     expect(mocks.getTcpPose).toHaveBeenCalledTimes(2)
     expect(mocks.movel).toHaveBeenCalledTimes(2)
   })
+
+  it('clears the previous jog failure once a later segment succeeds', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { result } = await renderSolo()
+    const poses = controlTcpPose()
+
+    // 第一段失败：保持按住才会被 reportError 认领（松开后的失败只是取消，不报错）。
+    mocks.movel
+      .mockReset()
+      .mockRejectedValueOnce(new Error('收到 0x4E (笛卡尔规划应答) 但队列为空'))
+    act(() => result.current.onJogPress('X+'))
+    poses[0].resolve(POSE)
+    await settle()
+
+    expect(mocks.movel).toHaveBeenCalledTimes(1)
+    // 红框停在故障灯旁边：这里说的是**那一段**的失败，不是臂现在还坏着。
+    expect(result.current.faultReason).toContain('笛卡尔点动失败')
+    expect(result.current.faultReason).toContain('0x4E')
+
+    // 第二段成功 = 规划链路恢复了。上一条错误必须随之消失，而不是等操作员去按
+    // 「清除故障」——那颗按钮清的是驱动器锁存位，跟这条命令错误无关。
+    mocks.movel.mockReset().mockResolvedValue(null)
+    act(() => {
+      result.current.onJogPress('X+')
+      result.current.onJogRelease()
+    })
+    poses[1].resolve(POSE)
+    await settle()
+
+    expect(mocks.movel).toHaveBeenCalledTimes(1)
+    expect(result.current.faultReason).toBeNull()
+    consoleError.mockRestore()
+  })
+
+  it('does not let an obsolete segment success mask a newer jog failure', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { result } = await renderSolo()
+    const poses = controlTcpPose()
+    const movels = controlMovel()
+
+    // 上一代点动的一段还在途（例如一条较长的直线）。
+    act(() => result.current.onJogPress('X+'))
+    poses[0].resolve(POSE)
+    await settle()
+    expect(mocks.movel).toHaveBeenCalledTimes(1)
+
+    // 操作员改按新一代：它这一段被拒，红框记的是新一代的失败。
+    mocks.movel.mockRejectedValueOnce(new Error('新一次点动被拒'))
+    act(() => result.current.onJogPress('X+'))
+    poses[1].resolve(POSE)
+    await settle()
+    expect(mocks.movel).toHaveBeenCalledTimes(2)
+    expect(result.current.faultReason).toContain('新一次点动被拒')
+
+    // 上一代那一段这时才成功返回。它属于已作废的链路，不能抹掉新一代的失败。
+    movels[0].resolve(null)
+    await settle()
+    expect(result.current.faultReason).toContain('新一次点动被拒')
+    consoleError.mockRestore()
+  })
 })
 
 describe('useSoloState joint dispatch', () => {

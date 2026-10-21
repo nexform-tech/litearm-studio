@@ -242,6 +242,10 @@ export function useSoloState() {
           const rpy = mat3ToRpy(p[1] as Mat3)
           const target: Pose6 = [p[0][0], p[0][1], p[0][2], rpy[0], rpy[1], rpy[2]]
           await armClient.movel(target, speed / 100)
+          // 点动也是运动指令：这一段走完就说明规划链路是通的，上一次失败（例如固件多发了
+          // 一条 0x4E，已按脱同步报过错）的红框必须跟着消失 —— 否则操作员会一直以为它还没好。
+          // 只认**当前这一代**：新一次点动已经接管时，上一代迟到的成功不能抹掉新一代的失败。
+          if (gen === jogGenRef.current) setLastError(null)
           if (!jogHoldingRef.current || gen !== jogGenRef.current) break
         }
       } catch (err) {
@@ -644,6 +648,10 @@ export function useSoloState() {
       if (!connected || !s.real) return null
       try {
         const pose = await armClient.getTcpPose()
+        // 同一类错误的成功必须把它清掉：否则「读取位姿失败」会一直挂在故障灯旁边，
+        // 哪怕紧接着这次读取已经成功。只清这条读操作自己的错误 —— 读通了不代表运动
+        // 链路恢复，一次成功的读取不能抹掉「运动失败」那个更重的结论。
+        setLastError((prev) => (prev?.opKey === 'solo:ops.readTcpPose' ? null : prev))
         return {
           pos: [pose[0], pose[1], pose[2]] as [number, number, number],
           rpy: [pose[3], pose[4], pose[5]] as [number, number, number],

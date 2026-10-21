@@ -197,6 +197,9 @@ export function useFirmwareUpgrade() {
   const cancel = useCallback(async () => {
     try {
       await armClient.firmwareCancel()
+      // 重试成功 = 上一条「取消失败」已经过时：不清掉的话，界面会一直挂着一条
+      // 与现状相反的结论（取消其实生效了）。
+      setError(null)
     } catch (err) {
       setError(formatArmError(err) || String(err))
     }
