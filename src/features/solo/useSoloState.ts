@@ -242,6 +242,10 @@ export function useSoloState() {
           const rpy = mat3ToRpy(p[1] as Mat3)
           const target: Pose6 = [p[0][0], p[0][1], p[0][2], rpy[0], rpy[1], rpy[2]]
           await armClient.movel(target, speed / 100)
+          // 点动也是运动指令：这一段走完就说明规划链路是通的，上一次失败（例如固件多发了
+          // 一条 0x4E，已按脱同步报过错）的红框必须跟着消失 —— 否则操作员会一直以为它还没好。
+          // 只认**当前这一代**：新一次点动已经接管时，上一代迟到的成功不能抹掉新一代的失败。
+          if (gen === jogGenRef.current) setLastError(null)
           if (!jogHoldingRef.current || gen !== jogGenRef.current) break
         }
       } catch (err) {
