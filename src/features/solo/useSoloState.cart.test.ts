@@ -222,3 +222,57 @@ describe('useSoloState cartesian capability gating', () => {
     expect(result.current.cartHintKey).toBeNull()
   })
 })
+
+describe('useSoloState operation error lifecycle', () => {
+  const POSE: [number, number, number, number, number, number] = [0.32, 0, 0.45, 0, 1.57, 0]
+
+  beforeEach(async () => {
+    await i18n.changeLanguage('zh')
+    mocks.getJointParams.mockReset().mockResolvedValue(LIMITS)
+    mocks.getTcpPose.mockReset().mockResolvedValue(POSE)
+    mocks.movel.mockReset().mockResolvedValue(null)
+    mocks.toastWarning.mockReset()
+    mocks.toastError.mockReset()
+    mocks.status = 'connected'
+    mocks.conn = { cart: true }
+    mocks.armState = ENABLED_ARM
+  })
+
+  it('clears a stale pose-read failure once the next read succeeds', async () => {
+    // 与点动同一个毛病：读位姿失败记进了故障灯旁的红框，而重试成功却没有任何地方清它。
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { result } = await renderSolo()
+
+    mocks.getTcpPose.mockRejectedValueOnce(new Error('读位姿超时'))
+    await act(async () => {
+      await result.current.syncCurrentTcpPose()
+    })
+    expect(result.current.faultReason).toContain('读位姿超时')
+
+    mocks.getTcpPose.mockResolvedValue(POSE)
+    await act(async () => {
+      await result.current.syncCurrentTcpPose()
+    })
+    expect(result.current.faultReason).toBeNull()
+    consoleError.mockRestore()
+  })
+
+  it('does not let a successful read hide a motion failure', async () => {
+    // 读通只证明读通了：它不能把「运动失败」那个更重的结论一起抹掉。
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { result } = await renderSolo()
+
+    mocks.movel.mockRejectedValueOnce(new Error('运动被拒'))
+    await act(async () => {
+      await result.current.movelTarget([0.3, 0, 0.4], [0, 1.57, 0])
+    })
+    expect(result.current.faultReason).toContain('运动被拒')
+
+    mocks.getTcpPose.mockResolvedValue(POSE)
+    await act(async () => {
+      await result.current.syncCurrentTcpPose()
+    })
+    expect(result.current.faultReason).toContain('运动被拒')
+    consoleError.mockRestore()
+  })
+})

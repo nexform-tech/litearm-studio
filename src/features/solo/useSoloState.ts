@@ -648,6 +648,10 @@ export function useSoloState() {
       if (!connected || !s.real) return null
       try {
         const pose = await armClient.getTcpPose()
+        // 同一类错误的成功必须把它清掉：否则「读取位姿失败」会一直挂在故障灯旁边，
+        // 哪怕紧接着这次读取已经成功。只清这条读操作自己的错误 —— 读通了不代表运动
+        // 链路恢复，一次成功的读取不能抹掉「运动失败」那个更重的结论。
+        setLastError((prev) => (prev?.opKey === 'solo:ops.readTcpPose' ? null : prev))
         return {
           pos: [pose[0], pose[1], pose[2]] as [number, number, number],
           rpy: [pose[3], pose[4], pose[5]] as [number, number, number],
