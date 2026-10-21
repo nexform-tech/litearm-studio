@@ -11,7 +11,7 @@
 /** Vertical field of view of the preview camera, in degrees (`RobotViewport`). */
 export const PREVIEW_FOV_DEG = 45
 
-/** Floor on the eye distance, so a tiny or half-loaded model does not fill the screen. */
+/** Floor on the eye distance, so a tiny model does not fill the screen. */
 export const MIN_FRAME_DISTANCE = 1.0
 
 /** Air left around the envelope. The fit distance is multiplied by this. */

@@ -81,6 +81,23 @@ it('references only meshes that are on disk, and leaves no others behind', () =>
   expect(onDisk.filter((name) => !referenced.has(name))).toEqual([])
 })
 
+it('ships the decimated preview, not the raw upstream meshes', () => {
+  // `scripts/build-description.mjs` decimates the 61 MB / 1.26M-triangle upstream package
+  // before it reaches `public/`. A build that skips or breaks that step still passes every
+  // name check above, and quietly makes the 3D panel load ten times more geometry than it
+  // needs — which is what this budget catches.
+  let triangles = 0
+  // Visual and collision both reference the same file, so count each mesh once.
+  for (const path of new Set(meshFiles(loadModel()))) {
+    const stl = readFileSync(join(MESH_ROOT, path))
+    expect(stl.length).toBe(84 + stl.readUInt32LE(80) * 50) // binary STL, one 50-byte face each
+    triangles += stl.readUInt32LE(80)
+  }
+
+  expect(triangles).toBeGreaterThan(0)
+  expect(triangles).toBeLessThan(200_000)
+})
+
 it('has the bytes the lock pins, not just the file names', () => {
   const lock = JSON.parse(readFileSync(join(ROOT, 'description.lock.json'), 'utf8')) as {
     files: Record<string, string>

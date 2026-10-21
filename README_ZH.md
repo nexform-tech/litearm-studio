@@ -58,10 +58,11 @@ litearm-python  ──USB CDC (1d50:606f)──>  STM32  ──CAN──>  电�
   [nvm](https://github.com/nvm-sh/nvm) 或 NodeSource 的仓库装，装完 `node -v` 打出 `v20.`
   以上再执行 `corepack enable`。
 - **Python** 3.10+（运行本地程序）
-- **首次构建需要网络**。机器人模型（URDF + 网格，60 MiB）不在本仓：`pnpm dev` /
+- **首次构建需要网络**。机器人模型（URDF + 网格，上游约 60 MiB）不在本仓：`pnpm dev` /
   `pnpm build` / `pnpm test` 会先从
   [litearm-description](https://github.com/nexform-tech/litearm-description) 取到
-  `public/description/` 再往下跑，之后复用。钉版本的方式与离线办法见
+  `.cache/description/`，再派生出约 6 MiB 的减面预览写入 `public/description/`，
+  之后两者都复用。钉版本的方式与离线办法见
   [机器人模型](#机器人模型)。
 - **两个 SDK**（`litearm-python`、`litegrip-python`）——**不在 PyPI 上**：它们以 git
   submodule 的形式随本仓（`sdk/`）发布，版本由 tag 钉住。`make sdk` 一次取回并安装，
@@ -108,11 +109,16 @@ litearm-studio-daemon --fake       # 离线：用 SDK 的假传输跑完整会�
 
 3D 视口用的模型是别人仓库里的一个包：
 [`nexform-tech/litearm-description`](https://github.com/nexform-tech/litearm-description)
-(`SE/litearm_description`)。它**不入本仓**：每次 `pnpm dev` / `pnpm build` / `pnpm test`
-之前，`scripts/fetch-description.mjs` 会从那取十个文件到 `public/description/`，守护进程
-托管的 `dist/` 就是从这份副本构建出来的。
+(`SE/litearm_description`)。它**不入本仓**，从上游到实际出图的 3D 面板分两步：
 
-两种模式，谁在构建决定拿到哪种：
+1. `scripts/fetch-description.mjs` 把那十个文件取到 `.cache/description/` —— 上游原始字节，
+   锁文件钉住并逐文件核对的就是这一份；
+2. `scripts/build-description.mjs` 对网格做减面，把预览写进 `public/description/`
+   （约 6 MiB / 129k 三角面，原始为 60 MiB / 1.26M）。URDF 与所有文件名保持不变，所以
+   urdf-loader 和守护进程都不需要特殊处理。
+
+每次 `pnpm dev` / `pnpm build` / `pnpm test` 之前两步都会跑；守护进程托管的 `dist/` 就是
+从派生出的这份预览构建的。两种模式，谁在构建决定拿到哪种：
 
 | | 取哪个版本 | 用在哪 |
 | :--- | :--- | :--- |
@@ -123,20 +129,22 @@ litearm-studio-daemon --fake       # 离线：用 SDK 的假传输跑完整会�
 悄悄换掉发布产物里的字节。track 模式把它改动之后，**记得提交这个文件** —— 发布构建装哪份
 模型，只由它决定。
 
-每次构建都会拿这些哈希核对磁盘上的副本，约 1.5 秒。track 模式还会向上游要一次 tag 列表
-（一个小请求），没更新就不下载任何东西；locked 模式在文件齐全时一条请求都不发。从没取过
-的机器首次要下约 60 MiB —— 十个文件并行，国内网络约 30 秒。连不上 GitHub 时，把
-`LITEARM_DESCRIPTION_BASE_URL`（文件）与 `LITEARM_DESCRIPTION_GIT_URL`（tag 列表）指向
-镜像，或者在能连的地方跑一次 `make description` 再把 `public/description/` 拷过来。
+每次构建都会拿这些哈希核对缓存里的副本，约 1.5 秒。减面步骤也有缓存：第一次约 2.5 秒，
+之后不到 0.1 秒。track 模式还会向上游要一次 tag 列表（一个小请求），没更新就不下载任何
+东西；locked 模式在文件齐全时一条请求都不发。从没取过的机器首次要下约 60 MiB —— 十个
+文件并行，国内网络约 30 秒。连不上 GitHub 时，把 `LITEARM_DESCRIPTION_BASE_URL`（文件）
+与 `LITEARM_DESCRIPTION_GIT_URL`（tag 列表）指向镜像，或者在能连的地方跑一次
+`make description` 再把 `.cache/description/` 拷过来。
 
 ```bash
-make description                # 现在就去取最新 tag，并更新锁文件
-make description-locked         # 严格按锁文件取，并核对哈希
+make description                # 现在就去取最新 tag，更新锁文件，并派生预览
+make description-locked         # 严格按锁文件取，核对哈希，并派生预览
 ```
 
-⚠ `public/description/` 两种模式下都是构建产物，不入 git（`.gitignore`），所以别在里面
-手动"修"模型：下次取回就覆盖，而 `src/description.model.test.ts` 会在它与锁文件对不上、
-或者与视口要驱动的 link / joint 名对不上时判失败。
+⚠ `public/description/` 两种模式下都是派生出来的构建产物，不入 git（`.gitignore`），所以
+别在里面手动"修"模型：下次构建就覆盖，而 `src/description.model.test.ts` 会在它与锁文件
+对不上、与视口要驱动的 link / joint 名对不上，或者超出预览的三角面预算时判失败。钉住的
+上游原始字节在 `.cache/description/`，同样不入 git。
 
 **连接机械臂是由前端触发的**，本地程序自己不发起连接 —— 界面加载后经 WebSocket 发一帧
 `{"t":"connect"}` 才去连。所以在 `pnpm build` 之前启动，它看起来一切正常，实际谁也没去连臂：

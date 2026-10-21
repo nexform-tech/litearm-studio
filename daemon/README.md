@@ -29,10 +29,11 @@ litearm-python ──USB CDC (1d50:606f)──> STM32 ──CAN──> 电机
 - `fastapi` / `uvicorn`（随本包安装）
 - `pyusb` + `libusb-package`（随本包安装）—— 固件升级的 USB 烧录引擎。
   **Windows 上另外需要 ST 的 WinUSB 驱动**（这是系统驱动，不是 Python 包，见「固件升级」一节）。
-- **界面里的机器人模型**（`dist/description/`，约 60 MiB）由 `pnpm build` 在构建时从
-  [litearm-description](https://github.com/nexform-tech/litearm-description) 取回，不入本仓；
-  首次构建需要网络。守护进程只负责把 `dist/` 整个托管出去，模型的部分它不参与 ——
-  取回与钉版本见[主 README 的「机器人模型」一节](../README.md#the-robot-model)。
+- **界面里的机器人模型**（`dist/description/`，约 6 MiB）由 `pnpm build` 在构建时从
+  [litearm-description](https://github.com/nexform-tech/litearm-description) 取回约 60 MiB
+  的原始模型，再减面成预览后放进 `dist/`；原始模型与预览都不入本仓，首次构建需要网络。
+  守护进程只负责把 `dist/` 整个托管出去，模型的部分它不参与 ——
+  取回、钉版本与减面见[主 README 的「机器人模型」一节](../README.md#the-robot-model)。
 - **两个 SDK 都不在 PyPI 上**（`litearm` / `litegrip`），它们以 git submodule 的形式
   随本仓（`sdk/`，版本由 tag 钉住），在仓库根目录一条命令取回并安装：
 
@@ -51,9 +52,9 @@ pip install -e "daemon[test]"
 ```bash
 pip install -e "daemon[ui]"                       # pywebview 本体
 
-# Linux: 借系统的 WebKitGTK。整条 GTK 栈都在目标机上，`.deb` 约 28 MB
-# （`make deb` 实测，其中约 14 MB 是压缩后的机器人模型 —— 模型从 6.7 MB 换成
-#  当前的 60 MiB 之后，同一个命令从 15.5 MB 涨到这里）。
+# Linux: 借系统的 WebKitGTK。整条 GTK 栈都在目标机上。
+# ⚠ 包体积随机器人模型走：上游原始模型约 60 MiB，构建时减面到约 6 MiB 再放进 dist/，
+#   所以 `.deb` 不必装下原始模型。发布前以 `make deb` 的实测数字为准。
 sudo apt install python3-gi gir1.2-webkit2-4.1
 
 litearm-studio-daemon             # 开窗口；关掉窗口就是退出
@@ -61,9 +62,9 @@ litearm-studio-daemon --no-open   # 无界面运行；界面用浏览器连它�
 ```
 
   ⚠ Linux 上还有一个**自带内核**的备选：`pip install -e "daemon[ui-qt]"`（Qt WebEngine）。
-  它不需要 apt，但把一整个 Chromium 打进产物 —— 借系统 GTK 时 `.deb` 约 **28 MB**，换成
-  它就回到 **~250 MB** 那个量级（见 `packaging/build.py` 的 `window_build_args()`）。
-  只在拿不到系统 GTK 时才用它。
+  它不需要 apt，但把一整个 Chromium 打进产物 —— 借系统 GTK 时 `.deb` 只是 Python 运行时
+  加减面后的模型（约 6 MiB），换成它就回到 **~250 MB** 那个量级（见 `packaging/build.py`
+  的 `window_build_args()`）。只在拿不到系统 GTK 时才用它。
 
   Windows 的 WebView2 与 macOS 的 WKWebView 都是系统自带的，两边什么都不用装。
 

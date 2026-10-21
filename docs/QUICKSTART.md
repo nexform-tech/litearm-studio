@@ -64,9 +64,10 @@ pnpm install && pnpm build
 
 The first build downloads the robot model (about 60 MiB, ten files, ~30 s) from
 [litearm-description](https://github.com/nexform-tech/litearm-description) — it is not in this
-repository, and `pnpm build` fetches it before it compiles anything. Later builds reuse it and
-touch the network only to check whether upstream moved. **If that download fails**, the 3D
-panel is what breaks — see the troubleshooting entry at the end of this document.
+repository, and `pnpm build` fetches it before it compiles anything — then decimates it into the
+~6 MiB preview the 3D panel loads. Later builds reuse both and touch the network only to check
+whether upstream moved. **If that download fails**, the 3D panel is what breaks — see the
+troubleshooting entry at the end of this document.
 
 ---
 
@@ -152,14 +153,15 @@ This arm has not been activated yet. Go to **Settings → Activation** and follo
 
 ### The 3D panel shows the ground plane and no arm
 
-The model was not fetched. `pnpm build` downloads it from GitHub first (about 60 MiB) and stops
-with `[description] error: …` if that fails — so the build usually fails rather than producing a
-UI without an arm. If you see the panel empty anyway:
+The model was not fetched. `pnpm build` downloads it from GitHub first (about 60 MiB), then
+derives the ~6 MiB decimated preview the panel loads, and stops with `[description] error: …`
+if that fails — so the build usually fails rather than producing a UI without an arm. If you
+see the panel empty anyway:
 
 - run `make description` and build again; it prints what it fetched and from where;
 - behind a proxy or in a network that cannot reach GitHub, point
   `LITEARM_DESCRIPTION_BASE_URL` (the files) and `LITEARM_DESCRIPTION_GIT_URL` (the tag list) at
-  a mirror, or copy a `public/description/` from a machine that has one;
+  a mirror, or copy `.cache/description/` from a machine that has one;
 - `pnpm exec vitest run src/description.model.test.ts` says what is wrong with what is on disk.
 
 The panel drawing the ground plane and the base axes with **no arm** is also what a model whose

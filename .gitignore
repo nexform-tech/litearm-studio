@@ -2,7 +2,9 @@
 build/
 Build/
 # 机器人模型 (URDF + 网格): 构建时从上游拉取, 不是源码。版本由 description.lock.json
-# 钉住, 取回逻辑见 scripts/fetch-description.mjs。
+# 钉住, 取回逻辑见 scripts/fetch-description.mjs。原始字节 (约 61 MB) 缓存在 .cache/,
+# 实际发布的减面预览由 scripts/build-description.mjs 写入 public/description/。
+.cache/
 public/description/
 dist/
 dist-ssr/

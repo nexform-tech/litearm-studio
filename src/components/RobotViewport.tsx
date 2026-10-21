@@ -476,6 +476,97 @@ export const RobotViewport = forwardRef<RobotViewportHandle, RobotViewportProps>
       target.add(group)
     }
 
+    // 取景必须等**加载器自己**报告完成，而不是数网格 + 猜时间。
+    //
+    // URDFLoader 的 onComplete 在 XML 解析完就触发，此时 9 个 STL 网格仍在
+    // 异步加载（本模型减面后约 6 MB，每个 link 一个文件）。每个网格挂进场景后
+    // FileLoader 才 itemEnd，所以 manager.onLoad 触发时网格已经全部到齐；
+    // 加载失败也会 itemError + itemEnd，不会把面板永远卡在“加载中”。
+    //
+    // ⚠ 不要改回“N 毫秒没有新网格就算加载完”。2 s 的阈值在冷启动、慢盘、
+    // 或全屏弹窗同时再加载一份模型时会被正常加载跨过：相机于是定格在**部分
+    // 模型**的包围盒上，后到的关节全部落在视野外（客户反馈的“只显示一部分
+    // 关节”）。加载慢不是失败，不能靠时间区分。manager 必须每个视口一个，
+    // 否则两个视口（小窗与全屏）会互相把 pending 计数算进同一个 onLoad。
+    //
+    // ⚠ 但“只等 onLoad”也不够：LoadingManager 没有超时。一个既不成功也不
+    // 失败的请求（连接卡死、代理不回）会让 pending 永远不归零，onLoad 永不
+    // 触发，面板就永远停在默认机位。所以另设一个 30 s 看门狗：到点还没完成
+    // 就按已加载的部分取景，并记下还挂着哪些 URL。30 s 远大于真实冷启动，
+    // 不会把“慢”误判成“挂”；看门狗之后如果那个请求终于完成，onLoad 会再取
+    // 一次景，把完整模型的机位纠正回来。
+    const LOADING_WATCHDOG_MS = 30_000
+    const manager = new THREE.LoadingManager()
+    const failedMeshes: string[] = []
+    const pending = new Set<string>()
+    // 跟踪 itemStart/itemEnd，看门狗才能说出到底还挂着谁；LoadingManager
+    // 本身只给出计数，不保留 URL 集合。
+    const itemStart = manager.itemStart.bind(manager)
+    const itemEnd = manager.itemEnd.bind(manager)
+    manager.itemStart = (url) => { pending.add(url); itemStart(url) }
+    manager.itemEnd = (url) => { pending.delete(url); itemEnd(url) }
+
+    let framed = false
+    let stalled = false
+    let watchdog: ReturnType<typeof setTimeout> | null = null
+
+    const frame = () => {
+      const robot = robotRef.current
+      if (!robot) return
+      frameRobot(robot, camera, controls)
+      scheduleRender()
+    }
+    const clearWatchdog = () => {
+      if (watchdog) {
+        clearTimeout(watchdog)
+        watchdog = null
+      }
+    }
+    const finalize = () => {
+      if (disposed || !robotRef.current) return
+      if (framed) {
+        // 看门狗已经按部分模型取过景；迟到的网格现在到齐了，纠正机位。
+        if (stalled) {
+          stalled = false
+          frame()
+        }
+        return
+      }
+      clearWatchdog()
+      framed = true
+      if (failedMeshes.length > 0) {
+        console.error(
+          `RobotViewport: ${failedMeshes.length} mesh(es) failed to load: ${failedMeshes.join(', ')}`,
+        )
+      }
+      frame()
+    }
+    const startWatchdog = () => {
+      clearWatchdog()
+      watchdog = setTimeout(() => {
+        watchdog = null
+        if (disposed || framed || !robotRef.current) return
+        framed = true
+        stalled = true
+        const outstanding = [...pending]
+        console.warn(
+          `RobotViewport: framing after ${LOADING_WATCHDOG_MS / 1000} s with ` +
+          `${outstanding.length} mesh(es) pending` +
+          (outstanding.length > 0 ? `: ${outstanding.join(', ')}` : ''),
+        )
+        frame()
+      }, LOADING_WATCHDOG_MS)
+    }
+    // 每完成一个网格排一帧，让模型随加载进度逐步出现，而不是一直停在
+    // 空白/网格底座的画面。
+    manager.onProgress = () => {
+      if (!disposed) scheduleRender()
+    }
+    manager.onError = (url) => {
+      failedMeshes.push(url)
+    }
+    manager.onLoad = finalize
+
     const onModelLoad = (robot: URDFRobot) => {
       if (disposed) return
       robot.rotation.x = -Math.PI / 2
@@ -483,53 +574,8 @@ export const RobotViewport = forwardRef<RobotViewportHandle, RobotViewportProps>
       addBaseAxes(robot)
       scene.add(robot)
       robotRef.current = robot
-
-      // URDFLoader 的 onComplete 在 XML 解析完就触发，此时 STL 网格仍在
-      // 异步加载。每个 visual 节点对应一个网格，且网格只有解析完整后才会
-      // 挂进场景，所以“已加载网格数 >= 期望数”即代表模型完整，可以立刻
-      // 取景，无需等待网格数量额外稳定。
-      let expectedMeshCount = 0
-      robot.traverse((child) => {
-        if ((child as { isURDFVisual?: boolean }).isURDFVisual) expectedMeshCount++
-      })
-      let lastMeshCount = 0
-      let stallTicks = 0
-      const finalize = () => {
-        if (disposed) return
-        frameRobot(robot, camera, controls)
-        scheduleRender()
-      }
-      const poll = () => {
-        if (disposed) return
-        let meshCount = 0
-        const countMeshes = (obj: THREE.Object3D) => {
-          if (obj.name?.startsWith?.('__')) return
-          if (obj instanceof THREE.Mesh) meshCount++
-          obj.children.forEach(countMeshes)
-        }
-        countMeshes(robot)
-        if (meshCount !== lastMeshCount) {
-          // 有新网格挂进场景：先排一帧，让模型随加载进度逐步出现，
-          // 而不是一直停在空白/网格底座的画面。
-          lastMeshCount = meshCount
-          stallTicks = 0
-          scheduleRender()
-        } else {
-          stallTicks++
-        }
-        if (meshCount >= expectedMeshCount) {
-          finalize()
-          return
-        }
-        if (stallTicks >= 50) {
-          // 兜底：2s 内网格数没有增加（可能有个别文件加载失败），
-          // 至少把已加载的部分取景渲染出来。
-          if (meshCount > 0) finalize()
-          return
-        }
-        setTimeout(poll, 40)
-      }
-      poll()
+      // 网格的 itemStart 在 parse 里已经全部发出；从这里开始计时。
+      startWatchdog()
     }
 
     const onModelError = (err: unknown) => {
@@ -545,10 +591,11 @@ export const RobotViewport = forwardRef<RobotViewportHandle, RobotViewportProps>
       frameRobot(group, camera, controls)
       addBaseAxes(group)
       scene.add(group)
+      framed = true
       scheduleRender()
     }
 
-    const loader = new URDFLoader()
+    const loader = new URDFLoader(manager)
     // ⚠ 用**函数**而不是按名字查表。查表就等于把 URDF 里 `package://` 的包名抄了
     // 一份到前端: 上游描述包改名那次 (`litearm_urdf` → `litearm_description`, #126)
     // 两边同时改才没事, 而只要有一边没跟上 —— 比如升级后窗口缓存里还是旧模板 ——
@@ -591,6 +638,7 @@ export const RobotViewport = forwardRef<RobotViewportHandle, RobotViewportProps>
       disposed = true
       scheduleRenderRef.current = () => {}
       setPausedRef.current = () => {}
+      clearWatchdog()
       if (frameId) cancelAnimationFrame(frameId)
       if (resizeRafId) cancelAnimationFrame(resizeRafId)
       if (contextLostTimer) clearTimeout(contextLostTimer)

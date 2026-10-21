@@ -32,8 +32,9 @@ from pathlib import Path
 READY_POSE = [0.0, 0.5, 0.0, -1.0, 0.0, 0.6, 0.0]
 
 #: The model is not in git — the build fetches it from `nexform-tech/litearm-description`
-#: into `public/description/` (see `scripts/fetch-description.mjs`). On a fresh checkout,
-#: run `node scripts/fetch-description.mjs` before this script.
+#: into `.cache/description/` and derives the preview into `public/description/` (see
+#: `scripts/fetch-description.mjs` and `scripts/build-description.mjs`). On a fresh
+#: checkout, run both before this script.
 DEFAULT_URDF = (
     Path(__file__).resolve().parent.parent
     / "public" / "description" / "urdf" / "litearm_description.urdf"

@@ -1,8 +1,10 @@
-// Materialises the robot model (URDF + meshes) that the 3D viewport serves.
+// Fetches the robot model (URDF + meshes) into `.cache/description/`.
 //
-// Who reads this: anyone asking where `public/description/` comes from. It is **not in
-// git** — this script produces it, and `pnpm dev` / `pnpm build` / `pnpm test` all run it
-// first. The model belongs to another repository we do not own:
+// Who reads this: anyone asking where the model comes from. The package is **not in git** —
+// this script downloads it, and `pnpm dev` / `pnpm build` / `pnpm test` all run it first.
+// It keeps the **upstream bytes** the lock pins; `scripts/build-description.mjs` then
+// derives the much smaller preview that actually ships in `public/description/`. The model
+// belongs to another repository we do not own:
 //
 //     https://github.com/nexform-tech/litearm-description    (package SE/litearm_description)
 //
@@ -39,7 +41,8 @@ import { promisify } from 'node:util'
 const run = promisify(execFile)
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const OUT = join(ROOT, 'public', 'description')
+/** The raw upstream package. `build-description.mjs` derives `public/description/` from it. */
+const OUT = join(ROOT, '.cache', 'description')
 const LOCK_PATH = join(ROOT, 'description.lock.json')
 const MARKER = join(OUT, '.model.json')
 
@@ -171,9 +174,10 @@ const total = (bytes) => Object.values(bytes).reduce((sum, n) => sum + n, 0)
 const summary = (files, bytes) => `${Object.keys(files).length} files, ${mb(total(bytes))}`
 
 /**
- * What is on disk, where it came from, and how big each file is. Served at
- * `/description/.model.json`: it is the only way to tell which model a built package carries,
- * and the sizes are what let a later run report a byte delta instead of a new total.
+ * What is on disk, where it came from, and how big each file is. `build-description.mjs`
+ * copies this into `public/description/.model.json`, which is served and is the only way to
+ * tell which model a built package carries; the sizes are what let a later run report a
+ * byte delta instead of a new total.
  */
 function writeMarker(ref, files, bytes) {
   writeFileSync(MARKER, `${JSON.stringify({ ref, repo: REPO, path: PACKAGE_DIR, source: BASE_URL, files, bytes }, null, 2)}\n`)
@@ -215,8 +219,8 @@ async function main() {
     say(`${ref} is already in place (${Object.keys(expected).length} files)`)
     // The bytes are right, but the marker can still name an older ref: it is written after
     // the files, so an interrupted run — or a build from an older checkout — leaves it
-    // behind. It ships at `/description/.model.json`, where a stale one misreports which
-    // model the package contains.
+    // behind. `build-description.mjs` carries the ref into the served marker, where a stale
+    // one would misreport which model the package contains.
     if (marker?.ref !== ref) {
       writeMarker(ref, expected, Object.fromEntries(Object.entries(expected).map(([path]) => [path, localCopy(path).bytes])))
     }

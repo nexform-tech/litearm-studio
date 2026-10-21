@@ -48,8 +48,9 @@ from typing import Any
 import websockets
 
 #: The model is not in git — the build fetches it from `nexform-tech/litearm-description`
-#: into `public/description/` (see `scripts/fetch-description.mjs`). On a fresh checkout,
-#: run `node scripts/fetch-description.mjs` before this script. It is the current
+#: into `.cache/description/` and derives the preview into `public/description/` (see
+#: `scripts/fetch-description.mjs` and `scripts/build-description.mjs`). On a fresh
+#: checkout, run both before this script. It is the current
 #: generation of the arm; earlier runs of this chain used the older `Link*` model, whose
 #: zeroes and link lengths differ, so their numbers are not comparable to new ones.
 DEFAULT_URDF = (
