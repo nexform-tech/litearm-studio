@@ -988,11 +988,43 @@ def test_gravity_vector_roundtrip(fake_session: Session) -> None:
     assert got == pytest.approx([0.0, 0.0, -9.81])
 
 
+def test_fake_reports_the_firmware_default_gravity_vector(fake_session: Session) -> None:
+    """假设备出厂就该是正装 —— 否则「安装方向」页一上来读到 `[0,0,0]`。
+
+    真固件的 gravity 出厂值是 `(0, 0, -9.81)`（见 `params`/`flash_store` 的默认值），
+    页面的「读当前」与下发后的自检都以它作基线。
+    """
+    got = [fake_session.execute("get_ff_scalar", {"item": 6, "sub": i})
+           for i in range(3)]
+    assert got == pytest.approx([0.0, 0.0, -9.81], abs=1e-6)
+
+
+def test_set_gravity_vector_moves_the_model_gravity_term(fake_session: Session) -> None:
+    """「安装方向」下发后的自检：写不同方向 `G(q)` 必须变，写同值不该变。
+
+    ⚠ 这是唯一能证明"重力向量真的进了动力学模型"的判据（读回只证明字节落位）。
+    曾经桩固件的 `G(q)` 与 gravity 向量完全无关，于是 `--fake` 下每一次改装向都报
+    「G(q) 没有按预期变化」—— 一条只属于假件的失败。
+    """
+    q = [0.0] * 7
+    upright = fake_session.execute("get_gravity", {"q": q})
+
+    fake_session.execute("set_gravity_vector", {"g": [9.81, 0.0, 0.0]})
+    side = fake_session.execute("get_gravity", {"q": q})
+    assert max(abs(a - b) for a, b in zip(upright, side)) > 1e-6
+
+    # 写同值不该再动 —— 自检的另一半（没改动 ⇒ G 不该变）。
+    fake_session.execute("set_gravity_vector", {"g": [9.81, 0.0, 0.0]})
+    assert fake_session.execute("get_gravity", {"q": q}) == pytest.approx(side)
+
+
 def test_get_gravity_follows_the_pose_it_is_given(fake_session: Session) -> None:
     """`get_gravity` 是"写进去了没有"的判据，所以姿态必须真的进到固件那一侧。
 
     桩固件的 G(q) 只让 J1 那一项随 `q[1]` 变（见 `litearm.testing`），于是"换一个
     姿态、G 的第一项跟着变"正好证明 `q` 被送进了 0x39，而不是被忽略后随便回一帧。
+    ⚠ 其余分量只跟模型质量与 gravity 向量有关，与**姿态**无关（见
+    `build_fake_transport_factory` 对 G(q) 的补算）。
     """
     upright = fake_session.execute("get_gravity", {"q": [0.0] * 7})
     tilted = fake_session.execute("get_gravity", {"q": [0.0, 0.4, 0.0, 0.0, 0.0, 0.0, 0.0]})
