@@ -476,6 +476,45 @@ export const RobotViewport = forwardRef<RobotViewportHandle, RobotViewportProps>
       target.add(group)
     }
 
+    // 取景必须等**加载器自己**报告完成，而不是数网格 + 猜时间。
+    //
+    // URDFLoader 的 onComplete 在 XML 解析完就触发，此时 9 个 STL 网格仍在
+    // 异步加载（本模型约 61 MB，每个 link 一个文件）。每个网格挂进场景后
+    // FileLoader 才 itemEnd，所以 manager.onLoad 触发时网格已经全部到齐；
+    // 加载失败也会 itemError + itemEnd，不会把面板永远卡在“加载中”。
+    //
+    // ⚠ 不要改回“N 毫秒没有新网格就算加载完”。2 s 的阈值在冷启动、慢盘、
+    // 或全屏弹窗同时再加载一份模型时会被正常加载跨过：相机于是定格在**部分
+    // 模型**的包围盒上，后到的关节全部落在视野外（客户反馈的“只显示一部分
+    // 关节”）。加载慢不是失败，不能靠时间区分。manager 必须每个视口一个，
+    // 否则两个视口（小窗与全屏）会互相把 pending 计数算进同一个 onLoad。
+    const manager = new THREE.LoadingManager()
+    const failedMeshes: string[] = []
+    let framed = false
+    const finalize = () => {
+      if (disposed || framed) return
+      const robot = robotRef.current
+      // URDF 本身失败时 onModelError 已经摆好了降级模型，这里不再插一手。
+      if (!robot) return
+      framed = true
+      if (failedMeshes.length > 0) {
+        console.error(
+          `RobotViewport: ${failedMeshes.length} mesh(es) failed to load: ${failedMeshes.join(', ')}`,
+        )
+      }
+      frameRobot(robot, camera, controls)
+      scheduleRender()
+    }
+    // 每完成一个网格排一帧，让模型随加载进度逐步出现，而不是一直停在
+    // 空白/网格底座的画面。
+    manager.onProgress = () => {
+      if (!disposed) scheduleRender()
+    }
+    manager.onError = (url) => {
+      failedMeshes.push(url)
+    }
+    manager.onLoad = finalize
+
     const onModelLoad = (robot: URDFRobot) => {
       if (disposed) return
       robot.rotation.x = -Math.PI / 2
@@ -483,53 +522,6 @@ export const RobotViewport = forwardRef<RobotViewportHandle, RobotViewportProps>
       addBaseAxes(robot)
       scene.add(robot)
       robotRef.current = robot
-
-      // URDFLoader 的 onComplete 在 XML 解析完就触发，此时 STL 网格仍在
-      // 异步加载。每个 visual 节点对应一个网格，且网格只有解析完整后才会
-      // 挂进场景，所以“已加载网格数 >= 期望数”即代表模型完整，可以立刻
-      // 取景，无需等待网格数量额外稳定。
-      let expectedMeshCount = 0
-      robot.traverse((child) => {
-        if ((child as { isURDFVisual?: boolean }).isURDFVisual) expectedMeshCount++
-      })
-      let lastMeshCount = 0
-      let stallTicks = 0
-      const finalize = () => {
-        if (disposed) return
-        frameRobot(robot, camera, controls)
-        scheduleRender()
-      }
-      const poll = () => {
-        if (disposed) return
-        let meshCount = 0
-        const countMeshes = (obj: THREE.Object3D) => {
-          if (obj.name?.startsWith?.('__')) return
-          if (obj instanceof THREE.Mesh) meshCount++
-          obj.children.forEach(countMeshes)
-        }
-        countMeshes(robot)
-        if (meshCount !== lastMeshCount) {
-          // 有新网格挂进场景：先排一帧，让模型随加载进度逐步出现，
-          // 而不是一直停在空白/网格底座的画面。
-          lastMeshCount = meshCount
-          stallTicks = 0
-          scheduleRender()
-        } else {
-          stallTicks++
-        }
-        if (meshCount >= expectedMeshCount) {
-          finalize()
-          return
-        }
-        if (stallTicks >= 50) {
-          // 兜底：2s 内网格数没有增加（可能有个别文件加载失败），
-          // 至少把已加载的部分取景渲染出来。
-          if (meshCount > 0) finalize()
-          return
-        }
-        setTimeout(poll, 40)
-      }
-      poll()
     }
 
     const onModelError = (err: unknown) => {
@@ -545,10 +537,11 @@ export const RobotViewport = forwardRef<RobotViewportHandle, RobotViewportProps>
       frameRobot(group, camera, controls)
       addBaseAxes(group)
       scene.add(group)
+      framed = true
       scheduleRender()
     }
 
-    const loader = new URDFLoader()
+    const loader = new URDFLoader(manager)
     // ⚠ 用**函数**而不是按名字查表。查表就等于把 URDF 里 `package://` 的包名抄了
     // 一份到前端: 上游描述包改名那次 (`litearm_urdf` → `litearm_description`, #126)
     // 两边同时改才没事, 而只要有一边没跟上 —— 比如升级后窗口缓存里还是旧模板 ——
