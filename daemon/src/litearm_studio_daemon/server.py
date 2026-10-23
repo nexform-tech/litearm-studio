@@ -1275,8 +1275,8 @@ def _health(daemon: Daemon) -> dict:
 def _teardown(gripper: Optional[Any], session: Session) -> None:
     """进程退出前的收尾 —— **唯一一处**, 两条启动路径都走它。
 
-    ⚠ 夹爪**总是**失能退出: `--keep-enabled` 只对臂有效 (§5.1 第 5 条) —— 一个还夹着
-    东西的夹爪不该因为"保存使能"而留在原地。
+    ⚠ 臂**不主动失能**: 退出只是关会话、释放串口, 驱动状态留在固件里 (见
+    `Session.close()`)。夹爪则**总是**失能退出: 一个还夹着东西的夹爪不该留在原地。
     """
     if gripper is not None:
         try:

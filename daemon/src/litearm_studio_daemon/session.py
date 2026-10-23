@@ -338,7 +338,6 @@ class Session:
                  reconnect: bool = True,
                  reconnect_period: float = RECONNECT_PERIOD_S,
                  reconnect_window: float = RECONNECT_WINDOW_S,
-                 disable_on_exit: bool = True,
                  activation_url: str = activation.DEFAULT_ACTIVATION_URL,
                  sdk_version: str = litearm.__version__,
                  dfu_engine: Any = None) -> None:
@@ -367,8 +366,6 @@ class Session:
         self._reconnect = bool(reconnect)
         self._reconnect_period = float(reconnect_period)
         self._reconnect_window = float(reconnect_window)
-        #: 退出时是否降能量 —— 见 `close()` 与 `_deenergize()`。**产品策略**, 默认开。
-        self._disable_on_exit = bool(disable_on_exit)
         #: 激活服务地址 (见 `activation.py`)。空 = 未配置: 在线激活会当场说清, 而不是
         #: 转圈等超时。
         self._activation_url = (activation_url or "").strip()
@@ -1013,57 +1010,31 @@ class Session:
                     self._recovering = False
 
     def close(self) -> None:
-        """整个守护进程收尾 (幂等) —— 停轮询、停执行器、**降能量**、关会话。
+        """整个守护进程收尾 (幂等) —— 停轮询、停执行器、关会话。
 
-        ⚠ **退出前会先失能** (`disable`, 降能量方向)。这是本项目的产品策略, 而不是
-        实现细节: 进程一走链路就断, 与其把"电机是否还使能"留给固件看门狗, 不如在
-        还有链路时明确降能量 —— 上一版把这件事写成"由调用方决定", 而**没有**任何
-        调用方决定, 于是 Ctrl-C 之后机械臂可能仍带着使能。
+        ⚠ **退出时不主动失能**。进程一走链路就断, 但"电机是否还使能"是固件的状态,
+        不是本进程该替操作员决定的事: `movej` 到位后的持位由固件自己喂命令看门狗,
+        链路断了也会继续撑着; 零重力 / 连续伺服 / MIT 等模式在链路断开 0.1s 后由
+        固件转入 fail-soft。要让臂掉力矩, 由操作员在关窗前按「失能」或「STOP」——
+        退出路径不替他们做这个决定。
 
-        ⚠ 与 `disconnect()` 的区别是**刻意的**: 断开只是结束这一次会话 (计划 2 节
-        原则 4 要的是"关窗口不打断在途会话"), 所以那里**不**降能量; 只有进程收尾
-        才降。要保留使能请用 `--keep-enabled` (`disable_on_exit=False`)。
+        ⚠ 与 `disconnect()` 一致: 两者都只结束会话, 不碰使能状态。
         """
         self._stop.set()
         # 作废在途握手: 收尾时建起来的 arm 没人会关, 会一直占着串口。
         with self._lock:
             self._connect_gen += 1
         self._stop_polling()
-        # 先等在途命令收尾, 免得它与失能抢链路。
+        # 先等在途命令收尾, 免得关链路时还有命令在写。
         self._executor.shutdown(wait=True)
         arm = self._take_arm()
         if arm is not None:
-            self._deenergize(arm)
             self._close_arm(arm)
             with self._lock:
                 self._status = "disconnected"
         self._safety_executor.shutdown(wait=True)
         obs.info(obs.SESSION_CLOSED, body="守护进程收尾: 会话已关闭",
                  fields={"had_link": arm is not None})
-
-    def _deenergize(self, arm: Arm) -> None:
-        """退出前的降能量 —— **任何失败都只记日志**, 收尾不能因此中断。
-
-        用 `disable` 而不是 `estop`: 后者会锁存一个急停故障, 下次连接还得先清错;
-        正常退出要的是"掉力矩", 不是"制造故障"。
-
-        ⚠ 本方法在 `close()` 里、主执行器已经排空之后调用, 所以不与在途命令抢链路;
-        链路已断时 `disable()` 会抛, 那正是"只能记日志"的场景。
-        """
-        if not self._disable_on_exit:
-            log.info("退出前保持使能 (disable_on_exit=False)")
-            obs.info(obs.DEENERGIZE_SKIPPED, body="退出前保持使能 (--keep-enabled)",
-                     fields={"disable_on_exit": False})
-            return
-        try:
-            arm.disable()
-            log.info("退出前已失能 (降能量)")
-            obs.info(obs.DEENERGIZED, body="退出前已失能 (降能量)")
-        except Exception as e:  # noqa: BLE001 - 链路可能已断, 收尾不许因此失败
-            log.warning("退出前失能失败 (已忽略; 链路可能已断)", exc_info=True)
-            obs.warning(obs.DEENERGIZE_FAILED,
-                        body=f"退出前失能失败 (已忽略; 链路可能已断): {type(e).__name__}",
-                        fields={"error_kind": type(e).__name__}, exception=e)
 
     # ------------------------------------------------------------------ 状态轮询
     def _start_polling(self) -> None:

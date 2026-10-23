@@ -77,8 +77,10 @@ litearm-studio --fake     # offline: a complete session with no hardware
 The program prints the address it listens on, `http://127.0.0.1:8765/` by default, and
 opens a window. If that port is taken it picks the next free one, prints it, and **the
 printed address is the one to use**. The window is the whole interface, and it belongs to
-the program: **closing it quits the program**, which de-energises the arm and releases the
-serial port. Reloading the page does not quit — only closing the window does.
+the program: **closing it quits the program** and releases the serial port. The daemon does
+**not** de-energise the arm on exit — it stays in whatever state it was in, so press
+**Disable** first if you want the motors released. Reloading the page does not quit — only
+closing the window does.
 
 Starting `litearm-studio` again while an instance is already running **raises that
 instance's window** instead of starting a second program. This matters: a second program

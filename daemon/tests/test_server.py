@@ -870,13 +870,7 @@ def test_cli_defaults() -> None:
     assert args.http_port == 8765
     assert args.ui_dir is None
     assert args.no_open is False
-    assert args.keep_enabled is False       # 默认退出前失能
     assert args.no_reconnect is False       # 默认断线后自愈 (#48)
-
-
-def test_cli_keep_enabled_flag() -> None:
-    """`--keep-enabled` 是"退出不降能量"的显式逃生口 (#14)。"""
-    assert build_parser().parse_args(["--keep-enabled"]).keep_enabled is True
 
 
 def test_cli_no_reconnect_flag() -> None:

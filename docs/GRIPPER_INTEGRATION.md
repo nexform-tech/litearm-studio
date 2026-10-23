@@ -247,11 +247,10 @@ Reuse `{"kind","msg"}`. New kinds map to new `common:errors.*` keys:
    every tick and publishes state at 50 Hz.
 4. `gripper.disconnect` stops the tick, zero-torques, disables and closes the
    socket. The per-channel record is not touched.
-5. Process shutdown (`serve()`'s `finally`) zero-torques, disables and closes —
-   the same shape as the arm's de-energize path, and for the same reason: leaving
-   a drive enabled with the last command it received is not acceptable when the
-   process that would correct it is gone. `--keep-enabled` applies to the arm
-   only; the gripper always disables on exit.
+5. Process shutdown (`serve()`'s `finally`) zero-torques, disables and closes.
+   Unlike the arm, which keeps its drive state on exit, the gripper always
+   disables: leaving a gripper enabled with the last command it received is not
+   acceptable when the process that would correct it is gone.
 
 ### 5.2 Tick order
 

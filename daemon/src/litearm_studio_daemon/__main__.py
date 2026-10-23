@@ -56,9 +56,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-open", action="store_true",
                    help="不开应用窗口, 无界面运行 (服务照常监听, 界面可用浏览器连该地址);"
                         "默认由本进程自己开窗口, 关掉窗口即退出整个程序")
-    p.add_argument("--keep-enabled", action="store_true",
-                   help="退出时不失能 (默认退出前会 disable 降能量; 仅在明确知道"
-                        "机械臂会由别的方式保持时才用)")
     p.add_argument("--no-reconnect", action="store_true",
                    help="链路断了不自动重连 (默认会重新解析 CDC 设备并重建会话,"
                         "窗口 60s; 窗口内没接上会如实上报, 由你决定要不要手工连)")
@@ -114,7 +111,7 @@ def build_parser() -> argparse.ArgumentParser:
 #: 去探测: 开发构建的版本号彼此相同 (见 `instance` 模块文档末段), 让 `--fake` 复用等于把
 #: 上一个 checkout 的旧代码端给正在改代码的人。
 _SESSION_SHAPING = (
-    "fake", "fake_activated", "port", "ui_dir", "keep_enabled", "no_reconnect",
+    "fake", "fake_activated", "port", "ui_dir", "no_reconnect",
     "no_gripper", "can_channel", "no_can_setup", "activation_url", "allow_origin",
 )
 
@@ -242,7 +239,6 @@ def main(argv: Optional[List[str]] = None) -> int:
     session = Session(port=args.port, fake=args.fake,
                       fake_activated=args.fake_activated,
                       reconnect=not args.no_reconnect,
-                      disable_on_exit=not args.keep_enabled,
                       activation_url=args.activation_url)
     gripper = build_gripper_session(args)
     try:

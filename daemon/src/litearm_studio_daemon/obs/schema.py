@@ -196,12 +196,6 @@ EVENTS: Final[Tuple[Tuple[str, str, str, str], ...]] = (
      "自愈窗口用尽"),
     ("session.link.recover_error", KIND_SESSION, "ERROR",
      "自愈异常结束"),
-    ("session.deenergized", KIND_SESSION, "INFO",
-     "退出前已失能 (降能量)"),
-    ("session.deenergize_failed", KIND_SESSION, "WARN",
-     "退出前失能失败"),
-    ("session.deenergize_skipped", KIND_SESSION, "INFO",
-     "退出前按配置保持使能"),
 
     # -- commands (the SDK traffic an operator needs to reconstruct)
     ("arm.command.succeeded", KIND_COMMAND, "INFO",
@@ -299,9 +293,6 @@ LINK_RECOVERED: Final[str] = "session.link.recovered"
 RECOVER_FAILED: Final[str] = "session.link.recover_failed"
 RECOVER_GAVE_UP: Final[str] = "session.link.recover_gave_up"
 RECOVER_ERROR: Final[str] = "session.link.recover_error"
-DEENERGIZED: Final[str] = "session.deenergized"
-DEENERGIZE_FAILED: Final[str] = "session.deenergize_failed"
-DEENERGIZE_SKIPPED: Final[str] = "session.deenergize_skipped"
 
 COMMAND_SUCCEEDED: Final[str] = "arm.command.succeeded"
 COMMAND_FAILED: Final[str] = "arm.command.failed"
