@@ -2,7 +2,7 @@
 
 这个文件钉住的是**整个改造的两个验收点**:
 
-1. 关掉窗口 ⇒ 服务停 + 会话收尾 (失能 + 释放串口)。§"关窗即退出" 一节用真 uvicorn 起在
+1. 关掉窗口 ⇒ 服务停 + 会话收尾 (释放串口)。§"关窗即退出" 一节用真 uvicorn 起在
    真端口上跑完整条路径, 只把 GUI 换成假件 —— CI 没有显示器, 也不装 GUI 依赖。
 2. 窗口认祖归宗 ⇒ WM_CLASS / desktopFileName / 桌面条目的 `StartupWMClass` 三处同一个值。
    §"窗口身份" 一节钉住前两处, `packaging/tests/test_deb.py` 钉住第三处。
@@ -472,7 +472,7 @@ def test_closing_the_window_stops_the_server_and_tears_the_session_down(
     # 第二次启动的落点: 窗口确实被抬起来了 (`/api/focus` 走通了整条链)。
     assert seen["focus"] == {"ok": True, "focused": True}
     assert handle.raised == 1
-    # 收尾: 失能 + 释放串口。
+    # 收尾: 释放串口（不主动失能）。
     assert closed == [True]
 
     # 服务真的停了 —— 端口不再有人监听。

@@ -179,7 +179,7 @@ The daemon automatically picks the next free port and prints it; read the printe
 
 ### Closing the window quits the program
 
-That is deliberate: the window belongs to the program, so closing it ends the session — the arm is de-energised and the serial port is released. Reloading the page does **not** quit; only closing the window does.
+That is deliberate: the window belongs to the program, so closing it ends the session and releases the serial port. It does **not** de-energise the arm — the arm stays in whatever state it was in, so press **Disable** or **STOP** first if you want the motors released. Reloading the page does **not** quit; only closing the window does.
 
 Start the program again and you get a clean session. If an instance is still running (an older version, or the icon was clicked twice), starting the program **raises that instance's window** instead of starting a second program.
 

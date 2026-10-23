@@ -115,8 +115,7 @@ def test_disconnect_and_close_leave_a_reason(tmp_path: Path) -> None:
     finally:
         obs.shutdown()
     assert find(rows, obs.SESSION_CLOSED)
-    # 退出前失能是一条**产品策略**, 事后必须能回答"退的时候机械臂带没带使能"。
-    assert find(rows, obs.DEENERGIZED)
+    # 退出不主动失能: 那条策略由 `test_session.py` 直接拦 `arm.disable` 钉住。
 
 
 def test_disconnect_records_the_port_it_dropped(tmp_path: Path) -> None:
@@ -134,22 +133,6 @@ def test_disconnect_records_the_port_it_dropped(tmp_path: Path) -> None:
     assert rows
     assert rows[0]["fields"]["had_link"] is True
     assert rows[0]["fields"]["port"] == "fake"
-
-
-def test_an_arm_held_across_close_is_reported_as_kept_enabled(tmp_path: Path) -> None:
-    """`--keep-enabled` 是操作员的明确选择; 文件里要留下"是它选的", 不是沉默."""
-    obs.configure(log_dir=tmp_path, version="t", level="DEBUG")
-    session = Session(fake=True, poll_period=0.02, disable_on_exit=False)
-    try:
-        assert session.connect() is True
-        assert _wait(lambda: session.connected)
-        session.close()
-        obs.flush()
-        rows = records(tmp_path)
-    finally:
-        obs.shutdown()
-    assert find(rows, obs.DEENERGIZE_SKIPPED)
-    assert not find(rows, obs.DEENERGIZED)
 
 
 def test_failed_connect_records_the_reason(tmp_path: Path) -> None:

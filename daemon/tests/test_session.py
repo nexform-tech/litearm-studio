@@ -151,39 +151,37 @@ def test_disconnect_is_idempotent(fake_session: Session) -> None:
     assert fake_session.disconnect() is False   # 已经断了 ⇒ no-op
 
 
-# ------------------------------------------------------------ 退出前降能量 (#14)
+# ------------------------------------------------------------ 退出不主动失能
 
-def _record_disable(s: Session, *, raises: bool = False) -> list[str]:
-    """把已连接会话的 `arm.disable` 换成记录器 (可选择让它抛)。"""
+def _record_disable(s: Session) -> list[str]:
+    """把已连接会话的 `arm.disable` 换成记录器, 用来断言收尾/断开没有失能。"""
     arm = s._arm
     seen: list[str] = []
     real = arm.disable
 
     def fake_disable() -> None:
         seen.append("disable")
-        if raises:
-            raise litearm.TransportError("链路已断")
         real()
 
     arm.disable = fake_disable  # type: ignore[method-assign]
     return seen
 
 
-def test_close_de_energizes_the_arm() -> None:
-    """进程收尾必须真的降能量 —— 不能把"电机是否还使能"甩给不存在的调用方。"""
+def test_close_does_not_de_energize_the_arm() -> None:
+    """进程收尾只关会话: 使能状态留在固件里, 由操作员在关窗前决定要不要失能。"""
     s = Session(fake=True)
     try:
         assert s.connect() is True
         assert _wait(lambda: s.connected), "假会话没连上"
         seen = _record_disable(s)
         s.close()
-        assert seen == ["disable"], "close() 没有失能"
+        assert seen == [], "close() 不该失能"
     finally:
         s.close()
 
 
 def test_disconnect_does_not_de_energize() -> None:
-    """断开 ≠ 退出: 原则 4 要的是"关窗口不打断会话", 所以 `disconnect()` 不降能量。"""
+    """断开 ≠ 退出: 两者都只结束会话, 不碰使能状态。"""
     s = Session(fake=True)
     try:
         assert s.connect() is True
@@ -191,32 +189,6 @@ def test_disconnect_does_not_de_energize() -> None:
         seen = _record_disable(s)
         assert s.disconnect() is True
         assert seen == [], "disconnect() 不该失能"
-    finally:
-        s.close()
-
-
-def test_close_survives_a_failing_de_energize() -> None:
-    """链路已断时 `disable()` 会抛 —— 收尾不许因此中断或抛栈。"""
-    s = Session(fake=True)
-    try:
-        assert s.connect() is True
-        assert _wait(lambda: s.connected), "假会话没连上"
-        seen = _record_disable(s, raises=True)
-        s.close()                                # 不抛
-        assert seen == ["disable"]
-    finally:
-        s.close()
-
-
-def test_disable_on_exit_false_keeps_the_arm_enabled() -> None:
-    """`--keep-enabled` 的语义: 明确要求保留使能时才跳过降能量。"""
-    s = Session(fake=True, disable_on_exit=False)
-    try:
-        assert s.connect() is True
-        assert _wait(lambda: s.connected), "假会话没连上"
-        seen = _record_disable(s)
-        s.close()
-        assert seen == [], "disable_on_exit=False 时不该失能"
     finally:
         s.close()
 
