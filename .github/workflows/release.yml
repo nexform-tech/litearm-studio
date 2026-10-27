@@ -45,7 +45,7 @@ jobs:
   # Versioning only: commit prefixes -> tag -> GitHub release. Language-agnostic.
   release:
     # Pin to a moving major tag (`@v1`), or to a commit SHA for maximum safety.
-    uses: nexform-tech/repo-template/.github/workflows/release.yml@v1
+    uses: nexform-tech/workflows/.github/workflows/release.yml@v1
 
   # 打包 (计划 Phase 5): Windows / Linux 各一个单文件可执行程序, 挂到刚发的 release。
   # 只有真的发了新版才跑 (`needs.release.outputs.new_tag`), 否则纯属浪费 runner。
