@@ -23,6 +23,7 @@ concurrency:
 
 jobs:
   test:
+    name: test
     runs-on: ubuntu-22.04
     env:
       # 机器人模型不在仓里: dev/build/test 各自去上游取到 .cache/description/，再减面成
