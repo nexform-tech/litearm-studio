@@ -190,7 +190,7 @@ The first row of the control bar holds six buttons ordered by kind: the two stat
 
 - Position Mode: Standard closed-loop servo control mode, high-stiffness position hold, precisely executing joint micro-stepping or Cartesian trajectory commands. This is the mode whenever zero gravity is off;
 - Zero Gravity Mode: Enables dynamic gravity compensation and zero-force teaching algorithms; motors cancel arm gravity in real time, allowing smooth manual lead-through by hand. The control bar's Zero Gravity button toggles it, and the badge at the bottom-left of the 3D preview shows the active mode (for example "Zero Gravity · Real");
-- Global Speed Scale: Its own row; the `−` / `+` stepper at the right end of the slider nudges it by 1%. Range 1%–100% across all motions (mapped to underlying driver and planner speed scaling).
+- Speed: Its own row; the `−` / `+` stepper at the right end of the slider nudges it by 1%. Range 1%–100%; it sets the speed factor of each motion command. Go Home follows the firmware's own low-speed profile and ignores it.
 
 ---
 

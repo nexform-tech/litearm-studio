@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   getJointParams: vi.fn(),
   getTcpPose: vi.fn(),
   movej: vi.fn(),
+  // 连接时的调速器归一化（issue #236）会走这条；缺了 effect 里会抛 `not a function`。
+  setSpeed: vi.fn(),
   toastError: vi.fn(),
   status: 'connected' as string,
   conn: null as unknown,
@@ -24,6 +26,7 @@ vi.mock('@/lib/arm', () => ({
     getJointParams: mocks.getJointParams,
     getTcpPose: mocks.getTcpPose,
     movej: mocks.movej,
+    setSpeed: mocks.setSpeed,
   },
   formatArmError: (e: unknown) => (e instanceof Error ? e.message : String(e)),
   useArmConnection: () => ({ status: mocks.status, conn: mocks.conn }),
@@ -71,6 +74,7 @@ describe('useSoloState joint labels follow the interface language', () => {
     mocks.getJointParams.mockReset().mockResolvedValue(LIMITS)
     mocks.getTcpPose.mockReset().mockResolvedValue([0.32, 0, 0.45, 0, 1.57, 0])
     mocks.movej.mockReset().mockResolvedValue(null)
+    mocks.setSpeed.mockReset().mockResolvedValue(null)
     mocks.toastError.mockReset()
     mocks.status = 'connected'
     mocks.conn = conn(3)

@@ -155,6 +155,19 @@ export function useSoloState() {
     }
   }, [connected, t])
 
+  // 固件调速器（`set_speed` 0x21）是**全局且持续**的速度上限：它一直夹着之后每一条
+  // 运动，直到复位或断电，而且协议没有回读 —— 界面上看不见它。本页的速度滑条只是
+  // 单条轨迹的倍率（`movej(q, speed)`）。旧版本的就绪姿态/回零会把滑条值写进调速器，
+  // 于是回零之后滑条再往上推也不生效，重启上位机也修不好（issue #236）。
+  // 连接后把它归一到 100%：滑条重新成为唯一的速度来源，顺带救回已经被旧版本写坏的设备。
+  useEffect(() => {
+    if (!connected || !s.real) return
+    armClient.setSpeed(100).catch((err) => {
+      // 归一化失败不弹红框：它不阻止任何操作，真正要紧的是接下来那条运动能否下达。
+      console.warn('failed to normalize the firmware speed governor', err)
+    })
+  }, [connected, s.real])
+
   const limitsOf = useCallback(
     (i: number) => jointLimits?.[i] ?? JOINT_LIMITS[i] ?? { min: -Math.PI, max: Math.PI },
     [jointLimits],
@@ -563,9 +576,10 @@ export function useSoloState() {
       const target = fitJoints(HOME_JOINTS, jointCount)
       setS((p) => ({ ...p, jointPct: target.map((rad, i) => toPct(rad, i)) }))
       if (connected && s.real && enableOn) {
+        // ⚠ 这里**只**发这条运动的倍率，不写固件调速器：后者是全局且持续的上限，
+        // 回零/就绪姿态顺手写它会让之后的滑条被一个看不见的上限夹住（issue #236）。
         armClient
-          .setSpeed(s.speed)
-          .then(() => armClient.movej(target, s.speed / 100))
+          .movej(target, s.speed / 100)
           .then(() => setLastError(null))
           .catch((err) => reportError('solo:controlBar.readyPose', err))
       }
@@ -575,9 +589,9 @@ export function useSoloState() {
       const target = fitJoints(ZERO_JOINTS, jointCount)
       setS((p) => ({ ...p, jointPct: target.map((rad, i) => toPct(rad, i)) }))
       if (connected && s.real && enableOn) {
+        // 回零走固件自己的低速曲线；同样**不**写全局调速器（issue #236）。
         armClient
-          .setSpeed(s.speed)
-          .then(() => armClient.home())
+          .home()
           .then(() => setLastError(null))
           .catch((err) => reportError('solo:controlBar.home', err))
       }

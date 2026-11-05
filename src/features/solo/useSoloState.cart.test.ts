@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
   getJointParams: vi.fn(),
   getTcpPose: vi.fn(),
   movel: vi.fn(),
+  // 连接时的调速器归一化（issue #236）会走这条；缺了 effect 里会抛 `not a function`。
+  setSpeed: vi.fn(),
   toastWarning: vi.fn(),
   toastError: vi.fn(),
   status: 'connected' as string,
@@ -31,6 +33,7 @@ vi.mock('@/lib/arm', () => ({
     getJointParams: mocks.getJointParams,
     getTcpPose: mocks.getTcpPose,
     movel: mocks.movel,
+    setSpeed: mocks.setSpeed,
   },
   formatArmError: (e: unknown) => (e instanceof Error ? e.message : String(e)),
   useArmConnection: () => ({ status: mocks.status, conn: mocks.conn }),
@@ -87,6 +90,7 @@ describe('useSoloState cartesian capability gating', () => {
     mocks.getJointParams.mockReset().mockResolvedValue(LIMITS)
     mocks.getTcpPose.mockReset().mockResolvedValue([0.32, 0, 0.45, 0, 1.57, 0])
     mocks.movel.mockReset().mockResolvedValue(null)
+    mocks.setSpeed.mockReset().mockResolvedValue(null)
     mocks.toastWarning.mockReset()
     mocks.toastError.mockReset()
     mocks.status = 'connected'
@@ -231,6 +235,7 @@ describe('useSoloState operation error lifecycle', () => {
     mocks.getJointParams.mockReset().mockResolvedValue(LIMITS)
     mocks.getTcpPose.mockReset().mockResolvedValue(POSE)
     mocks.movel.mockReset().mockResolvedValue(null)
+    mocks.setSpeed.mockReset().mockResolvedValue(null)
     mocks.toastWarning.mockReset()
     mocks.toastError.mockReset()
     mocks.status = 'connected'

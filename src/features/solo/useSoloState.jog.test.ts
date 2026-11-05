@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   getTcpPose: vi.fn(),
   movel: vi.fn(),
   movej: vi.fn(),
+  // 连接时的调速器归一化（issue #236）会走这条；缺了 effect 里会抛 `not a function`。
+  setSpeed: vi.fn(),
   zeroGStart: vi.fn(),
   zeroGStop: vi.fn(),
   toastWarning: vi.fn(),
@@ -35,6 +37,7 @@ vi.mock('@/lib/arm', () => ({
     getTcpPose: mocks.getTcpPose,
     movel: mocks.movel,
     movej: mocks.movej,
+    setSpeed: mocks.setSpeed,
     zeroGStart: mocks.zeroGStart,
     zeroGStop: mocks.zeroGStop,
   },
@@ -145,6 +148,7 @@ beforeEach(async () => {
   mocks.getTcpPose.mockReset().mockResolvedValue(POSE)
   mocks.movel.mockReset().mockResolvedValue(null)
   mocks.movej.mockReset().mockResolvedValue(null)
+  mocks.setSpeed.mockReset().mockResolvedValue(null)
   mocks.zeroGStart.mockReset().mockResolvedValue(null)
   mocks.zeroGStop.mockReset().mockResolvedValue(null)
   mocks.toastWarning.mockReset()
