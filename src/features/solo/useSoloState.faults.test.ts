@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   getTcpPose: vi.fn(),
   clearFaults: vi.fn(),
   reset: vi.fn(),
+  // 连接时的调速器归一化（issue #236）会走这条；缺了 effect 里会抛 `not a function`。
+  setSpeed: vi.fn(),
   toastError: vi.fn(),
 }))
 
@@ -29,6 +31,7 @@ vi.mock('@/lib/arm', () => ({
     getTcpPose: mocks.getTcpPose,
     clearFaults: mocks.clearFaults,
     reset: mocks.reset,
+    setSpeed: mocks.setSpeed,
   },
   formatArmError: (e: unknown) => (e instanceof Error ? e.message : String(e)),
   useArmConnection: () => ({ status: 'connected' }),
@@ -45,6 +48,7 @@ describe('useSoloState fault recovery', () => {
     mocks.getTcpPose.mockReset().mockResolvedValue(null)
     mocks.clearFaults.mockReset().mockResolvedValue(null)
     mocks.reset.mockReset().mockResolvedValue(null)
+    mocks.setSpeed.mockReset().mockResolvedValue(null)
     mocks.toastError.mockReset()
   })
 
