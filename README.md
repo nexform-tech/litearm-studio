@@ -261,6 +261,27 @@ so an untracked icon silently falls back to PyInstaller's default executable ico
 - **[Refactor plan](docs/REFACTOR_PLAN.md)** — architecture, interface contract and scope decisions.
 - **[Daemon README](daemon/README.md)**
 
+### On the documentation centre
+
+The installers in each release are also published to the NEXFORM documentation
+centre in Feishu, so the download links there always point at the newest build.
+A release needs no upload step:
+
+1. Publishing a release starts `.github/workflows/notify-docs.yml`, which mints a
+   short-lived token for the `nexform-docs-dispatch` GitHub App and sends a
+   `docs-updated` dispatch to
+   [nexform-guide](https://github.com/nexform-tech/nexform-guide).
+2. That repository's `files.yaml` points at release assets of this repository by
+   pattern — `litearm-studio-*-windows-amd64.exe` and
+   `litearm-studio_*_amd64.deb` — and its sync copies the newest match into
+   `files/`, committing only when the bytes changed.
+3. Its `Publish` workflow compares the SHA-256 of the Feishu file block with the
+   copy, re-uploads when they differ, then reads the document back and verifies.
+
+A nightly run at 03:00 UTC repeats step 2 for missed events. The asset names are
+the contract: keep those suffixes on every release and the site follows along; a
+renamed asset needs a matching change in `nexform-guide`.
+
 ---
 
 ## Common Commands
