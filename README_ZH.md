@@ -235,6 +235,24 @@ PyInstaller 悄悄退回它自带的默认图标。
 - **[重构计划](docs/REFACTOR_PLAN.md)** —— 架构、接口契约与范围决策。
 - **[本地程序说明](daemon/README.md)**
 
+### 在文档中心
+
+每个发布里的安装包也会同步到飞书上的 NEXFORM 文档中心，所以站点上的下载链接
+始终指向最新一版。发版不需要额外的上传步骤：
+
+1. 发布 release 时触发 `.github/workflows/notify-docs.yml`；它用
+   `nexform-docs-dispatch` 这个 GitHub App 换取短期令牌，向
+   [nexform-guide](https://github.com/nexform-tech/nexform-guide) 发送
+   `docs-updated` 事件。
+2. 那个仓库的 `files.yaml` 按文件名通配指向本仓库的 release 附件——
+   `litearm-studio-*-windows-amd64.exe` 与 `litearm-studio_*_amd64.deb`——
+   它的同步把最新的匹配项复制进 `files/`，只有字节变化时才提交。
+3. 它的 `Publish` 流程比对飞书文件块与本地副本的 SHA-256，不同才重传，然后
+   回读文档校验。
+
+每天 03:00 UTC 还会跑一遍第 2 步，补上漏掉的事件。附件名就是契约：每次发版
+保持上面的后缀，站点就会自动跟随；改了名字，`nexform-guide` 里的清单也要跟着改。
+
 ---
 
 ## 常用命令
