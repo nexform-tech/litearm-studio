@@ -404,6 +404,42 @@ def test_health_endpoint_reports_state_without_a_connection() -> None:
         session.close()
 
 
+def test_ui_language_endpoint_serves_the_desktop_languages() -> None:
+    """首屏语言由 daemon 交给页面, 而不是让 webview 的 navigator 猜。
+
+    `index.html` 在 i18n 初始化之前同步加载这个文件, 所以正文必须是能执行的 JS
+    (`window.__LITEARM_UI_LANGUAGES__ = [...]`), 且不能被任何一层缓存留住 —— 换个
+    桌面 / 升级后重启的进程要让页面拿到新值。`/api/health` 报同一个值, 排障时问它即可。
+    """
+    session = Session(port_finder=lambda: None)
+    app = create_app(session, version=VERSION, repo_dist=Path("/nonexistent-ui"),
+                     system_languages=["zh-CN", "zh", "en-US", "en"])
+    try:
+        with TestClient(app) as client:
+            r = client.get("/api/ui-language.js")
+            assert r.status_code == 200
+            assert r.headers["content-type"].startswith("application/javascript")
+            assert r.headers["cache-control"] == "no-store"
+            assert ('window.__LITEARM_UI_LANGUAGES__ = '
+                    '["zh-CN", "zh", "en-US", "en"];') in r.text
+            assert client.get("/api/health").json()["uiLanguage"] == [
+                "zh-CN", "zh", "en-US", "en"]
+    finally:
+        session.close()
+
+
+def test_ui_language_endpoint_works_without_a_ui_directory() -> None:
+    """没有前端目录时也答得出来 —— 排障会直接问它。"""
+    session, app = _client()
+    try:
+        with TestClient(app) as client:
+            r = client.get("/api/ui-language.js")
+            assert r.status_code == 200
+            assert "window.__LITEARM_UI_LANGUAGES__" in r.text
+    finally:
+        session.close()
+
+
 def test_health_counts_connected_clients() -> None:
     session, app = _client()
     try:

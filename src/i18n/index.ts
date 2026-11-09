@@ -15,6 +15,29 @@ import logsEn from './locales/en/logs.json'
 import gripperZh from './locales/zh/gripper.json'
 import gripperEn from './locales/en/gripper.json'
 
+declare global {
+  interface Window {
+    /** daemon 在 `/api/ui-language.js` 里写入的桌面语言列表；没有服务端时不存在。 */
+    __LITEARM_UI_LANGUAGES__?: string[]
+  }
+}
+
+// 桌面自己的语言列表 —— 由 daemon 的 `/api/ui-language.js` 在 i18n 初始化之前写到
+// window 上，这里把它排在 navigator 前面。Linux 的 WebKitGTK 只从进程的 POSIX
+// locale（`LANG`/`LC_ALL`）推 `navigator.language`，而中文桌面常见的
+// `LANG=en_US.UTF-8` + `LANGUAGE=zh_CN:zh`（中文界面、英文终端）会让它报 `en-US`,
+// 首屏就变成英文。列表怎么算见 daemon 的 `ui_language.py`。
+const detector = new LanguageDetector()
+detector.addDetector({
+  name: 'liteArmSystem',
+  lookup() {
+    const languages = window.__LITEARM_UI_LANGUAGES__
+    return Array.isArray(languages) && languages.length > 0 ? languages : undefined
+  },
+  // 系统语言不是操作员的选择；用户选中的语言仍由 `caches` 统一写入。
+  cacheUserLanguage() {},
+})
+
 export const defaultNS = 'common'
 export const resources = {
   zh: {
@@ -35,8 +58,9 @@ export const resources = {
   },
 } as const
 
-i18n
-  .use(LanguageDetector)
+/** init 的 promise —— 单测要等首屏检测落定，应用本身不需要等它。 */
+export const i18nReady = i18n
+  .use(detector)
   .use(initReactI18next)
   .init({
     resources,
@@ -47,7 +71,7 @@ i18n
       escapeValue: false,
     },
     detection: {
-      order: ['localStorage', 'navigator'],
+      order: ['localStorage', 'liteArmSystem', 'navigator'],
       lookupLocalStorage: 'litearm_language',
       caches: ['localStorage'],
     },
