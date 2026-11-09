@@ -68,6 +68,9 @@ blob-report/
 .env*
 !.env.production
 
+# Internal activation channel config (may contain a shared token)
+activation-channel.json
+
 # Controller runtime / backup files
 controller-backup/
 

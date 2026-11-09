@@ -248,6 +248,41 @@ promise this path cannot keep.
 - The credential is not a secret: it is bound to one board's UID and the firmware
   rejects it anywhere else. Sending it over plain HTTPS without an account is fine.
 
+### Internal test channel
+
+Internal testers use the same Studio build as customers, so the channel is
+runtime configuration rather than a separate build:
+
+- `LITEARM_ACTIVATION_CHANNEL_TOKEN` in the environment, or
+- a `token` key in `%APPDATA%\litearm-studio\activation-channel.json`
+  (Windows) or `$XDG_CONFIG_HOME/litearm-studio/activation-channel.json`
+  (Linux/macOS, defaulting to `~/.config/litearm-studio/activation-channel.json`).
+  `LITEARM_STUDIO_ACTIVATION_CHANNEL_CONFIG` overrides the file path.
+
+When a token is configured and the activation URL is HTTPS, the request adds:
+
+```text
+X-Litearm-Channel: test
+X-Litearm-Channel-Token: <token>
+```
+
+Without a token the request is unchanged. Studio sends the token only over
+HTTPS; on a plain HTTP URL it logs a warning and sends a production request.
+The token is never written to the log.
+
+The activation service validates the token. A valid token records the
+registration as `TEST` and allows test credentials to be claimed. A missing or
+wrong token is treated as a normal production request, and test credentials
+answer `not_found`. The same installer therefore stays safe for customers:
+there is no token in it, and finding this setting without the token has no
+effect.
+
+Do not put a real token in the repository, the installer, or customer
+documentation. Testers receive it from the service administrator; rotate it by
+changing the server's `INTERNAL_ACTIVATION_TOKEN` and distributing the new
+value. The service side is documented in
+`litearm-activation/docs/internal-testing.md`.
+
 ## 7. Rules the panel must keep
 
 - **Never compute or verify the tag.** The key lives in firmware and in the vendor

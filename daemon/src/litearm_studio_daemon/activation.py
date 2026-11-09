@@ -15,13 +15,17 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import unicodedata
 import urllib.error
 import urllib.request
 from typing import Any, Callable, Dict, Optional, Tuple
 
+from .activation_channel import channel_headers, channel_token, is_https
 from .errors import DaemonError
+
+log = logging.getLogger("litearm_studio_daemon.activation")
 
 #: 生产地址。域名还没上线时, 任何一次提交都会如实报"连不上"——**不要**把它改成
 #: "先假装成功", 那会让现场拿着一个没生效的授权去开机器。
@@ -320,14 +324,26 @@ def _post_json(url: str, payload: dict, timeout: float) -> Tuple[int, bytes]:
     Python 也会加载系统证书, 不需要 `certifi`。
     """
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    req = urllib.request.Request(
-        url, data=body, method="POST",
-        headers={
-            "Content-Type": "application/json; charset=utf-8",
-            "Accept": "application/json",
-            # 只报"这是本上位机", 不带任何个人/设备信息 —— 个人信息都在 body 里, 由用户同意过。
-            "User-Agent": "litearm-studio",
-        })
+    headers = {
+        "Content-Type": "application/json; charset=utf-8",
+        "Accept": "application/json",
+        # 只报"这是本上位机", 不带任何个人/设备信息 —— 个人信息都在 body 里, 由用户同意过。
+        "User-Agent": "litearm-studio",
+    }
+
+    # 内部测试渠道是运行时配置，不编译进安装包。没有令牌时请求与正式版完全一致；
+    # 令牌只在 HTTPS 上发送，避免内部测试人员误用 http 地址时明文泄露。
+    token = channel_token()
+    if token:
+        if is_https(url):
+            headers.update(channel_headers(token))
+        else:
+            log.warning(
+                "Internal activation channel token is configured, but the "
+                "activation URL is not HTTPS; sending a production request instead."
+            )
+
+    req = urllib.request.Request(url, data=body, method="POST", headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:   # noqa: S310 - 地址由本包常量/命令行决定
             return int(resp.status), resp.read(MAX_RESPONSE_BYTES)

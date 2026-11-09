@@ -156,6 +156,34 @@ Studio 自己从不生成这个标签。它**只有一个来源**，即激活服
 - 同意书是请求内容的**唯一**披露渠道：它逐项列出每一项，而请求不携带任何其他内容。新增字段就意味着在同一次改动中向同意书新增一项；构造出的请求的键集合由测试锁定，所以隐藏字段会让测试失败。服务端的记录（来源 IP）改在隐私政策中披露；不要写进同意书，否则读起来像是 Studio 在采集。
 - 凭据不是机密：它绑定一块板子的 UID，固件在其他任何地方都会拒绝它。无账号地通过普通 HTTPS 发送它是可以的。
 
+### 内部测试渠道
+
+内部测试人员和客户使用同一份 Studio，所以这个渠道是运行时配置，不是单独打包：
+
+- 环境变量 `LITEARM_ACTIVATION_CHANNEL_TOKEN`，或
+- Windows 的 `%APPDATA%\litearm-studio\activation-channel.json`、
+  Linux/macOS 的 `$XDG_CONFIG_HOME/litearm-studio/activation-channel.json`
+  （默认 `~/.config/litearm-studio/activation-channel.json`）里的 `token` 键。
+  用 `LITEARM_STUDIO_ACTIVATION_CHANNEL_CONFIG` 可以改配置文件位置。
+
+配置了令牌且激活地址是 HTTPS 时，请求会多带：
+
+```text
+X-Litearm-Channel: test
+X-Litearm-Channel-Token: <token>
+```
+
+没有令牌时请求与正式版完全一致。令牌只在 HTTPS 上发送；如果地址是普通 HTTP，
+Studio 会记录一条警告并发送正式请求。令牌不会写进日志。
+
+激活服务校验令牌：令牌正确时申请记为 `TEST`，可以领取测试凭据；缺失或错误时按
+普通正式请求处理，测试凭据回 `not_found`。所以同一份安装包对客户仍然安全：
+安装包里没有令牌，即使找到这个设置，没有令牌也不起作用。
+
+不要把真实令牌提交到仓库、安装包或客户文档。测试人员从服务管理员处领取；
+轮换时修改服务端的 `INTERNAL_ACTIVATION_TOKEN`，再把新值发给测试人员。服务端说明见
+`litearm-activation/docs/internal-testing.zh-CN.md`。
+
 ## 7. 面板必须遵守的规则
 
 - **绝不计算或验证标签。** 密钥只存在于固件和厂商签发工具中。客户端的任何代码只要能生成标签，该机制就失效了。
