@@ -5,6 +5,10 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>LiteArm Studio</title>
+    <!-- 首屏语言：daemon 按**桌面自己的**语言写一份列表（见 daemon 的 ui_language.py）。
+         它必须排在 i18n 初始化之前，所以放在 head 里同步加载。文件不存在时（纯静态部署、
+         dev 没起 daemon）脚本加载失败即可，i18n 会退回 navigator —— 与没有它时一致。 -->
+    <script src="/api/ui-language.js"></script>
     <!-- 首帧主题：在样式表之前决定 light/dark，避免深色主题下刷新闪白。
          规则与 src/lib/theme.ts 保持一致（用户选择 → 系统偏好）。 -->
     <script>

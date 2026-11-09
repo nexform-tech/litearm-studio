@@ -33,7 +33,7 @@ import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterable, List, Optional
+from typing import Any, Callable, Iterable, List, Optional, Sequence
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
@@ -43,7 +43,7 @@ from starlette.exceptions import HTTPException
 from starlette.responses import Response
 from starlette.types import Scope
 
-from . import __version__, logread, obs, window
+from . import __version__, logread, obs, ui_language, window
 from .errors import error_to_dict
 from .statemap import jsonable
 from .session import ENERGY_DOWN_COMMANDS, Session
@@ -261,8 +261,13 @@ class Daemon:
     def __init__(self, session: Session, *, gripper: Optional[Any] = None,
                  version: str = __version__,
                  ui_dir: Optional[Path] = None,
-                 allow_origins: Iterable[str] = ()) -> None:
+                 allow_origins: Iterable[str] = (),
+                 ui_languages: Iterable[str] = ()) -> None:
         self.session = session
+        #: 桌面自己的语言列表 (`ui_language.desktop_languages`), 由
+        #: `/api/ui-language.js` 交给页面, 也在 `/api/health` 里如实显示。
+        #: 空 = 认不出来 (非 Linux, 或环境里没有可用的 locale), 页面退回 navigator。
+        self.ui_languages = list(ui_languages)
         #: 夹爪会话 (§3) —— 与臂会话并列, 各推各的帧、各走各的命令白名单。
         #: `None` = 本进程没有夹爪 (非 Linux, 或 `--no-gripper`)。
         self.gripper = gripper
@@ -1055,7 +1060,8 @@ def create_app(session: Session, *, gripper: Optional[Any] = None,
                allow_origins: Iterable[str] = (),
                focus: Optional[Callable[[], bool]] = None,
                save_path: Optional[Callable[[str], Optional[str]]] = None,
-               pick_path: Optional[Callable[[Optional[str]], Optional[str]]] = None) -> FastAPI:
+               pick_path: Optional[Callable[[Optional[str]], Optional[str]]] = None,
+               system_languages: Optional[Sequence[str]] = None) -> FastAPI:
     """建 FastAPI 应用 (不含绑定/启动 —— 那是 `run()` 的事)。
 
     `/api/health` 返回版本与连接状态; 给了静态目录就把它挂在 `/` 上
@@ -1067,10 +1073,17 @@ def create_app(session: Session, *, gripper: Optional[Any] = None,
     `pick_path` 是"弹打开对话框并回答操作员挑了哪个文件"的动作
     (`WindowHandle.ask_open_path`), 参数是从哪个目录开始 (`None` = 平台默认);
     无界面运行时它是 `None`, `/api/pick-file` 如实回 `no-window`。
+    `system_languages` 是桌面自己的语言列表 (见 `ui_language`), 页面第一次打开时用它
+    而不是 `navigator.language`; `None` = 按本进程环境算 (只有 Linux 需要, 见下)。
     """
+    if system_languages is None:
+        # ⚠ 只在 Linux 上算: Windows 的 WebView2 与 macOS 的 WKWebView 本来就跟随
+        # 系统的显示语言, 反过来用 shell 里偶然存在的 LANG 覆盖它只会更糟。
+        system_languages = (ui_language.desktop_languages()
+                            if sys.platform.startswith("linux") else ())
     resolved = resolve_ui_dir(ui_dir, repo_dist=repo_dist)
     daemon = Daemon(session, gripper=gripper, version=version, ui_dir=resolved,
-                    allow_origins=allow_origins)
+                    allow_origins=allow_origins, ui_languages=system_languages)
 
     @asynccontextmanager
     async def _lifespan(_app: FastAPI):     # pragma: no cover - 由 TestClient 覆盖
@@ -1099,6 +1112,21 @@ def create_app(session: Session, *, gripper: Optional[Any] = None,
 
     app.add_api_route("/api/health", lambda: JSONResponse(_health(daemon)),
                       methods=["GET"])
+
+    # ── 首屏语言: 桌面自己说的那种 ───────────────────────────────────────────
+    #
+    # `index.html` 在 i18n 初始化之前加载这个文件, 页面把它排在 navigator 前面用。
+    # 为什么不直接用 navigator: Linux 的 WebKitGTK 只从进程的 POSIX locale 推它,
+    # 中文桌面常见的 `LANG=en_US.UTF-8` + `LANGUAGE=zh_CN:zh` 会让它报 en-US ——
+    # 完整的原因见 `ui_language`。
+    #
+    # ⚠ `no-store`: 值在进程启动时定下, 但升级/换桌面后重启的进程必须让页面拿到新值。
+    # 文件只有一行, 不值得让任何一层缓存替我们做决定。
+    @app.api_route("/api/ui-language.js", methods=["GET"])
+    async def _ui_language_js() -> Response:
+        return Response(ui_language.script(daemon.ui_languages),
+                        media_type="application/javascript; charset=utf-8",
+                        headers={"cache-control": "no-store"})
 
     # ── 单实例: 第二次启动把已经在跑的窗口抬到前面 ──────────────────────────
     #
@@ -1258,6 +1286,9 @@ def _health(daemon: Daemon) -> dict:
         "motionBusy": daemon.session.motion_in_flight(),
         "clients": len(daemon.clients),
         "ui": (str(daemon.ui_dir) if daemon.ui_dir is not None else None),
+        #: 首屏语言的来源 —— 与 `/api/ui-language.js` 同一个值。排障时问这一条就够了:
+        #: 它是 daemon 从桌面环境里读到的语言, 不是 webview 的 navigator。
+        "uiLanguage": list(daemon.ui_languages),
         # 连接细节 (与 `conn` 帧同源, 前端不必为"看端口"单开一条 WS)
         "conn": info,
         # DFU 侧的事实 (与 `firmware_status` 同源, 见 `Session.dfu_status`)。
