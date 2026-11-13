@@ -201,7 +201,7 @@ describe('ArmClient (daemon WebSocket)', () => {
     expect(client.state?.q).toEqual([1, 2])
     expect(seen).toHaveLength(1)
 
-    // 状态串变化立即通知（不受 100ms 节流限制）
+    // 状态串变化立即通知（不受 50ms 节流限制）
     ws.receive({ t: 'state', stamp: 2, state: { q: [1, 2], dq: [], tau: [], errs: [1, 1], state: 'fault', faulted: true } })
     expect(client.state?.state).toBe('fault')
     expect(seen).toHaveLength(2)

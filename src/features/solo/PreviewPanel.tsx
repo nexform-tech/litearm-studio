@@ -37,8 +37,10 @@ export function PreviewPanel(vm: { viewTabs: SegItem[]; viewBadge: string; previ
     if (vm.preview.mode === 'real') simQRef.current = null
   }, [vm.preview.mode])
 
-  // 实机：3D 直接订阅 60Hz 原始状态广播，命令式驱动模型（imperative ref 调用）。
-  // 走 subscribeStateFast 每帧通道：既不经过 React 渲染循环，也不受 10Hz 降频影响。
+  // 实机：3D 直接订阅 50Hz 原始状态广播，命令式驱动模型（imperative ref 调用）。
+  // 走 subscribeStateFast 每帧通道：既不经过 React 渲染循环，也不受 20Hz 降频影响。
+  // 机械臂静止时广播仍在重复同一组角度；`RobotViewport.setJointPositions` 会按
+  // `URDFJoint.setJointValue` 的返回值判断有没有真的变化，没变化就不排渲染帧。
   useEffect(() => {
     if (vm.preview.mode !== 'real') return
     const apply = () => {

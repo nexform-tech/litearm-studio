@@ -29,7 +29,7 @@ const mock = vi.hoisted(() => {
       connected: true,
       recording: false,
       port: '/dev/ttyACM0',
-      sampleHz: 10,
+      sampleHz: 20,
       retentionMb: 10,
       retentionMinMb: 10,
       retentionMaxMb: 500,

@@ -254,9 +254,11 @@ export class ArmClient {
   private _cachedNormalizedState: RobotState | null = null
 
   /** 遥测状态（关节角/温度/力矩等）的最大通知频率：**本客户端**把通知压在
-   *  每 100ms 一次（daemon 那边以 50Hz 推送，见 `session.STATE_PUSH_INTERVAL_S`，
-   *  别把两者混为一谈）。安全相关字段（状态串/故障）变化立即通知，不受此限。 */
-  private static readonly STATE_NOTIFY_INTERVAL_MS = 100
+   *  每 50ms 一次（20Hz；daemon 那边以 50Hz 推送，见 `session.STATE_PUSH_INTERVAL_S`，
+   *  别把两者混为一谈）。安全相关字段（状态串/故障）变化立即通知，不受此限。
+   *  ⚠ 不要回到 100ms：数字/滑条与 3D 的快订阅并排看时，"数字慢半拍"会被当成
+   *    反馈速度问题；20Hz 是整页重渲染成本与可读性的折中。 */
+  private static readonly STATE_NOTIFY_INTERVAL_MS = 50
 
   private statusListeners = new Set<Listener>()
   private stateListeners = new Set<Listener>()
@@ -830,7 +832,7 @@ export class ArmClient {
     this._state = next
     // 命令式消费方（3D 预览）每帧跟随。
     for (const l of this.stateFastListeners) l()
-    // 状态串/故障变化立即通知，普通遥测最多每 100ms 通知一次。
+    // 状态串/故障变化立即通知，普通遥测最多每 50ms 通知一次（20Hz）。
     const now = performance.now()
     const significant =
       !prev ||

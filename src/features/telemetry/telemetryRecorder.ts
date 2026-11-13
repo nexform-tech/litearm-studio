@@ -1,7 +1,7 @@
 /**
  * 前端遥测记录器：跟随机械臂连接自动开/停会话，把 RobotState 采样写入 IndexedDB。
  *
- * - 数据源与图表一致：armClient 的状态订阅（内部已降频到 ~10Hz）；
+ * - 数据源与图表一致：armClient 的状态订阅（内部已降频到 20Hz）；
  * - 会话 = 一次臂连接；断线后 30s 内重连则延续同一会话（真机偶发断流不切碎日志）；
  * - 只在前端运行期间记录（控制台关闭即停止），数据保存在本机。
  */
@@ -10,7 +10,7 @@ import { armClient } from '@/lib/arm/client'
 import { MAX_SESSIONS, telemetryDb, type NewTelemetrySample } from './telemetryDb'
 import { getRetentionMb, retentionMbToBytes, setRetentionMb as saveRetentionMb } from './retentionSettings'
 
-export const SAMPLE_HZ = 10
+export const SAMPLE_HZ = 20
 const SESSION_FINALIZE_DELAY_MS = 30_000
 const FLUSH_INTERVAL_MS = 1000
 const MAX_PENDING = 500
