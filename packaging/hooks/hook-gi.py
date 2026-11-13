@@ -26,6 +26,9 @@ gdk-pixbuf 的加载器、GIO 的模块。而 Linux 的 GTK 窗口后端**本来
    `gi/_gi.so` 与 `gi/_gi_cairo.so` 自己的 `DT_NEEDED`（`libglib-2.0.so.0`、`libgobject`、
    `libgirepository`、`libcairo`…）是 PyInstaller **分析二进制依赖**时收的，绕过所有钩子。
    排除表是唯一能拦它的地方（PyInstaller 没有做这件事的命令行开关）。
+   ⚠ 同一张表也排掉 C++/编译器运行库（`libstdc++`、`libgcc_s`）：它们由 PyInstaller
+   顺带收进来的 `apt_pkg`/`libapt-pkg` 拖进产物，旧版本会让 26.04 的系统 WebKitGTK
+   加载失败。名单与理由见 `litearm_stack.py`。
 
 `hook-gi.repository.{Gio,GdkPixbuf}.py` 是同一条理由的两个特例：那两条除了上面三件事，
 还直接往产物里塞 GIO 模块与 gdk-pixbuf 加载器（构建机那一份），而它们的依赖正是被排除的
