@@ -30,6 +30,7 @@
     "enterZeroGravity": "Enter zero gravity",
     "exitZeroGravity": "Leave zero gravity",
     "cartesianJog": "Cartesian jog",
+    "stopJog": "Stop jog",
     "cartesianMovel": "Cartesian linear move (movel)",
     "jointMotion": "Joint {{n}} motion",
     "jointMotionAll": "Joint motion",

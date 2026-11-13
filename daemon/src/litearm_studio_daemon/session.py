@@ -135,6 +135,16 @@ MOTION_COMMANDS = frozenset({"home", "movej", "movel"})
 #:   通道上没有危害; 而每多一条并发写者, 就要多论证一次它与固件应答 FIFO 的关系。
 READ_COMMANDS = frozenset({"get_tcp"})
 
+#: 运动中**允许接管**的动作 —— 目前只有"松开点动盘时受控停住"。
+#:
+#: `stop_jog` 发一条 `movej` 到**最近的关节角**; 固件收到新的 `movej` 会先
+#: `cart_invalidate_before_motion()` 作废在途笛卡尔规划, 然后从当前状态收口 ——
+#: SDK 文档把这条语义称为"受控接管", 比 `estop`(丢位置环) 温和, 比等 16×步长
+#: 的续段走完安全。
+#: ⚠ 它必须**不排在**在途运动后面, 所以走自己的执行器; 也**不能**与急停抢
+#: `_safety_executor` —— 操作员松手后立刻按 STOP 时, 急停仍要最先可达。
+TAKEOVER_COMMANDS = frozenset({"stop_jog"})
+
 #: 降能量方向的安全命令 —— 不仅豁免运动互斥, 还**不排在**普通命令的执行器后面。
 #:
 #: ⚠ 光"不在 `MOTION_COMMANDS` 里"是不够的: 所有 SDK 调用原本共用同一条单线程
@@ -199,6 +209,7 @@ COMMANDS: Dict[str, str] = {
     "home": "固件低速度回零 (arm.home)",
     "movej": "关节运动 (arm.movej)",
     "movel": "笛卡尔直线 (arm.move_l)",
+    "stop_jog": "受控停止点动: movej 到最近一帧状态的关节角 (作废在途笛卡尔规划)",
     "set_speed": "全局调速 0-100 (arm.set_speed)",
     "get_tcp": "当前末端位姿 (arm.get_tcp)",
     "ik": "逆解 (arm.ik)",
@@ -463,6 +474,11 @@ class Session:
         #: 位姿轮询会等到停稳才返回 (UI 侧会按超时标「已过期」), 而 `movej`/`home`
         #: 不碰 `get_tcp`, 所以关节运动/零重力拖拽期间位姿仍按 10Hz 更新。
         self._tcp_gate = threading.Lock()
+        #: 受控接管命令 (`stop_jog`) 专用 —— 与在途运动并行, 但不占安全通道。
+        #: ⚠ 不能放进 `_safety_executor`: 松手后马上按 STOP 时, 急停不许排在
+        #: 一条几百毫秒的停止 movej 后面 (「永远可达」优先于「松手即停」)。
+        self._takeover_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="litearm-takeover")
         #: 降能量方向的安全命令专用 (见 `ENERGY_DOWN_COMMANDS`) —— 单线程保证两条急停
         #: 之间仍串行, 但它**不排队等运动**: 这是「永远可达」的实现点。
         self._safety_executor = ThreadPoolExecutor(max_workers=1,
@@ -1061,6 +1077,7 @@ class Session:
         # SDK 读线程/应答队列不该与 `Arm.close()` 抢同一个会话。
         self._executor.shutdown(wait=True)
         self._read_executor.shutdown(wait=True)
+        self._takeover_executor.shutdown(wait=True)
         arm = self._take_arm()
         if arm is not None:
             self._close_arm(arm)
@@ -1335,6 +1352,8 @@ class Session:
             # 被在途运动冻结。
             if m in ENERGY_DOWN_COMMANDS:
                 executor = self._safety_executor
+            elif m in TAKEOVER_COMMANDS:
+                executor = self._takeover_executor
             elif m in READ_COMMANDS:
                 executor = self._read_executor
             else:
@@ -1416,6 +1435,22 @@ class Session:
                 # `get_tcp`, 不能与只读通道的位姿轮询并发 (见 `_tcp_gate`)。
                 with self._tcp_gate:
                     return statemap.jsonable(arm.move_l(_pose(p), _speed(p)))
+            if m == "stop_jog":
+                # 受控停止：目标 = 最近一帧状态的关节角。固件收到新的 movej 会先
+                # 作废在途笛卡尔规划，再从当前状态收口；与在途 movel 并行是安全的
+                # (SDK 明确把 movej 称为"受控接管")。
+                with self._lock:
+                    state = self._state
+                q = None if state is None else list(getattr(state, "q", []) or [])
+                if not q:
+                    raise ValueError("尚未收到状态帧 —— 无法确定点动停止目标")
+                if len(q) != int(getattr(arm, "n", len(q))):
+                    raise ValueError(
+                        f"停止目标关节数 {len(q)} 与当前会话 {arm.n} 不一致")
+                # 没给速度时用 0.5：这是"停住"，不是一条新轨迹，别用默认 1.0 猛停。
+                speed = _speed(p) if p.get("speed") is not None else 0.5
+                arm.movej([float(v) for v in q], speed)
+                return None
             if m == "set_speed":
                 arm.set_speed(_percent(p))
                 return int(p["percent"])

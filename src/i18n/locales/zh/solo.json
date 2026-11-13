@@ -30,6 +30,7 @@
     "enterZeroGravity": "进入零重力模式",
     "exitZeroGravity": "退出零重力模式",
     "cartesianJog": "笛卡尔点动",
+    "stopJog": "停止点动",
     "cartesianMovel": "笛卡尔直线运动 movel",
     "jointMotion": "关节 {{n}} 运动",
     "jointMotionAll": "关节运动",

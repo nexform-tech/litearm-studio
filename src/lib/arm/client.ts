@@ -558,6 +558,18 @@ export class ArmClient {
     return this._guardMotion(() => this._sendCmd('movel', speed == null ? { pose } : { pose, speed }))
   }
 
+  /**
+   * 受控停止点动：让 daemon 发一条 `movej` 到最近一帧状态的关节角。
+   *
+   * ⚠ **不能走 `_guardMotion`**：调用它的时候，续段 `movel` 正在途，`_motionPending`
+   * 本来就是 true —— 走守卫只会被本地拒绝，松手后机械臂继续走完 16×步长。daemon
+   * 侧把 `stop_jog` 当作受控接管（不占运动互斥），固件收到新的 `movej` 会先作废
+   * 在途笛卡尔规划，再从当前状态收口。
+   */
+  stopJog(speed?: number): Promise<unknown> {
+    return this._sendCmd('stop_jog', speed == null ? {} : { speed })
+  }
+
   async setSpeed(percent: number): Promise<unknown> {
     return this._sendCmd('set_speed', { percent: Math.round(percent) })
   }

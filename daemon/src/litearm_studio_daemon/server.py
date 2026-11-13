@@ -46,7 +46,8 @@ from starlette.types import Scope
 from . import __version__, logread, obs, ui_language, window
 from .errors import error_to_dict
 from .statemap import jsonable
-from .session import ENERGY_DOWN_COMMANDS, READ_COMMANDS, Session
+from .session import (ENERGY_DOWN_COMMANDS, READ_COMMANDS, TAKEOVER_COMMANDS,
+                      Session)
 
 log = logging.getLogger("litearm_studio_daemon.server")
 
@@ -174,14 +175,19 @@ def _is_energy_down_frame(raw: str) -> bool:
     return method in ENERGY_DOWN_COMMANDS or method == "gripper.stop"
 
 
-def _is_parallel_read_frame(raw: str) -> bool:
-    """这条上行帧是不是可以绕开有序队列的只读查询 (`get_tcp`)。
+def _is_parallel_frame(raw: str) -> bool:
+    """这条上行帧是不是必须绕开有序队列 (`get_tcp` / `stop_jog`)。
 
-    ⚠ 只读帧不改变机器状态, 却会被**同一条**有序 worker 挡住: 一条 `movej` 在途时,
-    worker 正 `await` 它, 后面排队的 `get_tcp` 直到运动结束才被取出来 —— 这正是
-    UI 上 X/Y/Z 在运动期间冻结的原因。把它旁路到独立任务后, 它的 `res` 可以与
-    在途运动并行; 真正的 SDK 串行/同名命令配对由 `Session` 的只读通道与
-    `_tcp_gate` 负责。
+    两类:
+
+    * `get_tcp` —— 只读, 但会被**同一条**有序 worker 挡住: 一条 `movej` 在途时,
+      worker 正 `await` 它, 后面排队的 `get_tcp` 直到运动结束才被取出来 —— 这正是
+      UI 上 X/Y/Z 在运动期间冻结的原因。
+    * `stop_jog` —— 松手停止必须能在续段 `movel` 在途时立刻执行; 排在后面就等于
+      "松手后继续走完 16×步长"。它在固件侧是受控接管, 不改变机器状态以外的语义。
+
+    真正的 SDK 串行/同名命令配对由 `Session` 的只读通道、`_tcp_gate` 与
+    `_takeover_executor` 负责。
 
     ⚠ 仍然只认 `t == "cmd"`; 坏 JSON / 别的帧交给 `_on_upstream` 回 BadMessage。
     """
@@ -191,7 +197,8 @@ def _is_parallel_read_frame(raw: str) -> bool:
         return False
     if not isinstance(msg, dict) or msg.get("t") != "cmd":
         return False
-    return msg.get("m") in READ_COMMANDS
+    method = msg.get("m")
+    return method in READ_COMMANDS or method in TAKEOVER_COMMANDS
 
 
 #: `pick_free_http_port` 从 `start` 起最多试几个端口。⚠ 复用探测
@@ -540,8 +547,8 @@ class Daemon:
         #: * 降能量方向的安全帧: 「急停永远可达」在传输层的另一半 (另一半是
         #:   `Session` 的专用执行器); 原来的 `await self._on_upstream(...)` 会把
         #:   `receive_text` 也一起挡住, 连急停帧都读不出来。
-        #: * 只读查询 (`get_tcp`): 它在一条 `movej` 后面排队, 就是运动期间 UI 位姿
-        #:   冻结的原因; 只读帧不改变机器状态, 不需要与运动保序。
+        #: * 只读查询 (`get_tcp`) 与受控接管 (`stop_jog`): 它们在一条 `movej`/`movel`
+        #:   后面排队, 就是运动期间 UI 位姿冻结 / 松手后继续走完续段的原因。
         bypass: set[asyncio.Task] = set()
         pump: Optional[asyncio.Task] = None
         worker: Optional[asyncio.Task] = None
@@ -597,7 +604,7 @@ class Daemon:
                 raw = await ws.receive_text()
                 # 上行帧是最强的"操作员还在"证据, 连上之后立刻补一次 (连接本身也算)。
                 self.stamp_gripper_heartbeat()
-                if _is_energy_down_frame(raw) or _is_parallel_read_frame(raw):
+                if _is_energy_down_frame(raw) or _is_parallel_frame(raw):
                     task = asyncio.create_task(
                         self._on_upstream(ws, client, raw, trace_id, execute))
                     bypass.add(task)

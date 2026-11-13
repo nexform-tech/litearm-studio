@@ -24,6 +24,7 @@ from litearm_studio_daemon.session import (
     ENERGY_DOWN_COMMANDS,
     MOTION_COMMANDS,
     READ_COMMANDS,
+    TAKEOVER_COMMANDS,
     Session,
     build_fake_transport_factory,
 )
@@ -393,6 +394,83 @@ def test_a_cartesian_move_serializes_pose_reads(fake_session: Session) -> None:
         mover.join()
         if reader is not None:
             reader.join()
+
+
+def test_stop_jog_runs_while_a_motion_is_still_in_flight(
+        fake_session: Session) -> None:
+    """松手停止不许排在续段 `movel` 后面 —— 它必须走自己的接管通道。
+
+    ⚠ 只把它排除出运动互斥是不够的: 在途 `movel` 占着 `_executor`, 停止命令
+    仍会排队等它走完 —— 那正是"松手后继续走完 16×步长"的现象。
+    """
+    assert _wait(lambda: fake_session.state() is not None)
+    arm = fake_session._arm
+    started = threading.Event()
+    released = threading.Event()
+    stop_called = threading.Event()
+
+    def fake_movej(q, speed=1.0):
+        if threading.current_thread().name.startswith("litearm-cmd"):
+            started.set()
+            released.wait(2.0)
+            return
+        stop_called.set()
+
+    arm.movej = fake_movej  # type: ignore[method-assign]
+    mover = threading.Thread(
+        target=lambda: fake_session.execute("movej", {"q": Q7, "speed": 0.3}))
+    mover.start()
+    try:
+        assert started.wait(2.0), "movej 没跑起来 —— 用例前提不成立"
+        t0 = time.monotonic()
+        fake_session.execute("stop_jog", {"speed": 0.3})
+        stop_dt = time.monotonic() - t0
+        assert stop_called.is_set()
+        assert fake_session.motion_in_flight() is True
+        assert stop_dt < 0.3, f"stop_jog 排在了运动后面 ({stop_dt:.3f}s)"
+    finally:
+        released.set()
+        mover.join()
+
+
+def test_stop_jog_is_exempt_from_the_motion_mutex(
+        fake_session: Session) -> None:
+    """在途运动时 `stop_jog` 仍要过准入 —— 它不是"第二条运动", 是接管。"""
+    assert _wait(lambda: fake_session.state() is not None)
+    arm = fake_session._arm
+    seen: dict = {}
+
+    def fake_movej(q, speed=1.0):
+        seen["q"] = list(q)
+        seen["speed"] = speed
+
+    arm.movej = fake_movej  # type: ignore[method-assign]
+    fake_session._motion_count = 1
+    try:
+        fake_session.execute("stop_jog", {"speed": 0.25})
+        assert seen["speed"] == 0.25
+        assert len(seen["q"]) == 7
+    finally:
+        fake_session._motion_count = 0
+
+
+def test_stop_jog_defaults_to_a_calm_speed(fake_session: Session) -> None:
+    """没给速度时用 0.5, 不用 `_speed()` 的默认 1.0 猛停。"""
+    assert _wait(lambda: fake_session.state() is not None)
+    arm = fake_session._arm
+    seen: dict = {}
+
+    def fake_movej(q, speed=1.0):
+        seen["speed"] = speed
+
+    arm.movej = fake_movej  # type: ignore[method-assign]
+    fake_session.execute("stop_jog", {})
+    assert seen["speed"] == 0.5
+
+
+def test_takeover_commands_set_is_exactly_stop_jog() -> None:
+    """哨兵: 接管通道只收 `stop_jog`, 不许顺手把普通运动塞进来。"""
+    assert TAKEOVER_COMMANDS == frozenset({"stop_jog"})
 
 
 def test_read_commands_set_is_exactly_get_tcp() -> None:

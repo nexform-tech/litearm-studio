@@ -21,7 +21,7 @@ from litearm_studio_daemon.server import (
     _Client,
     _is_energy_down_frame,
     _is_loopback,
-    _is_parallel_read_frame,
+    _is_parallel_frame,
     create_app,
     origin_allowed,
     pick_free_http_port,
@@ -918,15 +918,42 @@ def test_ws_pose_read_does_not_wait_for_a_command_in_flight() -> None:
         session.close()
 
 
+def test_ws_stop_jog_does_not_wait_for_a_command_in_flight() -> None:
+    """松手停止不许排在续段 `movel` 后面 —— 否则"松手即停"仍然是假的。"""
+    session, app = _client()
+    try:
+        def fake_execute(m, p=None, *, on_event=None, trace=None):
+            if m == "movel":
+                time.sleep(0.5)
+            return None
+
+        session.execute = fake_execute  # type: ignore[method-assign]
+        with TestClient(app) as client:
+            with client.websocket_connect("/ws") as ws:
+                ws.receive_json()               # hello
+                ws.receive_json()               # conn
+                ws.receive_json()               # log_meta
+                ws.send_json({"t": "cmd", "id": 1, "m": "movel",
+                              "p": {"pose": [0.3, 0.0, 0.4, 0.0, 0.0, 0.0]}})
+                ws.send_json({"t": "cmd", "id": 2, "m": "stop_jog", "p": {}})
+                first = await_response(ws)
+                assert first["t"] == "res"
+                assert first["id"] == 2, (
+                    f"stop_jog 应先在途 movel 返回, 实际先回的是 id={first['id']}")
+    finally:
+        session.close()
+
+
 @pytest.mark.parametrize("raw,expected", [
     ('{"t":"cmd","id":1,"m":"get_tcp","p":{}}', True),
+    ('{"t":"cmd","id":1,"m":"stop_jog","p":{}}', True),
     ('{"t":"cmd","id":1,"m":"movej","p":{}}', False),
     ('{"t":"cmd","id":1,"m":"estop","p":{}}', False),   # 安全帧走另一条判据
     ('{"t":"connect"}', False),
     ("这不是 JSON", False),
 ])
-def test_parallel_read_frame_detection(raw: str, expected: bool) -> None:
-    assert _is_parallel_read_frame(raw) is expected
+def test_parallel_frame_detection(raw: str, expected: bool) -> None:
+    assert _is_parallel_frame(raw) is expected
 
 
 @pytest.mark.parametrize("raw,expected", [

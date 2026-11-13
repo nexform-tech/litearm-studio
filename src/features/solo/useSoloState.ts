@@ -765,11 +765,19 @@ export function useSoloState() {
       void runJog(gen, baseAxis, isRot, step, s.frame, s.speed)
     },
     onJogRelease: () => {
-      // 松开只停止续段；在途的单段 movel 让它自己走完（急停是独立的 STOP 按钮）。
+      // 松手：作废续段链路，并**受控停住在途续段**。只按一下（首段 1 个步长）不需要
+      // 额外停止命令，让它走完这一步即可。
       jogHoldingRef.current = false
       if (jogContinuousRef.current) {
         jogGenRef.current++ // 作废在途连续链路
         jogContinuousRef.current = false
+        if (connected && s.real) {
+          // `stop_jog` 走 daemon 的受控接管通道，不排队等这条 movel 结束；
+          // 固件收到新的 movej 会作废在途笛卡尔规划，从当前状态收口。
+          void armClient
+            .stopJog(s.speed / 100)
+            .catch((err) => reportError('solo:ops.stopJog', err))
+        }
       }
     },
   }
