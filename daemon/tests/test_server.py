@@ -23,6 +23,7 @@ from litearm_studio_daemon.server import (
     _is_gripper_frame,
     _is_loopback,
     _is_parallel_frame,
+    _is_supersede_frame,
     create_app,
     origin_allowed,
     pick_free_http_port,
@@ -965,6 +966,41 @@ class _FakeGripper:
 
     def execute(self, _m, _p=None):
         return None
+
+
+def test_ws_superseding_movej_does_not_wait_for_the_old_movej() -> None:
+    """带 `supersede` 的 movej 不许排在旧 movej 后面 —— 否则"允许接管"只在准入层成立。"""
+    session, app = _client()
+    try:
+        def fake_execute(m, p=None, *, on_event=None, trace=None):
+            if m == "movej" and not (p or {}).get("supersede"):
+                time.sleep(0.5)
+            return None
+
+        session.execute = fake_execute  # type: ignore[method-assign]
+        with TestClient(app) as client:
+            with client.websocket_connect("/ws") as ws:
+                ws.send_json({"t": "cmd", "id": 1, "m": "movej",
+                              "p": {"q": [0.1] * 7}})
+                ws.send_json({"t": "cmd", "id": 2, "m": "movej",
+                              "p": {"q": [0.2] * 7, "supersede": True}})
+                first = await_response(ws)
+                assert first["t"] == "res"
+                assert first["id"] == 2, (
+                    f"接管 movej 应先在旧命令返回, 实际先回的是 id={first['id']}")
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ('{"t":"cmd","id":1,"m":"movej","p":{"q":[0.1],"supersede":true}}', True),
+    ('{"t":"cmd","id":1,"m":"movej","p":{"q":[0.1]}}', False),
+    ('{"t":"cmd","id":1,"m":"movel","p":{"pose":[0,0,0,0,0,0],"supersede":true}}', False),
+    ('{"t":"cmd","id":1,"m":"movej"}', False),
+    ("这不是 JSON", False),
+])
+def test_supersede_frame_detection(raw: str, expected: bool) -> None:
+    assert _is_supersede_frame(raw) is expected
 
 
 def test_ws_gripper_command_does_not_wait_for_an_arm_command() -> None:

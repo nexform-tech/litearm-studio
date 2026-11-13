@@ -396,6 +396,118 @@ def test_a_cartesian_move_serializes_pose_reads(fake_session: Session) -> None:
             reader.join()
 
 
+def test_a_move_timeout_keeps_the_arm_marked_moving_until_it_settles(
+        fake_session: Session) -> None:
+    """超时只是"停止等待", 不是"臂停了" —— 状态不许立刻翻成 ready (issue #249)。
+
+    旧实现会在 `finally` 里把 `_motion_count` 清零, 于是顶栏报 ready、下一条运动
+    也能下发, 而臂可能还在走。现在超时后进入"结果未知", 直到连续观察到静止帧。
+    """
+    assert _wait(lambda: fake_session.state() is not None)
+    fake_session.execute("enable", {})
+    assert _wait(lambda: bool((fake_session.state() or {}).get("enabled"))), \
+        "假臂没使能 —— 状态串会先落 disabled，测不出 moving"
+    arm = fake_session._arm
+
+    def timed_out(*_a, **_k):
+        raise litearm.MotionTimeoutError("未到位, 超时 15.0s")
+
+    arm.movej = timed_out  # type: ignore[method-assign]
+
+    with pytest.raises(litearm.MotionTimeoutError):
+        fake_session.execute("movej", {"q": Q7})
+    assert fake_session.motion_in_flight() is True
+    assert _wait(lambda: (fake_session.state() or {}).get("state") == "moving"), \
+        f"超时后状态应仍为 moving, 实际 {fake_session.state()}"
+
+    # 假设备的 q 不再变化 ⇒ 连续 3 拍后把 unknown 清掉, 状态回到 ready。
+    assert _wait(lambda: not fake_session.motion_in_flight(), timeout=5.0)
+    assert _wait(lambda: (fake_session.state() or {}).get("state") == "ready"), \
+        f"静止后状态应回到 ready, 实际 {fake_session.state()}"
+
+
+def test_a_move_timeout_blocks_plain_motions_but_allows_a_takeover(
+        fake_session: Session) -> None:
+    assert _wait(lambda: fake_session.state() is not None)
+    arm = fake_session._arm
+    real_movej = arm.movej
+    calls: list[str] = []
+
+    def fake_movej(q, speed=1.0):
+        calls.append("takeover")
+        return real_movej(q, speed)
+
+    def timed_out(*_a, **_k):
+        raise litearm.MotionTimeoutError("未到位")
+
+    # 先造一个"结果未知" (超时), 再让 fake_movej 恢复可用。
+    arm.movej = timed_out  # type: ignore[method-assign]
+    with pytest.raises(litearm.MotionTimeoutError):
+        fake_session.execute("movej", {"q": Q7})
+    arm.movej = fake_movej  # type: ignore[method-assign]
+
+    with pytest.raises(MotionBusyError):
+        fake_session.execute("movej", {"q": Q7})
+    fake_session.execute("movej", {"q": Q7, "supersede": True})
+    assert calls == ["takeover"]
+    # 接管成功到位 ⇒ 旧的"结果未知"被覆盖。
+    assert fake_session.motion_in_flight() is False
+
+
+def test_superseding_movej_is_accepted_while_a_motion_is_in_flight(
+        fake_session: Session) -> None:
+    """带 `supersede` 的 movej 是接管, 不是"第二条运动" —— 它不该被互斥拒掉。"""
+    arm = fake_session._arm
+    seen: list[float] = []
+
+    def fake_movej(q, speed=1.0):
+        seen.append(speed)
+
+    arm.movej = fake_movej  # type: ignore[method-assign]
+    fake_session._motion_count = 1
+    try:
+        # 普通 movej 仍被拒。
+        with pytest.raises(MotionBusyError):
+            fake_session.execute("movej", {"q": Q7})
+        # 显式接管放行。
+        fake_session.execute("movej", {"q": Q7, "speed": 0.4, "supersede": True})
+        assert seen == [0.4]
+    finally:
+        fake_session._motion_count = 0
+
+
+def test_superseding_movej_runs_while_the_old_movej_is_still_in_flight(
+        fake_session: Session) -> None:
+    """接管命令必须与在途 movej **并行**, 不能排在 `_executor` 后面。"""
+    arm = fake_session._arm
+    started = threading.Event()
+    released = threading.Event()
+    took_over = threading.Event()
+
+    def fake_movej(q, speed=1.0):
+        if threading.current_thread().name.startswith("litearm-cmd"):
+            started.set()
+            released.wait(2.0)
+            return
+        took_over.set()
+
+    arm.movej = fake_movej  # type: ignore[method-assign]
+    mover = threading.Thread(
+        target=lambda: fake_session.execute("movej", {"q": Q7, "speed": 0.3}))
+    mover.start()
+    try:
+        assert started.wait(2.0), "旧 movej 没跑起来 —— 用例前提不成立"
+        t0 = time.monotonic()
+        fake_session.execute("movej", {"q": Q7, "speed": 0.4, "supersede": True})
+        takeover_dt = time.monotonic() - t0
+        assert took_over.is_set()
+        assert fake_session.motion_in_flight() is True
+        assert takeover_dt < 0.3, f"接管 movej 排在了旧命令后面 ({takeover_dt:.3f}s)"
+    finally:
+        released.set()
+        mover.join()
+
+
 def test_stop_jog_runs_while_a_motion_is_still_in_flight(
         fake_session: Session) -> None:
     """松手停止不许排在续段 `movel` 后面 —— 它必须走自己的接管通道。

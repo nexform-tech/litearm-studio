@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import type { PadCell } from '../../components/DirectionPad'
 import type { SegItem } from '../../components/SegmentedControl'
-import { armClient, formatArmError, useArmConnection, useArmState, useArmMetrics, type Pose6, type SeriesSample } from '@/lib/arm'
+import { armClient, formatArmError, isMotionSuperseded, useArmConnection, useArmState, useArmMetrics, type Pose6, type SeriesSample } from '@/lib/arm'
 import { DEFAULT_JOINT_COUNT, resolveJointCount } from '@/lib/arm/axes'
 import { jogPose, rpyToMat3, mat3ToRpy, type Mat3 } from '@/lib/arm/geometry'
 import {
@@ -191,6 +191,8 @@ export function useSoloState() {
     { opKey: string; opVars?: Record<string, unknown>; msg: string } | null
   >(null)
   const reportError = useCallback((opKey: string, err: unknown, vars?: Record<string, unknown>) => {
+    // 被更新目标接管的旧运动不是失败：它晚到的超时/拒绝不该弹红框。
+    if (isMotionSuperseded(err)) return
     console.error(`${opKey} failed`, err)
     const msg = formatArmError(err)
     setLastError({ opKey, opVars: vars, msg })
@@ -652,7 +654,7 @@ export function useSoloState() {
       // ⚠ 这里**只**发这条运动的倍率，不写固件调速器：后者是全局且持续的上限，
       // 回零/就绪姿态顺手写它会让之后的滑条被一个看不见的上限夹住（issue #236）。
       armClient
-        .movej(target, s.speed / 100)
+        .movej(target, s.speed / 100, { supersede: true })
         .then(() => setLastError(null))
         .catch((err) => reportError('solo:controlBar.readyPose', err))
     },
@@ -690,7 +692,7 @@ export function useSoloState() {
       if (connected && s.real) {
         const target = next.map((v, i) => toRad(v, i))
         armClient
-          .movej(target, s.speed / 100)
+          .movej(target, s.speed / 100, { supersede: true })
           // 运动成功即清掉旧错误：被"正在运动"拦下后，下一次成功运动要让提示消失。
           .then(() => setLastError(null))
           .catch((err) => reportError('solo:ops.jointMotion', err, { n: key + 1 }))
@@ -707,7 +709,7 @@ export function useSoloState() {
       if (connected && s.real) {
         const target = clamped.map((v, i) => toRad(v, i))
         armClient
-          .movej(target, s.speed / 100)
+          .movej(target, s.speed / 100, { supersede: true })
           .then(() => setLastError(null))
           .catch((err) => reportError('solo:ops.jointMotionAll', err))
       }

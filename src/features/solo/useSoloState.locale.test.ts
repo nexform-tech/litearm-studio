@@ -29,6 +29,7 @@ vi.mock('@/lib/arm', () => ({
     setSpeed: mocks.setSpeed,
   },
   formatArmError: (e: unknown) => (e instanceof Error ? e.message : String(e)),
+  isMotionSuperseded: () => false,
   useArmConnection: () => ({ status: mocks.status, conn: mocks.conn }),
   useArmState: () => mocks.armState,
   useArmMetrics: () => ({}),

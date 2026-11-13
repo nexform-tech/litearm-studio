@@ -201,6 +201,24 @@ def _is_parallel_frame(raw: str) -> bool:
     return method in READ_COMMANDS or method in TAKEOVER_COMMANDS
 
 
+def _is_supersede_frame(raw: str) -> bool:
+    """显式标记为受控接管的 `movej` —— 它必须绕开有序队列。
+
+    否则一条 15s 的 `movej` 正被 worker `await` 时, 后面的接管帧根本取不出来,
+    "允许接管"就只剩 daemon 里的准入判定, 传输层仍然把它排在旧命令后面。
+    """
+    try:
+        msg = json.loads(raw)
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(msg, dict) or msg.get("t") != "cmd":
+        return False
+    if msg.get("m") != "movej":
+        return False
+    params = msg.get("p")
+    return isinstance(params, dict) and params.get("supersede") is True
+
+
 def _is_gripper_frame(raw: str) -> bool:
     """这条上行帧是不是夹爪命令 —— 走夹爪自己的有序队列，不等臂运动。
 
@@ -568,8 +586,9 @@ class Daemon:
         #: * 降能量方向的安全帧: 「急停永远可达」在传输层的另一半 (另一半是
         #:   `Session` 的专用执行器); 原来的 `await self._on_upstream(...)` 会把
         #:   `receive_text` 也一起挡住, 连急停帧都读不出来。
-        #: * 只读查询 (`get_tcp`) 与受控接管 (`stop_jog`): 它们在一条 `movej`/`movel`
-        #:   后面排队, 就是运动期间 UI 位姿冻结 / 松手后继续走完续段的原因。
+        #: * 只读查询 (`get_tcp`)、受控停止 (`stop_jog`) 与显式接管的 `movej`:
+        #:   它们在一条 `movej`/`movel` 后面排队, 就是运动期间 UI 位姿冻结 /
+        #:   松手后继续走完续段 / 新目标改不动的原因。
         bypass: set[asyncio.Task] = set()
         pump: Optional[asyncio.Task] = None
         worker: Optional[asyncio.Task] = None
@@ -628,7 +647,8 @@ class Daemon:
                 raw = await ws.receive_text()
                 # 上行帧是最强的"操作员还在"证据, 连上之后立刻补一次 (连接本身也算)。
                 self.stamp_gripper_heartbeat()
-                if _is_energy_down_frame(raw) or _is_parallel_frame(raw):
+                if (_is_energy_down_frame(raw) or _is_parallel_frame(raw)
+                        or _is_supersede_frame(raw)):
                     task = asyncio.create_task(
                         self._on_upstream(ws, client, raw, trace_id, execute))
                     bypass.add(task)
