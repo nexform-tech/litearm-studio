@@ -152,6 +152,40 @@ def test_run_release_fails_when_the_log_is_not_healthy(monkeypatch, capsys) -> N
     capsys.readouterr()
 
 
+def test_run_all_runs_every_release_and_aggregates_failures(monkeypatch, capsys) -> None:
+    """两个发行版并行跑；一个失败不能掩盖另一个的结果。"""
+    smoke = _load_smoke()
+    calls = []
+
+    def fake_execute(release, deb, version, timeout, apt_mirror=None):
+        calls.append(release)
+        if release == "26.04":
+            return smoke.Outcome(
+                release, "boom", ["the daemon never reported an open window"])
+        return smoke.Outcome(release, HEALTHY_LOG, [])
+
+    monkeypatch.setattr(smoke, "execute_release", fake_execute)
+
+    code = smoke.run_all(["24.04", "26.04"], pathlib.Path("/tmp/pkg.deb"), "0.25.1", 15)
+
+    assert code == 1
+    assert sorted(calls) == ["24.04", "26.04"]
+    output = capsys.readouterr().out
+    assert "ubuntu:24.04: window opened and the UI connected" in output
+    assert "ubuntu:26.04 failed" in output
+
+
+def test_run_all_returns_zero_when_every_release_passes(monkeypatch, capsys) -> None:
+    smoke = _load_smoke()
+    monkeypatch.setattr(
+        smoke, "execute_release",
+        lambda release, *args, **kwargs: smoke.Outcome(release, HEALTHY_LOG, []))
+
+    assert smoke.run_all(
+        ["24.04", "26.04"], pathlib.Path("/tmp/pkg.deb"), "0.25.1", 15) == 0
+    assert "in parallel" in capsys.readouterr().out
+
+
 def test_a_missing_package_is_refused(tmp_path) -> None:
     smoke = _load_smoke()
 

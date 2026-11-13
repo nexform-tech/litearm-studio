@@ -26,8 +26,9 @@ from __future__ import annotations
 import argparse
 import re
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import List, NamedTuple, Optional, Sequence
 
 #: The LTS releases the Linux package must start on. Keep this list aligned with
 #: docs/INSTALL.md; the package is built on 22.04, which is covered by the build
@@ -56,8 +57,10 @@ FAILURE_MARKERS = (
 #: `timeout(1)` exits with 124 when the command was still running at the deadline.
 STILL_RUNNING = 124
 
-#: How long the app must survive after opening the window, in seconds.
-DEFAULT_TIMEOUT = 30
+#: How long the app must survive after opening the window, in seconds. The window
+#: opens within a second or two; 15 s leaves a wide margin without paying a full
+#: half-minute per release on every release build.
+DEFAULT_TIMEOUT = 15
 
 #: Extra wall-clock allowance for pulling the image and installing packages
 #: inside the container, on top of the app timeout.
@@ -145,9 +148,21 @@ def package_version(deb: Path) -> str:
     return version
 
 
-def run_release(release: str, deb: Path, version: str, timeout: int,
-                apt_mirror: Optional[str] = None) -> None:
-    """Run the package in ``ubuntu:<release>`` and fail on any bad signal.
+class Outcome(NamedTuple):
+    """One release's result: its captured output and whatever is wrong with it."""
+
+    release: str
+    output: str
+    problems: List[str]
+
+
+def execute_release(release: str, deb: Path, version: str, timeout: int,
+                    apt_mirror: Optional[str] = None) -> Outcome:
+    """Run one release in Docker and return its output and problems.
+
+    Does not print or raise for a failed release: :func:`run_all` calls this on a
+    worker thread and prints each block in the main thread, so two parallel
+    containers cannot interleave their logs.
 
     `--privileged` is needed for WebKitGTK's bubblewrap sandbox inside the
     container (it sets up user namespaces). The container is ephemeral and only
@@ -160,28 +175,78 @@ def run_release(release: str, deb: Path, version: str, timeout: int,
         f"ubuntu:{release}", "bash", "-lc",
         container_script(version, timeout, apt_mirror),
     ]
-    print(f"[smoke] ubuntu:{release} (package {version}) ...", flush=True)
     try:
         result = subprocess.run(
             command, capture_output=True, text=True,
             timeout=timeout + SETUP_TIMEOUT, check=False,
         )
-    except FileNotFoundError as exc:
-        raise SystemExit("docker is not available; the release job needs a Docker runner") from exc
-    except subprocess.TimeoutExpired as exc:
-        raise SystemExit(
-            f"ubuntu:{release}: the container did not finish within "
-            f"{timeout + SETUP_TIMEOUT}s") from exc
+    except FileNotFoundError:
+        return Outcome(release, "", [
+            "docker is not available; the release job needs a Docker runner"])
+    except subprocess.TimeoutExpired:
+        return Outcome(release, "", [
+            f"the container did not finish within {timeout + SETUP_TIMEOUT}s"])
+    except OSError as exc:
+        return Outcome(release, "", [f"could not start docker: {exc}"])
 
     output = (result.stdout or "") + (result.stderr or "")
-    print(output, end="")
     problems = check_log(output)
     if result.returncode != 0:
         problems.append(f"docker run exited with {result.returncode}")
-    if problems:
-        details = "\n".join(f"  - {problem}" for problem in problems)
+    return Outcome(release, output, problems)
+
+
+def run_release(release: str, deb: Path, version: str, timeout: int,
+                apt_mirror: Optional[str] = None) -> None:
+    """Run one release, print its log, and raise ``SystemExit`` on failure.
+
+    A convenience for a single release (and for the unit tests); :func:`main`
+    uses :func:`run_all` so the two target releases run in parallel.
+    """
+    print(f"[smoke] ubuntu:{release} (package {version}) ...", flush=True)
+    outcome = execute_release(release, deb, version, timeout, apt_mirror)
+    print(outcome.output, end="")
+    if outcome.problems:
+        details = "\n".join(f"  - {problem}" for problem in outcome.problems)
         raise SystemExit(f"[smoke] ubuntu:{release} failed:\n{details}")
     print(f"[smoke] ubuntu:{release}: window opened and the UI connected", flush=True)
+
+
+def run_all(releases: Sequence[str], deb: Path, version: str, timeout: int,
+            apt_mirror: Optional[str] = None) -> int:
+    """Run every target release in parallel; return 0 only if all of them pass.
+
+    Both releases are independent containers, so running them serially only
+    doubles the wall-clock time. Output is buffered per release and printed as one
+    block, which keeps parallel logs readable and makes a failure easy to find.
+    A failing release does not hide the other's result.
+    """
+    releases = list(releases)
+    if not releases:
+        return 0
+    print(f"[smoke] {', '.join(f'ubuntu:{release}' for release in releases)} "
+          f"in parallel (package {version})", flush=True)
+    failed = False
+    with ThreadPoolExecutor(max_workers=len(releases)) as pool:
+        futures = {
+            pool.submit(execute_release, release, deb, version, timeout, apt_mirror): release
+            for release in releases
+        }
+        for future in as_completed(futures):
+            release = futures[future]
+            try:
+                outcome = future.result()
+            except Exception as exc:  # noqa: BLE001 - one release must not hide the other
+                outcome = Outcome(release, "", [f"unexpected failure: {exc}"])
+            print(f"\n===== ubuntu:{release} =====")
+            print(outcome.output, end="")
+            if outcome.problems:
+                failed = True
+                details = "\n".join(f"  - {problem}" for problem in outcome.problems)
+                print(f"[smoke] ubuntu:{release} failed:\n{details}")
+            else:
+                print(f"[smoke] ubuntu:{release}: window opened and the UI connected")
+    return 1 if failed else 0
 
 
 def apt_mirror_arg(value: str) -> str:
@@ -221,9 +286,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if not args.deb.is_file():
         raise SystemExit(f"no package at {args.deb}")
     version = package_version(args.deb)
-    for release in args.releases or RELEASES:
-        run_release(release, args.deb, version, args.timeout, args.apt_mirror)
-    return 0
+    return run_all(args.releases or RELEASES, args.deb, version,
+                   args.timeout, args.apt_mirror)
 
 
 if __name__ == "__main__":
