@@ -13,6 +13,15 @@ typelib、gdk-pixbuf 加载器、GIO 模块与图标主题一起装上。包里�
 的 soname**，在进程里会盖住系统的：22.04 的 `libglib-2.0.so.0`(2.72) 盖住 24.04 的
 (2.80)，24.04 的系统 `libgudev`（WebKitGTK 要用）于是找不到 `g_once_init_enter_pointer`，
 WebKit 加载失败、窗口开不出来。完整经过见 `hook-gi.py` 的模块文档。
+
+**名单里也有 C++/编译器运行库**（`libstdc++`、`libgcc_s`）。它们不是 GTK 的库，但机理
+完全相同，而且比 GTK 更隐蔽：构建机 22.04 的 `libstdc++` 只到 `CXXABI_1.3.13`、
+`libgcc_s` 只到 `GCC_12.0.0`，26.04 的 `libicui18n.so.78` / `libhwy.so.1` 却要
+`CXXABI_1.3.15` / `GCC_13.0.0` —— 包内旧库盖住系统的新库，WebKitGTK 的 typelib 当场
+加载失败，窗口打不开（Ubuntu 26.04 上的客户反馈）。产物里之所以会有它们，是因为 PyInstaller 顺带收了
+构建机的 `apt_pkg` / `libapt-pkg`（一个与界面无关的系统模块），`libapt-pkg` 再拖进
+`libstdc++`。目标机在 glibc 2.35+ 上必然有这两个运行库，且版本不会低于构建机，所以
+"不收"既不会少能力，又让 ABI 与目标机对齐。
 """
 
 from __future__ import annotations
@@ -51,6 +60,11 @@ STACK_LIBRARIES: Tuple[str, ...] = (
     r"libcairo-gobject\.so.*",
     r"libharfbuzz\.so.*",
     r"libX11\.so.*",
+    # C++/编译器运行库 —— 必须用目标机的版本，理由见模块文档。构建机（22.04）的
+    # `libstdc++` 只到 CXXABI_1.3.13、`libgcc_s` 只到 GCC_12.0.0，而 26.04 的
+    # ICU / highway 需要 CXXABI_1.3.15 / GCC_13.0.0。
+    r"libstdc\+\+\.so.*",
+    r"libgcc_s\.so.*",
     # glib 自己的依赖（`ldd` 的传递闭包把它们带进来，见上）。
     r"libpcre\.so.*",
     r"libpcre2-8\.so.*",

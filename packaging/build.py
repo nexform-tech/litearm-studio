@@ -689,7 +689,8 @@ def main() -> int:
                 raise SystemExit(
                     f"产物里混进了桌面栈的一份副本, 共 {len(offenders)} 项:\n{listing}\n"
                     "它带着与目标机同名的 soname, 会盖住系统那一份 —— Ubuntu 24.04 上窗口\n"
-                    "打不开就是这么来的 (issue #123)。两条出路: 打包参数/钩子没拦住\n"
+                    "打不开就是这么来的 (issue #123), 26.04 上则是旧 libstdc++/libgcc_s\n"
+                    "缺 CXXABI_1.3.15 / GCC_13.0.0。两条出路: 打包参数/钩子没拦住\n"
                     "(看 packaging/hooks/hook-gi.py), 或者漏了一类东西, 把那一类加进\n"
                     "packaging/hooks/litearm_stack.py 的名单里。")
             print("[package] 产物检查: 没有桌面栈的库/typelib/加载器/数据")

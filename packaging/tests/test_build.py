@@ -348,7 +348,11 @@ def test_the_gi_hook_stops_the_whole_desktop_stack() -> None:
                    # glib 自己的依赖: PyInstaller 用 ldd 拿的是整条传递闭包, 这几条就是这么
                    # 混进来的 —— 挡掉 libglib 之后它们成了孤儿, 却照样同名盖住系统的。
                    "libpcre.so.3", "libpcre2-8.so.0", "libmount.so.1", "libblkid.so.1",
-                   "libselinux.so.1"):
+                   "libselinux.so.1",
+                   # C++/编译器运行库: 构建机 22.04 的版本没有 26.04 系统库要的
+                   # CXXABI_1.3.15 / GCC_13.0.0, 包内旧库会让 WebKitGTK 的 typelib
+                   # 加载失败 (issue #123 的 26.04 版本)。
+                   "libstdc++.so.6", "libgcc_s.so.1"):
         assert dylib.exclude_list.check_library(soname), f"{soname} 没被排除 —— 它会盖住系统的"
 
     # ⚠ 只排桌面栈。两条边界:
@@ -393,6 +397,8 @@ def test_the_stack_rules_flag_a_copy_and_leave_our_own_files_alone() -> None:
         "lib/libgtk-3.so.0",                      # 带目录的
         "libgdk_pixbuf-2.0.so.0",
         "libmount.so.1",                          # glib 的依赖, 见名单里的说明
+        "libstdc++.so.6",                         # C++ 运行库, 必须用目标机的
+        "libgcc_s.so.1",                          # 编译器运行库, 同上
         "gi_typelibs/Gtk-3.0.typelib",            # typelib 及其目录
         "elsewhere/Gtk-3.0.typelib",              # 换个目录也算
         "gio_modules/libgiognutls.so",
@@ -437,12 +443,15 @@ def test_the_product_check_reads_a_frozen_tree(tmp_path, monkeypatch) -> None:
                                        / build.EXE_NAME, "onedir") == []
 
     (tree / "libglib-2.0.so.0").write_bytes(b"the system's, copied")
+    (tree / "libstdc++.so.6").write_bytes(b"the build machine's, too old")
+    (tree / "libgcc_s.so.1").write_bytes(b"the build machine's, too old")
     (tree / "gi_typelibs").mkdir()
     (tree / "gi_typelibs" / "Gtk-3.0.typelib").write_bytes(b"the system's, copied")
 
     found = dict(build.desktop_stack_members(tmp_path / "litearm-studio-daemon"
                                              / build.EXE_NAME, "onedir"))
-    assert set(found) == {"libglib-2.0.so.0", "gi_typelibs/Gtk-3.0.typelib"}
+    assert set(found) == {"libglib-2.0.so.0", "libstdc++.so.6", "libgcc_s.so.1",
+                          "gi_typelibs/Gtk-3.0.typelib"}
     assert "盖住" in found["libglib-2.0.so.0"]
 
 
