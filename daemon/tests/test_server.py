@@ -20,6 +20,7 @@ from litearm_studio_daemon.server import (
     Daemon,
     _Client,
     _is_energy_down_frame,
+    _is_gripper_frame,
     _is_loopback,
     _is_parallel_frame,
     create_app,
@@ -942,6 +943,64 @@ def test_ws_stop_jog_does_not_wait_for_a_command_in_flight() -> None:
                     f"stop_jog 应先在途 movel 返回, 实际先回的是 id={first['id']}")
     finally:
         session.close()
+
+
+class _FakeGripper:
+    """握手 + 命令都够用的夹爪替身；`execute` 立刻返回。"""
+
+    def add_listener(self, _cb) -> None:
+        pass
+
+    def conn_info(self) -> dict:
+        return {"status": "connected", "port": "can0"}
+
+    def connected(self) -> bool:
+        return True
+
+    def state(self):
+        return None
+
+    def heartbeat(self) -> None:
+        pass
+
+    def execute(self, _m, _p=None):
+        return None
+
+
+def test_ws_gripper_command_does_not_wait_for_an_arm_command() -> None:
+    """夹爪命令必须有自己的有序 worker —— 不许排在臂运动后面 (issue #250)。"""
+    session = Session(port_finder=lambda: None)
+    app = create_app(session, gripper=_FakeGripper(), version=VERSION,
+                     repo_dist=Path("/nonexistent-ui"))
+    try:
+        def fake_execute(m, p=None, *, on_event=None, trace=None):
+            if m == "movej":
+                time.sleep(0.5)
+            return None
+
+        session.execute = fake_execute  # type: ignore[method-assign]
+        with TestClient(app) as client:
+            with client.websocket_connect("/ws") as ws:
+                ws.send_json({"t": "cmd", "id": 1, "m": "movej",
+                              "p": {"q": [0.1] * 7}})
+                ws.send_json({"t": "cmd", "id": 2, "m": "gripper.open", "p": {}})
+                first = await_response(ws)
+                assert first["t"] == "res"
+                assert first["id"] == 2, (
+                    f"夹爪命令应先在途运动返回, 实际先回的是 id={first['id']}")
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ('{"t":"cmd","id":1,"m":"gripper.open","p":{}}', True),
+    ('{"t":"cmd","id":1,"m":"gripper.stop","p":{}}', True),
+    ('{"t":"cmd","id":1,"m":"movej","p":{}}', False),
+    ('{"t":"connect"}', False),
+    ("这不是 JSON", False),
+])
+def test_gripper_frame_detection(raw: str, expected: bool) -> None:
+    assert _is_gripper_frame(raw) is expected
 
 
 @pytest.mark.parametrize("raw,expected", [

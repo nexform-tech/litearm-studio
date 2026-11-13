@@ -135,6 +135,11 @@ MOTION_COMMANDS = frozenset({"home", "movej", "movel"})
 #:   通道上没有危害; 而每多一条并发写者, 就要多论证一次它与固件应答 FIFO 的关系。
 READ_COMMANDS = frozenset({"get_tcp"})
 
+
+def is_gripper_command(method: str) -> bool:
+    """`gripper.` 前缀是夹爪命令的唯一判据 (与 `server` 的分流同一口径)。"""
+    return method.startswith("gripper.")
+
 #: 运动中**允许接管**的动作 —— 目前只有"松开点动盘时受控停住"。
 #:
 #: `stop_jog` 发一条 `movej` 到**最近的关节角**; 固件收到新的 `movej` 会先

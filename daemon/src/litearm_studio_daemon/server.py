@@ -47,7 +47,7 @@ from . import __version__, logread, obs, ui_language, window
 from .errors import error_to_dict
 from .statemap import jsonable
 from .session import (ENERGY_DOWN_COMMANDS, READ_COMMANDS, TAKEOVER_COMMANDS,
-                      Session)
+                      Session, is_gripper_command)
 
 log = logging.getLogger("litearm_studio_daemon.server")
 
@@ -199,6 +199,22 @@ def _is_parallel_frame(raw: str) -> bool:
         return False
     method = msg.get("m")
     return method in READ_COMMANDS or method in TAKEOVER_COMMANDS
+
+
+def _is_gripper_frame(raw: str) -> bool:
+    """这条上行帧是不是夹爪命令 —— 走夹爪自己的有序队列，不等臂运动。
+
+    ⚠ 只认 `t == "cmd"` 且 `m` 以 `gripper.` 开头；`gripper.stop` 会先被
+    `_is_energy_down_frame` 接走 (旁路), 不落到这里。
+    """
+    try:
+        msg = json.loads(raw)
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(msg, dict) or msg.get("t") != "cmd":
+        return False
+    method = msg.get("m")
+    return isinstance(method, str) and is_gripper_command(method)
 
 
 #: `pick_free_http_port` 从 `start` 起最多试几个端口。⚠ 复用探测
@@ -543,6 +559,11 @@ class Daemon:
         #: (前端有依赖顺序的连招: set_speed 之后再 movej)。**有界**, 见
         #: `_enqueue_uplink`。
         queue: asyncio.Queue[str] = asyncio.Queue(maxsize=UPLINK_QUEUE_MAX)
+        #: 夹爪命令自己的有序队列 —— **不能和臂共用一条**: 一条 15s 的 `movej`
+        #: 会把 `gripper.open`/`close` 一起挡在后面 (issue #250)。夹爪命令之间仍需
+        #: 保序 (enable → move → stop), 所以是一条独立队列 + 独立 worker, 而不是
+        #: 每帧起一个任务。
+        gripper_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=UPLINK_QUEUE_MAX)
         #: **不进有序队列**的帧 —— 直接起任务, 于是不必等在途运动结束。两类:
         #: * 降能量方向的安全帧: 「急停永远可达」在传输层的另一半 (另一半是
         #:   `Session` 的专用执行器); 原来的 `await self._on_upstream(...)` 会把
@@ -552,6 +573,7 @@ class Daemon:
         bypass: set[asyncio.Task] = set()
         pump: Optional[asyncio.Task] = None
         worker: Optional[asyncio.Task] = None
+        gripper_worker: Optional[asyncio.Task] = None
         registered = False
 
         def _bypass_done(task: asyncio.Task) -> None:
@@ -600,6 +622,8 @@ class Daemon:
             pump = asyncio.create_task(self._pump(ws, client))
             worker = asyncio.create_task(
                 self._drain(ws, client, queue, trace_id, execute))
+            gripper_worker = asyncio.create_task(
+                self._drain(ws, client, gripper_queue, trace_id, execute))
             while True:
                 raw = await ws.receive_text()
                 # 上行帧是最强的"操作员还在"证据, 连上之后立刻补一次 (连接本身也算)。
@@ -609,6 +633,8 @@ class Daemon:
                         self._on_upstream(ws, client, raw, trace_id, execute))
                     bypass.add(task)
                     task.add_done_callback(_bypass_done)
+                elif _is_gripper_frame(raw):
+                    self._enqueue_uplink(gripper_queue, client, raw, trace_id)
                 else:
                     self._enqueue_uplink(queue, client, raw, trace_id)
         except WebSocketDisconnect:
@@ -645,6 +671,8 @@ class Daemon:
                 task.cancel()
             if worker is not None:
                 worker.cancel()
+            if gripper_worker is not None:
+                gripper_worker.cancel()
             if pump is not None:
                 pump.cancel()
 
@@ -867,7 +895,7 @@ class Daemon:
 
         # 夹爪与臂共用同一个命令 id 空间, 但**不共用**命令表 (§4.2): `gripper.`
         # 前缀是唯一的分流判据, 于是臂的白名单一个字节没变。
-        if method.startswith("gripper."):
+        if is_gripper_command(method):
             await self._run_gripper_command(ws, client, mid, method, params, trace_id)
             return
 
