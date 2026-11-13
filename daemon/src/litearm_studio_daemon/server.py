@@ -46,7 +46,8 @@ from starlette.types import Scope
 from . import __version__, logread, obs, ui_language, window
 from .errors import error_to_dict
 from .statemap import jsonable
-from .session import ENERGY_DOWN_COMMANDS, Session
+from .session import (ENERGY_DOWN_COMMANDS, READ_COMMANDS, TAKEOVER_COMMANDS,
+                      Session, is_gripper_command)
 
 log = logging.getLogger("litearm_studio_daemon.server")
 
@@ -172,6 +173,66 @@ def _is_energy_down_frame(raw: str) -> bool:
         return False
     method = msg.get("m")
     return method in ENERGY_DOWN_COMMANDS or method == "gripper.stop"
+
+
+def _is_parallel_frame(raw: str) -> bool:
+    """这条上行帧是不是必须绕开有序队列 (`get_tcp` / `stop_jog`)。
+
+    两类:
+
+    * `get_tcp` —— 只读, 但会被**同一条**有序 worker 挡住: 一条 `movej` 在途时,
+      worker 正 `await` 它, 后面排队的 `get_tcp` 直到运动结束才被取出来 —— 这正是
+      UI 上 X/Y/Z 在运动期间冻结的原因。
+    * `stop_jog` —— 松手停止必须能在续段 `movel` 在途时立刻执行; 排在后面就等于
+      "松手后继续走完 16×步长"。它在固件侧是受控接管, 不改变机器状态以外的语义。
+
+    真正的 SDK 串行/同名命令配对由 `Session` 的只读通道、`_tcp_gate` 与
+    `_takeover_executor` 负责。
+
+    ⚠ 仍然只认 `t == "cmd"`; 坏 JSON / 别的帧交给 `_on_upstream` 回 BadMessage。
+    """
+    try:
+        msg = json.loads(raw)
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(msg, dict) or msg.get("t") != "cmd":
+        return False
+    method = msg.get("m")
+    return method in READ_COMMANDS or method in TAKEOVER_COMMANDS
+
+
+def _is_supersede_frame(raw: str) -> bool:
+    """显式标记为受控接管的 `movej` —— 它必须绕开有序队列。
+
+    否则一条 15s 的 `movej` 正被 worker `await` 时, 后面的接管帧根本取不出来,
+    "允许接管"就只剩 daemon 里的准入判定, 传输层仍然把它排在旧命令后面。
+    """
+    try:
+        msg = json.loads(raw)
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(msg, dict) or msg.get("t") != "cmd":
+        return False
+    if msg.get("m") != "movej":
+        return False
+    params = msg.get("p")
+    return isinstance(params, dict) and params.get("supersede") is True
+
+
+def _is_gripper_frame(raw: str) -> bool:
+    """这条上行帧是不是夹爪命令 —— 走夹爪自己的有序队列，不等臂运动。
+
+    ⚠ 只认 `t == "cmd"` 且 `m` 以 `gripper.` 开头；`gripper.stop` 会先被
+    `_is_energy_down_frame` 接走 (旁路), 不落到这里。
+    """
+    try:
+        msg = json.loads(raw)
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(msg, dict) or msg.get("t") != "cmd":
+        return False
+    method = msg.get("m")
+    return isinstance(method, str) and is_gripper_command(method)
 
 
 #: `pick_free_http_port` 从 `start` 起最多试几个端口。⚠ 复用探测
@@ -516,20 +577,29 @@ class Daemon:
         #: (前端有依赖顺序的连招: set_speed 之后再 movej)。**有界**, 见
         #: `_enqueue_uplink`。
         queue: asyncio.Queue[str] = asyncio.Queue(maxsize=UPLINK_QUEUE_MAX)
-        #: 降能量方向的安全帧**不进队列** —— 直接起任务, 于是不必等在途运动结束。
-        #: 这是「急停永远可达」在传输层的另一半 (另一半是 `Session` 的专用执行器):
-        #: 原来的 `await self._on_upstream(...)` 会把 `receive_text` 也一起挡住,
-        #: 连急停帧都读不出来。
+        #: 夹爪命令自己的有序队列 —— **不能和臂共用一条**: 一条 15s 的 `movej`
+        #: 会把 `gripper.open`/`close` 一起挡在后面 (issue #250)。夹爪命令之间仍需
+        #: 保序 (enable → move → stop), 所以是一条独立队列 + 独立 worker, 而不是
+        #: 每帧起一个任务。
+        gripper_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=UPLINK_QUEUE_MAX)
+        #: **不进有序队列**的帧 —— 直接起任务, 于是不必等在途运动结束。两类:
+        #: * 降能量方向的安全帧: 「急停永远可达」在传输层的另一半 (另一半是
+        #:   `Session` 的专用执行器); 原来的 `await self._on_upstream(...)` 会把
+        #:   `receive_text` 也一起挡住, 连急停帧都读不出来。
+        #: * 只读查询 (`get_tcp`)、受控停止 (`stop_jog`) 与显式接管的 `movej`:
+        #:   它们在一条 `movej`/`movel` 后面排队, 就是运动期间 UI 位姿冻结 /
+        #:   松手后继续走完续段 / 新目标改不动的原因。
         bypass: set[asyncio.Task] = set()
         pump: Optional[asyncio.Task] = None
         worker: Optional[asyncio.Task] = None
+        gripper_worker: Optional[asyncio.Task] = None
         registered = False
 
         def _bypass_done(task: asyncio.Task) -> None:
             bypass.discard(task)
             if not task.cancelled() and task.exception() is not None:
                 # 客户端可能已经走了 ⇒ 回帧失败很正常, 记 debug 即可, 不许炸事件循环。
-                log.debug("旁路安全命令处理异常", exc_info=task.exception())
+                log.debug("旁路帧处理异常", exc_info=task.exception())
 
         try:
             # ⚠ **先把两条握手帧写完, 再把客户端注册进 `self.clients`**: 一旦注册,
@@ -571,15 +641,20 @@ class Daemon:
             pump = asyncio.create_task(self._pump(ws, client))
             worker = asyncio.create_task(
                 self._drain(ws, client, queue, trace_id, execute))
+            gripper_worker = asyncio.create_task(
+                self._drain(ws, client, gripper_queue, trace_id, execute))
             while True:
                 raw = await ws.receive_text()
                 # 上行帧是最强的"操作员还在"证据, 连上之后立刻补一次 (连接本身也算)。
                 self.stamp_gripper_heartbeat()
-                if _is_energy_down_frame(raw):
+                if (_is_energy_down_frame(raw) or _is_parallel_frame(raw)
+                        or _is_supersede_frame(raw)):
                     task = asyncio.create_task(
                         self._on_upstream(ws, client, raw, trace_id, execute))
                     bypass.add(task)
                     task.add_done_callback(_bypass_done)
+                elif _is_gripper_frame(raw):
+                    self._enqueue_uplink(gripper_queue, client, raw, trace_id)
                 else:
                     self._enqueue_uplink(queue, client, raw, trace_id)
         except WebSocketDisconnect:
@@ -616,6 +691,8 @@ class Daemon:
                 task.cancel()
             if worker is not None:
                 worker.cancel()
+            if gripper_worker is not None:
+                gripper_worker.cancel()
             if pump is not None:
                 pump.cancel()
 
@@ -838,7 +915,7 @@ class Daemon:
 
         # 夹爪与臂共用同一个命令 id 空间, 但**不共用**命令表 (§4.2): `gripper.`
         # 前缀是唯一的分流判据, 于是臂的白名单一个字节没变。
-        if method.startswith("gripper."):
+        if is_gripper_command(method):
             await self._run_gripper_command(ws, client, mid, method, params, trace_id)
             return
 

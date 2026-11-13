@@ -23,6 +23,8 @@ from litearm_studio_daemon.session import (
     COMMANDS,
     ENERGY_DOWN_COMMANDS,
     MOTION_COMMANDS,
+    READ_COMMANDS,
+    TAKEOVER_COMMANDS,
     Session,
     build_fake_transport_factory,
 )
@@ -322,6 +324,272 @@ def test_energy_down_commands_run_while_a_motion_is_still_in_flight(
         mover.join()
 
 
+def test_get_tcp_runs_while_a_motion_is_still_in_flight(
+        fake_session: Session) -> None:
+    """位姿读取必须与运动**并行** —— 否则运动期间 X/Y/Z 会冻结。
+
+    ⚠ 这条钉的是 `READ_COMMANDS` 走 `_read_executor` 这件事: 只把 `get_tcp` 排除出
+    运动互斥是不够的, 它仍会排在阻塞到 `move_timeout` 的 `movej` 后面 (实测 2s 的
+    movej 会让 `get_tcp` 等 1.8s)。位姿轮询恰恰在最需要它的时候被冻住。
+    """
+    arm = fake_session._arm
+    real_movej = arm.movej
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_movej(*args, **kwargs):
+        started.set()
+        release.wait(2.0)
+        return real_movej(*args, **kwargs)
+
+    arm.movej = slow_movej  # type: ignore[method-assign]
+    mover = threading.Thread(
+        target=lambda: fake_session.execute("movej", {"q": Q7, "speed": 0.3}))
+    mover.start()
+    try:
+        assert started.wait(2.0), "movej 没跑起来 —— 用例前提不成立"
+        t0 = time.monotonic()
+        pose = fake_session.execute("get_tcp", {})
+        read_dt = time.monotonic() - t0
+        assert isinstance(pose, (list, tuple)) and len(pose) == 6, pose
+        # 运动仍在飞 —— 位姿是在它**中间**读到的, 不是等它停稳之后。
+        assert fake_session.motion_in_flight() is True
+        assert read_dt < 0.3, f"get_tcp 排在了运动后面 ({read_dt:.3f}s)"
+    finally:
+        release.set()
+        mover.join()
+
+
+def test_a_cartesian_move_serializes_pose_reads(fake_session: Session) -> None:
+    """`move_l` 收尾自己会调 `get_tcp`, 只读通道必须等它跑完再读。
+
+    ⚠ 线上没有请求 id: 两条**同名** `get_tcp` 并发时, 后一条写之前的清队会吃掉
+    前一条的应答。`move_l` 的 `_tcp_reached` 正是这样一条内部 `get_tcp`, 所以
+    整条 `move_l` 持 `_tcp_gate`。这条用例把"读要等"钉住。
+    """
+    arm = fake_session._arm
+    real_move_l = arm.move_l
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_move_l(*args, **kwargs):
+        started.set()
+        release.wait(2.0)
+        return real_move_l(*args, **kwargs)
+
+    arm.move_l = slow_move_l  # type: ignore[method-assign]
+    mover = threading.Thread(
+        target=lambda: fake_session.execute("movel", {"pose": POSE, "speed": 0.3}))
+    reader: Optional[threading.Thread] = None
+    mover.start()
+    try:
+        assert started.wait(2.0), "movel 没跑起来 —— 用例前提不成立"
+        reader = threading.Thread(
+            target=lambda: fake_session.execute("get_tcp", {}))
+        reader.start()
+        time.sleep(0.2)
+        assert reader.is_alive(), "get_tcp 没有等 move_l 的 _tcp_gate"
+    finally:
+        release.set()
+        mover.join()
+        if reader is not None:
+            reader.join()
+
+
+def test_a_move_timeout_keeps_the_arm_marked_moving_until_it_settles(
+        fake_session: Session) -> None:
+    """超时只是"停止等待", 不是"臂停了" —— 状态不许立刻翻成 ready (issue #249)。
+
+    旧实现会在 `finally` 里把 `_motion_count` 清零, 于是顶栏报 ready、下一条运动
+    也能下发, 而臂可能还在走。现在超时后进入"结果未知", 直到连续观察到静止帧。
+    """
+    assert _wait(lambda: fake_session.state() is not None)
+    fake_session.execute("enable", {})
+    assert _wait(lambda: bool((fake_session.state() or {}).get("enabled"))), \
+        "假臂没使能 —— 状态串会先落 disabled，测不出 moving"
+    arm = fake_session._arm
+
+    def timed_out(*_a, **_k):
+        raise litearm.MotionTimeoutError("未到位, 超时 15.0s")
+
+    arm.movej = timed_out  # type: ignore[method-assign]
+
+    with pytest.raises(litearm.MotionTimeoutError):
+        fake_session.execute("movej", {"q": Q7})
+    assert fake_session.motion_in_flight() is True
+    assert _wait(lambda: (fake_session.state() or {}).get("state") == "moving"), \
+        f"超时后状态应仍为 moving, 实际 {fake_session.state()}"
+
+    # 假设备的 q 不再变化 ⇒ 连续 3 拍后把 unknown 清掉, 状态回到 ready。
+    assert _wait(lambda: not fake_session.motion_in_flight(), timeout=5.0)
+    assert _wait(lambda: (fake_session.state() or {}).get("state") == "ready"), \
+        f"静止后状态应回到 ready, 实际 {fake_session.state()}"
+
+
+def test_a_move_timeout_blocks_plain_motions_but_allows_a_takeover(
+        fake_session: Session) -> None:
+    assert _wait(lambda: fake_session.state() is not None)
+    arm = fake_session._arm
+    real_movej = arm.movej
+    calls: list[str] = []
+
+    def fake_movej(q, speed=1.0):
+        calls.append("takeover")
+        return real_movej(q, speed)
+
+    def timed_out(*_a, **_k):
+        raise litearm.MotionTimeoutError("未到位")
+
+    # 先造一个"结果未知" (超时), 再让 fake_movej 恢复可用。
+    arm.movej = timed_out  # type: ignore[method-assign]
+    with pytest.raises(litearm.MotionTimeoutError):
+        fake_session.execute("movej", {"q": Q7})
+    arm.movej = fake_movej  # type: ignore[method-assign]
+
+    with pytest.raises(MotionBusyError):
+        fake_session.execute("movej", {"q": Q7})
+    fake_session.execute("movej", {"q": Q7, "supersede": True})
+    assert calls == ["takeover"]
+    # 接管成功到位 ⇒ 旧的"结果未知"被覆盖。
+    assert fake_session.motion_in_flight() is False
+
+
+def test_superseding_movej_is_accepted_while_a_motion_is_in_flight(
+        fake_session: Session) -> None:
+    """带 `supersede` 的 movej 是接管, 不是"第二条运动" —— 它不该被互斥拒掉。"""
+    arm = fake_session._arm
+    seen: list[float] = []
+
+    def fake_movej(q, speed=1.0):
+        seen.append(speed)
+
+    arm.movej = fake_movej  # type: ignore[method-assign]
+    fake_session._motion_count = 1
+    try:
+        # 普通 movej 仍被拒。
+        with pytest.raises(MotionBusyError):
+            fake_session.execute("movej", {"q": Q7})
+        # 显式接管放行。
+        fake_session.execute("movej", {"q": Q7, "speed": 0.4, "supersede": True})
+        assert seen == [0.4]
+    finally:
+        fake_session._motion_count = 0
+
+
+def test_superseding_movej_runs_while_the_old_movej_is_still_in_flight(
+        fake_session: Session) -> None:
+    """接管命令必须与在途 movej **并行**, 不能排在 `_executor` 后面。"""
+    arm = fake_session._arm
+    started = threading.Event()
+    released = threading.Event()
+    took_over = threading.Event()
+
+    def fake_movej(q, speed=1.0):
+        if threading.current_thread().name.startswith("litearm-cmd"):
+            started.set()
+            released.wait(2.0)
+            return
+        took_over.set()
+
+    arm.movej = fake_movej  # type: ignore[method-assign]
+    mover = threading.Thread(
+        target=lambda: fake_session.execute("movej", {"q": Q7, "speed": 0.3}))
+    mover.start()
+    try:
+        assert started.wait(2.0), "旧 movej 没跑起来 —— 用例前提不成立"
+        t0 = time.monotonic()
+        fake_session.execute("movej", {"q": Q7, "speed": 0.4, "supersede": True})
+        takeover_dt = time.monotonic() - t0
+        assert took_over.is_set()
+        assert fake_session.motion_in_flight() is True
+        assert takeover_dt < 0.3, f"接管 movej 排在了旧命令后面 ({takeover_dt:.3f}s)"
+    finally:
+        released.set()
+        mover.join()
+
+
+def test_stop_jog_runs_while_a_motion_is_still_in_flight(
+        fake_session: Session) -> None:
+    """松手停止不许排在续段 `movel` 后面 —— 它必须走自己的接管通道。
+
+    ⚠ 只把它排除出运动互斥是不够的: 在途 `movel` 占着 `_executor`, 停止命令
+    仍会排队等它走完 —— 那正是"松手后继续走完 16×步长"的现象。
+    """
+    assert _wait(lambda: fake_session.state() is not None)
+    arm = fake_session._arm
+    started = threading.Event()
+    released = threading.Event()
+    stop_called = threading.Event()
+
+    def fake_movej(q, speed=1.0):
+        if threading.current_thread().name.startswith("litearm-cmd"):
+            started.set()
+            released.wait(2.0)
+            return
+        stop_called.set()
+
+    arm.movej = fake_movej  # type: ignore[method-assign]
+    mover = threading.Thread(
+        target=lambda: fake_session.execute("movej", {"q": Q7, "speed": 0.3}))
+    mover.start()
+    try:
+        assert started.wait(2.0), "movej 没跑起来 —— 用例前提不成立"
+        t0 = time.monotonic()
+        fake_session.execute("stop_jog", {"speed": 0.3})
+        stop_dt = time.monotonic() - t0
+        assert stop_called.is_set()
+        assert fake_session.motion_in_flight() is True
+        assert stop_dt < 0.3, f"stop_jog 排在了运动后面 ({stop_dt:.3f}s)"
+    finally:
+        released.set()
+        mover.join()
+
+
+def test_stop_jog_is_exempt_from_the_motion_mutex(
+        fake_session: Session) -> None:
+    """在途运动时 `stop_jog` 仍要过准入 —— 它不是"第二条运动", 是接管。"""
+    assert _wait(lambda: fake_session.state() is not None)
+    arm = fake_session._arm
+    seen: dict = {}
+
+    def fake_movej(q, speed=1.0):
+        seen["q"] = list(q)
+        seen["speed"] = speed
+
+    arm.movej = fake_movej  # type: ignore[method-assign]
+    fake_session._motion_count = 1
+    try:
+        fake_session.execute("stop_jog", {"speed": 0.25})
+        assert seen["speed"] == 0.25
+        assert len(seen["q"]) == 7
+    finally:
+        fake_session._motion_count = 0
+
+
+def test_stop_jog_defaults_to_a_calm_speed(fake_session: Session) -> None:
+    """没给速度时用 0.5, 不用 `_speed()` 的默认 1.0 猛停。"""
+    assert _wait(lambda: fake_session.state() is not None)
+    arm = fake_session._arm
+    seen: dict = {}
+
+    def fake_movej(q, speed=1.0):
+        seen["speed"] = speed
+
+    arm.movej = fake_movej  # type: ignore[method-assign]
+    fake_session.execute("stop_jog", {})
+    assert seen["speed"] == 0.5
+
+
+def test_takeover_commands_set_is_exactly_stop_jog() -> None:
+    """哨兵: 接管通道只收 `stop_jog`, 不许顺手把普通运动塞进来。"""
+    assert TAKEOVER_COMMANDS == frozenset({"stop_jog"})
+
+
+def test_read_commands_set_is_exactly_get_tcp() -> None:
+    """哨兵: 并行的只读通道只收 `get_tcp`, 不许顺手扩成配置读取。"""
+    assert READ_COMMANDS == frozenset({"get_tcp"})
+
+
 def test_energy_down_set_is_exactly_estop_and_disable() -> None:
     """哨兵: 这条并行通道只收安全动作, 不许顺手把别的命令塞进来。
 
@@ -462,6 +730,32 @@ def test_state_push_rate_feeds_the_3d_preview() -> None:
     assert STATE_PUSH_INTERVAL_S <= 1 / 30, (
         f"默认推送间隔 {STATE_PUSH_INTERVAL_S}s 太慢, 3D 预览会卡"
         f" (旧客户端给 3D 的是一条 60Hz 快通道)")
+
+
+def test_state_push_reaches_the_configured_cadence() -> None:
+    """实际推送频率必须接近配置值 —— Windows 的定时器粒度回归会在这里红。
+
+    ⚠ 这条测的是**实际 loop 频率**, 不是常量。Windows 上等待对象 (Event/Condition)
+    的粒度是系统 tick(默认 15.6ms), 20ms 的 wait 会被抬到 ~31ms ⇒ 50Hz 掉成 ~33Hz。
+    更早的版本用 `Event.wait` 补睡时, 只看常量的用例完全抓不到这个回归。
+
+    阈值取 40Hz: Linux 假会话实测 ~50Hz, 留 20% 余量; 33Hz 必红。
+    """
+    s = Session(fake=True, poll_period=0.02, state_push_interval=0.02,
+                reconnect=False)
+    assert s.connect() is True
+    try:
+        assert _wait(lambda: s.connected), f"假会话没连上: {s.arm_info()}"
+        seen: list[dict] = []
+        s.add_listener(
+            lambda ev: seen.append(ev) if ev.get("t") == "state" else None)
+        time.sleep(2.0)
+        hz = len(seen) / 2.0
+        assert hz >= 40.0, (
+            f"状态推送只有 {hz:.1f}Hz (期望 ~50Hz) —— "
+            f"Windows 上 Event.wait 会把 20ms 的等待抬到 ~31ms")
+    finally:
+        s.close()
 
 
 def test_state_is_pushed_to_listeners(fake_session: Session) -> None:

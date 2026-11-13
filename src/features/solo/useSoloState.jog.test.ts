@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   getTcpPose: vi.fn(),
   movel: vi.fn(),
   movej: vi.fn(),
+  stopJog: vi.fn(),
   // 连接时的调速器归一化（issue #236）会走这条；缺了 effect 里会抛 `not a function`。
   setSpeed: vi.fn(),
   zeroGStart: vi.fn(),
@@ -37,11 +38,13 @@ vi.mock('@/lib/arm', () => ({
     getTcpPose: mocks.getTcpPose,
     movel: mocks.movel,
     movej: mocks.movej,
+    stopJog: mocks.stopJog,
     setSpeed: mocks.setSpeed,
     zeroGStart: mocks.zeroGStart,
     zeroGStop: mocks.zeroGStop,
   },
   formatArmError: (e: unknown) => (e instanceof Error ? e.message : String(e)),
+  isMotionSuperseded: () => false,
   useArmConnection: () => ({ status: mocks.status, conn: mocks.conn }),
   useArmState: () => mocks.armState,
   useArmMetrics: () => ({}),
@@ -141,13 +144,14 @@ function expectJointPct(result: { current: ReturnType<typeof useSoloState> }, ex
 
 beforeEach(async () => {
   await i18n.changeLanguage('zh')
-  // 点动链路里的 `getTcpPose` 由用例逐段放行，同时要挡住 400ms 的 TCP 轮询：否则
+  // 点动链路里的 `getTcpPose` 由用例逐段放行，同时要挡住 100ms 的 TCP 轮询：否则
   // 轮询会往同一串 deferred 里插队，测出来的就不再是点动链路的调用序列。
   vi.useFakeTimers()
   mocks.getJointParams.mockReset().mockResolvedValue(LIMITS)
   mocks.getTcpPose.mockReset().mockResolvedValue(POSE)
   mocks.movel.mockReset().mockResolvedValue(null)
   mocks.movej.mockReset().mockResolvedValue(null)
+  mocks.stopJog.mockReset().mockResolvedValue(null)
   mocks.setSpeed.mockReset().mockResolvedValue(null)
   mocks.zeroGStart.mockReset().mockResolvedValue(null)
   mocks.zeroGStop.mockReset().mockResolvedValue(null)
@@ -188,6 +192,8 @@ describe('useSoloState cartesian jog', () => {
     expect(pose[2]).toBeCloseTo(0.4, 10)
     // 速度按百分比下发：默认 50% ⇒ 0.5。
     expect(speed).toBeCloseTo(0.5, 10)
+    // 单击只是首段 1 个步长，没有续段要停 —— 不该多发一条 stop_jog。
+    expect(mocks.stopJog).not.toHaveBeenCalled()
   })
 
   it('keeps the sign on a negative translation step', async () => {
@@ -252,8 +258,11 @@ describe('useSoloState cartesian jog', () => {
     // 续段不是再来一个单击：默认 10 mm 步长 × NEXT_SEGMENT_POINTS(16) = 0.16 m。
     expect(mocks.movel.mock.calls[1][0][0]).toBeCloseTo(0.46, 10)
 
-    // 松开时第二段（movel）还在途：松开必须作废这一代链路。
+    // 松开时第二段（movel）还在途：除了作废这一代链路，还要发一条受控停止 ——
+    // 否则机械臂会继续走完 16×步长的续段。
     act(() => result.current.onJogRelease())
+    expect(mocks.stopJog).toHaveBeenCalledTimes(1)
+    expect(mocks.stopJog.mock.calls[0][0]).toBeCloseTo(0.5, 10)
     movels[1].resolve(null)
     await settle()
 

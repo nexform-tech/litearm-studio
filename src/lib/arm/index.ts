@@ -1,4 +1,4 @@
-export { armClient, normalizeLicense } from './client'
+export { armClient, isMotionSuperseded, MotionSupersededError, normalizeLicense } from './client'
 export type {
   ActivationContact,
   ActivationRequest,
