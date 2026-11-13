@@ -60,6 +60,8 @@ _TRACE_UNSET: Any = object()
 #: 不节流的话轮询线程会以 GIL 允许的最高速率空转 (实测能把整套用例拖慢一个量级)。
 #: ⚠ 循环体里的 sleep 只保证"周期**不小于**本值" (工作耗时叠加在上面), 这与
 #: "不要依赖帧到达速率"是同一个口径 —— 我们是主动方, 不跟固件的 100Hz 对齐。
+#: ⚠ 补睡必须用 `time.sleep`, 不要用 `Event.wait`: Windows 的等待对象粒度是系统
+#: tick(默认 15.6ms), 20ms 会被抬到 ~31ms ⇒ 50Hz 掉成 ~33Hz (见 `_poll_loop`)。
 POLL_PERIOD_S = 0.02
 
 #: 状态推送节流 (秒) —— 20ms = 50Hz, 与轮询同频。
@@ -122,6 +124,16 @@ FLASH_STALL_GRACE_S = 12.0
 #: ⚠ `estop`/`disable`/`zero_g_stop` **不在此列**: 降能量方向的动作永远可达,
 #: 这正是原则 4 要的 (急停不能因为"运动互斥"而被挡住)。
 MOTION_COMMANDS = frozenset({"home", "movej", "movel"})
+
+#: 只读、可运动并行的查询 —— 走 `_read_executor`, 不排在在途运动后面。
+#:
+#: 目前只有 `get_tcp`: 位姿轮询是 UI 的"数字反馈", 运动期间正需要它; 而它不改变
+#: 机器状态, SDK 的应答队列按帧 id 区分, 与 `movej`/`home` 并发是安全的。
+#: ⚠ `movel` 是例外: `move_l(wait=True)` 收尾时自己会调一次 `get_tcp`, 两条同名
+#:   命令并发时线上无法配对 ⇒ 由 `_tcp_gate` 单独串行 (见 `Session.__init__`)。
+#: ⚠ 别顺手把 `get_joint_params`/`get_ff_*` 加进来: 那些是低频配置读取, 串在命令
+#:   通道上没有危害; 而每多一条并发写者, 就要多论证一次它与固件应答 FIFO 的关系。
+READ_COMMANDS = frozenset({"get_tcp"})
 
 #: 降能量方向的安全命令 —— 不仅豁免运动互斥, 还**不排在**普通命令的执行器后面。
 #:
@@ -432,6 +444,25 @@ class Session:
         #: `thread_name_prefix` 便于排障时一眼看出是谁。
         self._executor = ThreadPoolExecutor(max_workers=1,
                                             thread_name_prefix="litearm-cmd")
+        #: 只读查询 (目前只有 `get_tcp`) 的专用单线程通道 —— 与运动命令**并行**。
+        #:
+        #: ⚠ 为什么需要它: `get_tcp` 曾和 `movej/movel/home` 共用 `_executor`, 而后者
+        #:   默认阻塞到机械臂停稳 (最长 `move_timeout=15s`)。于是运动期间位姿轮询全部
+        #:   排在它后面, UI 上的 X/Y/Z 数字冻结 —— 恰恰是最需要位姿反馈的时候。
+        #:   SDK 的读线程/应答队列本来就支持并发读 (不同帧 id 各走各的队列;
+        #:   `_wait_settled` 的注释也明确承认并发 `get_tcp`), 所以单线程串行是 daemon
+        #:   自己加的、可以去掉的限制。
+        #: ⚠ 仍然单线程: 两条**同一条** `get_tcp` 并发时线上没有请求 id, 无法配对;
+        #:   这个通道必须继续把同类读请求串起来。
+        self._read_executor = ThreadPoolExecutor(max_workers=1,
+                                                 thread_name_prefix="litearm-read")
+        #: `get_tcp` 与 `move_l` 的互斥闸 —— SDK 的**同名命令并发无法配对**
+        #: (线上没有请求 id, `_raw_write` 会在写之前清掉对方的应答队列)。
+        #: `move_l(wait=True)` 在收尾时自己也会调一次 `get_tcp` (`_tcp_reached`),
+        #: 所以只读通道不能和它同时读。把它套在整条 `move_l` 外面: 笛卡尔运动期间
+        #: 位姿轮询会等到停稳才返回 (UI 侧会按超时标「已过期」), 而 `movej`/`home`
+        #: 不碰 `get_tcp`, 所以关节运动/零重力拖拽期间位姿仍按 10Hz 更新。
+        self._tcp_gate = threading.Lock()
         #: 降能量方向的安全命令专用 (见 `ENERGY_DOWN_COMMANDS`) —— 单线程保证两条急停
         #: 之间仍串行, 但它**不排队等运动**: 这是「永远可达」的实现点。
         self._safety_executor = ThreadPoolExecutor(max_workers=1,
@@ -1025,8 +1056,11 @@ class Session:
         with self._lock:
             self._connect_gen += 1
         self._stop_polling()
-        # 先等在途命令收尾, 免得关链路时还有命令在写。
+        # 先等在途命令收尾, 免得关链路时还有命令在写。只读通道也一起等:
+        # 一条在途的 `get_tcp` 同样会在链路关上之后报 NotConnected, 但它手里的
+        # SDK 读线程/应答队列不该与 `Arm.close()` 抢同一个会话。
         self._executor.shutdown(wait=True)
+        self._read_executor.shutdown(wait=True)
         arm = self._take_arm()
         if arm is not None:
             self._close_arm(arm)
@@ -1086,8 +1120,14 @@ class Session:
                 self._broadcast(event)
             rest = self._poll_period - (time.monotonic() - t0)
             if rest > 0:
-                # 用 Event.wait 而不是 sleep: 关闭时能被立刻唤醒, 不必等满一拍。
-                self._poll_stop.wait(rest)
+                # ⚠ **不要改回 `self._poll_stop.wait(rest)`。** Windows 上等待对象
+                # (Event/Condition) 的定时粒度是系统 tick(默认 15.6ms), 20ms 的等待
+                # 会被抬到 ~31ms ⇒ 50Hz 直接掉成 ~33Hz(实测 Windows 11 + Python 3.14:
+                # `Event.wait(0.02)` 中位 30.64ms, `time.sleep(0.02)` 中位 20.27ms)。
+                # `time.sleep` 在 Python 3.11+ 的 Windows 上走高精度可等待定时器,
+                # 所以 50Hz 成立; 代价只是"停止轮询"最多多等一拍(≤20ms) —— `_stop_polling`
+                # 的 join 上限是 1s, 这点延迟无关紧要。
+                time.sleep(rest)
 
     def _poll_once(self, now: float) -> Optional[dict]:
         arm = self._arm
@@ -1291,8 +1331,14 @@ class Session:
             # ⚠ 降能量方向的动作走**另一条**执行器: 与在途运动并行, 不排队等它结束
             # (见 `ENERGY_DOWN_COMMANDS`)。这是「急停永远可达」的落点 —— 只在准入处
             # 豁免运动互斥是不够的, 那样它仍会排在阻塞十几秒的 movej 后面。
-            executor = (self._safety_executor if m in ENERGY_DOWN_COMMANDS
-                        else self._executor)
+            # ⚠ 只读的 `get_tcp` 也走自己的通道 (见 `READ_COMMANDS`): 位姿反馈不该
+            # 被在途运动冻结。
+            if m in ENERGY_DOWN_COMMANDS:
+                executor = self._safety_executor
+            elif m in READ_COMMANDS:
+                executor = self._read_executor
+            else:
+                executor = self._executor
             try:
                 return executor.submit(self._run_command, arm, m, params,
                                        on_event).result()
@@ -1366,14 +1412,19 @@ class Session:
                 return _state_result(arm.movej(_q(p), _speed(p)))
             if m == "movel":
                 # 位姿统一用 SDK 原生的 6 元组 `[x, y, z, rx, ry, rz]` (计划 3.4)。
-                return statemap.jsonable(arm.move_l(_pose(p), _speed(p)))
+                # ⚠ 整条 `move_l` 持 `_tcp_gate`: 它收尾时的 `_tcp_reached` 会调
+                # `get_tcp`, 不能与只读通道的位姿轮询并发 (见 `_tcp_gate`)。
+                with self._tcp_gate:
+                    return statemap.jsonable(arm.move_l(_pose(p), _speed(p)))
             if m == "set_speed":
                 arm.set_speed(_percent(p))
                 return int(p["percent"])
             if m == "get_tcp":
                 # ⚠ 2.0 起读一帧的 getter 返回 `Msg` 信封, 读值要 `.value`
                 # (这里**不进** `_state_result`: 位姿就是位姿, 与状态帧无关)。
-                return statemap.jsonable(arm.get_tcp().value)
+                # 与 `move_l` 共用互斥闸: 两条同名命令并发时线上无法配对。
+                with self._tcp_gate:
+                    return statemap.jsonable(arm.get_tcp().value)
             if m == "ik":
                 # 逆解恒为**模型 7 轴** (固件 KIN_N=7), 与关节数解耦 ⇒ 原样回。
                 return statemap.jsonable(arm.ik(_pose(p)))

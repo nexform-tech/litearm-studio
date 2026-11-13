@@ -161,9 +161,11 @@ describe('useSoloState cartesian capability gating', () => {
 
     act(() => result.current.viewTabs.find((tab) => tab.key === 'sim')?.onClick())
 
-    // 仿真模式本就不下发指令，能力缺失不是它的原因：读数不该被撤掉。
+    // 仿真模式本就不下发指令，能力缺失不是它的原因；但也没有实机位姿可显示 ——
+    // 不能拿本地初值当读数，提示语要说"仿真模式"。
     expect(result.current.cartUnsupported).toBe(false)
-    expect(result.current.poseCart).not.toBeNull()
+    expect(result.current.poseCart).toBeNull()
+    expect(result.current.cartPoseHintKey).toBe('solo:cartesian.poseSim')
   })
 
   it('does not blame the firmware while disconnected', async () => {
@@ -173,7 +175,8 @@ describe('useSoloState cartesian capability gating', () => {
 
     // 没有 conn 帧就没有能力结论；未连接发不出指令，与固件是否支持笛卡尔无关。
     expect(result.current.cartUnsupported).toBe(false)
-    expect(result.current.poseCart).not.toBeNull()
+    expect(result.current.poseCart).toBeNull()
+    expect(result.current.cartPoseHintKey).toBe('solo:cartesian.poseDisconnected')
   })
 
   // ── `cart=false` 的两种成因要分开说 ─────────────────────────────────────────

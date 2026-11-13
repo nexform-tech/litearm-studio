@@ -52,11 +52,15 @@ export type SoloState = {
   expanded: boolean
   jointPct: number[]
   releaseOnly: boolean
-  cart: { X: number; Y: number; Z: number; RX: number; RY: number; RZ: number }
   transStep: string
   rotStep: string
   fault: boolean
 }
+
+/** 位姿轮询周期：100ms = 10Hz。比原来的 400ms 快 4 倍，但仍低于状态广播的 50Hz。 */
+const POSE_POLL_MS = 100
+/** 超过这么久没有新的位姿读数，就把已有数字标成「已过期」（不直接清空）。 */
+const POSE_STALE_MS = 1500
 
 const INITIAL_STATE: SoloState = {
   enabled: true,
@@ -68,7 +72,6 @@ const INITIAL_STATE: SoloState = {
   expanded: false,
   jointPct: [...SEED_JOINT_PCT],
   releaseOnly: true,
-  cart: { X: 0.3241, Y: -0.0182, Z: 0.487, RX: 0, RY: 1.5701, RZ: -0.0004 },
   transStep: '10 mm',
   rotStep: '5 °',
   fault: false,
@@ -196,7 +199,12 @@ export function useSoloState() {
     })
   }, [t])
 
+  // 笛卡尔位姿（X/Y/Z/RX/RY/RZ）是**独立的 RPC**，不在状态广播里。
+  // `null` = 还没有成功读过（不是 0）；`cartPoseError` 只影响提示，不清掉最后一帧 ——
+  // 运动期间宁可显示上一帧并标「已过期」，也不要突然把数字清空。
   const [cartPose, setCartPose] = useState<Pose6 | null>(null)
+  const [cartPoseError, setCartPoseError] = useState<string | null>(null)
+  const [cartPoseAt, setCartPoseAt] = useState<number | null>(null)
 
   const armStateRef = useRef(armState)
   armStateRef.current = armState
@@ -288,7 +296,7 @@ export function useSoloState() {
   // 提交内覆盖为实际关节角；未连接则回到初始姿态）。
   useEffect(() => {
     if (!s.real) return
-    setS((p) => ({ ...p, jointPct: [...INITIAL_STATE.jointPct], cart: { ...INITIAL_STATE.cart }, fault: false }))
+    setS((p) => ({ ...p, jointPct: [...INITIAL_STATE.jointPct], fault: false }))
   }, [s.real])
 
   // 实机模式：jointPct 跟随广播的实际关节角（JointSpacePanel 拖动时会用本地
@@ -305,27 +313,74 @@ export function useSoloState() {
     })
   }, [armState, s.real, toPct, jointCount])
 
-  // Cartesian pose is fetched on demand (RPC, not part of the state broadcast).
+  // Cartesian pose is fetched on an RPC, not part of the state broadcast.
   // 关节与笛卡尔现在**同时可见**（不再用页签二选一），所以只要连着就轮询；
   // 固件没有笛卡尔规划时不轮询——那条读口必然失败。
+  //
+  // ⚠ 这里是**自调度**而不是 `setInterval`: 上一条 `get_tcp` 没回来就不发下一条。
+  // 否则一次丢应答 (SDK 默认 0.6s 超时) 叠上 400ms 的定时器会把请求越排越多,
+  // 而它们排在 daemon 的有序上行队列里, 会把后续运动命令一起拖慢。
+  // 100ms = 10Hz: 位姿是操作员盯着看的数字, 2.5Hz 太慢; daemon 侧已经给
+  // `get_tcp` 单独一条只读通道, 关节运动不会把位姿轮询排在后面。`movel` 是例外
+  // (它收尾要读 TCP, 两条同名读不能并发), 那条通道会等它停稳 —— 此时下面的
+  // `cartPoseStale` 会把旧读数标成「已过期」, 不再假装是实时值。
   useEffect(() => {
     if (!s.real || !connected || cartUnsupported) return
     let cancelled = false
-    const tick = () => {
-      armClient
-        .getTcpPose()
-        .then((pose) => {
-          if (!cancelled) setCartPose(pose)
-        })
-        .catch(() => {})
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const tick = async () => {
+      if (cancelled) return
+      let failed = false
+      try {
+        const pose = await armClient.getTcpPose()
+        if (cancelled) return
+        // daemon 在短帧/读不到时会回 `null`; 那不是 0,0,0 —— 按失败处理。
+        if (!Array.isArray(pose) || pose.length < 6 || pose.some((v) => !Number.isFinite(v))) {
+          throw new Error('empty tcp pose')
+        }
+        setCartPose(pose)
+        setCartPoseError(null)
+        setCartPoseAt(Date.now())
+      } catch (err) {
+        failed = true
+        if (!cancelled) setCartPoseError(formatArmError(err) || String(err))
+      } finally {
+        // 失败时 SDK 自己已经等了 0.6s; 再等 500ms 再试, 不要把失败也打成 10Hz。
+        if (!cancelled) timer = setTimeout(() => void tick(), failed ? 500 : POSE_POLL_MS)
+      }
     }
-    tick()
-    const id = setInterval(tick, 400)
+    void tick()
     return () => {
       cancelled = true
-      clearInterval(id)
+      if (timer) clearTimeout(timer)
     }
   }, [connected, cartUnsupported, s.real])
+
+  // 离开实机/断开/笛卡尔不可用时，位姿必须作废：上一会话的数字不能挂在新会话上。
+  useEffect(() => {
+    if (s.real && connected && !cartUnsupported) return
+    setCartPose(null)
+    setCartPoseError(null)
+    setCartPoseAt(null)
+  }, [connected, cartUnsupported, s.real])
+
+  const cartPoseStale =
+    cartPose != null &&
+    (cartPoseError != null ||
+      (cartPoseAt != null && Date.now() - cartPoseAt > POSE_STALE_MS))
+  // 没有位姿时 PosePanel 显示的那一句：能力缺失 (cartHintKey) 之外，还要区分
+  // 「正在读」「读失败」「未连接」「仿真」—— 不能一律说成固件不支持。
+  const cartPoseHintKey = cartUnsupported
+    ? cartHintKey
+    : !s.real
+      ? 'solo:cartesian.poseSim'
+      : !connected
+        ? 'solo:cartesian.poseDisconnected'
+        : cartPoseError
+          ? 'solo:cartesian.poseReadFailed'
+          : 'solo:cartesian.poseReading'
+  const cartPoseNotice =
+    cartPose != null && cartPoseStale ? 'solo:cartesian.poseStale' : null
 
   const armErrs = s.real && armState ? (armState.errs ?? []) : []
   const realEnabled = s.real && connected && armState != null && armState.enabled && ARM_OPERATIONAL_STATES.has(armState.state)
@@ -371,27 +426,19 @@ export function useSoloState() {
 
   // 关节与笛卡尔同时展示（不再用页签二选一）。顺序取 daemon `get_tcp` 的原生顺序：
   // 先位置后姿态。两列网格下因此排成 (X,Y) (Z,RX) (RY,RZ) 三行。
-  // ⚠ 固件没有笛卡尔规划时返回 null：这条 RPC 必然失败，退回本地兜底的 `s.cart`
-  // 初始值会把假数当真实位姿显示（见 useSoloState.cart.test.ts）。
-  const poseCart = cartUnsupported
+  // ⚠ **没有成功读数就返回 null，不回退任何本地/初始值**：`INITIAL_STATE.cart` 是
+  // 一串写死的数字，把它当实时位姿显示会让操作员读到假数。PosePanel 会按
+  // `cartPoseHintKey` 说明「正在读 / 读失败 / 未连接 / 仿真」。
+  const poseCart = cartUnsupported || !cartPose
     ? null
-    : cartPose
-      ? [
-          { k: 'X', v: cartPose[0].toFixed(4), u: 'm' },
-          { k: 'Y', v: cartPose[1].toFixed(4), u: 'm' },
-          { k: 'Z', v: cartPose[2].toFixed(4), u: 'm' },
-          { k: 'RX', v: cartPose[3].toFixed(4), u: 'rad' },
-          { k: 'RY', v: cartPose[4].toFixed(4), u: 'rad' },
-          { k: 'RZ', v: cartPose[5].toFixed(4), u: 'rad' },
-        ]
-      : [
-          { k: 'X', v: s.cart.X.toFixed(4), u: 'm' },
-          { k: 'Y', v: s.cart.Y.toFixed(4), u: 'm' },
-          { k: 'Z', v: s.cart.Z.toFixed(4), u: 'm' },
-          { k: 'RX', v: s.cart.RX.toFixed(4), u: 'rad' },
-          { k: 'RY', v: s.cart.RY.toFixed(4), u: 'rad' },
-          { k: 'RZ', v: s.cart.RZ.toFixed(4), u: 'rad' },
-        ]
+    : [
+        { k: 'X', v: cartPose[0].toFixed(4), u: 'm' },
+        { k: 'Y', v: cartPose[1].toFixed(4), u: 'm' },
+        { k: 'Z', v: cartPose[2].toFixed(4), u: 'm' },
+        { k: 'RX', v: cartPose[3].toFixed(4), u: 'rad' },
+        { k: 'RY', v: cartPose[4].toFixed(4), u: 'rad' },
+        { k: 'RZ', v: cartPose[5].toFixed(4), u: 'rad' },
+      ]
 
   const joints = jointPct.map((pct, i) => {
     // 实机：按驱动状态码逐关节显示（0=未使能、1=正常/运动中、≥8=故障）；
@@ -507,6 +554,10 @@ export function useSoloState() {
     cartProbeSilent,
     /** 笛卡尔不可用时该显示的文案键；可用时为 `null`。 */
     cartHintKey,
+    /** 没有位姿读数时 PosePanel 该显示的那一句（读取中/失败/未连接/仿真/不支持）。 */
+    cartPoseHintKey,
+    /** 有旧读数但已过期时的提示键；否则 `null`。 */
+    cartPoseNotice,
 
     ...metricsState,
 
@@ -662,6 +713,14 @@ export function useSoloState() {
       if (!connected || !s.real) return null
       try {
         const pose = await armClient.getTcpPose()
+        // daemon 在读不到时会回 `null`（短帧）—— 那不是 (0,0,0)，按失败处理。
+        if (!Array.isArray(pose) || pose.length < 6 || pose.some((v) => !Number.isFinite(v))) {
+          throw new Error('empty tcp pose')
+        }
+        // 手动同步也是一次成功读数：顺手把轮询缓存刷新，避免两处显示不一致。
+        setCartPose(pose)
+        setCartPoseError(null)
+        setCartPoseAt(Date.now())
         // 同一类错误的成功必须把它清掉：否则「读取位姿失败」会一直挂在故障灯旁边，
         // 哪怕紧接着这次读取已经成功。只清这条读操作自己的错误 —— 读通了不代表运动
         // 链路恢复，一次成功的读取不能抹掉「运动失败」那个更重的结论。

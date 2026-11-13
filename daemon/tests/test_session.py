@@ -23,6 +23,7 @@ from litearm_studio_daemon.session import (
     COMMANDS,
     ENERGY_DOWN_COMMANDS,
     MOTION_COMMANDS,
+    READ_COMMANDS,
     Session,
     build_fake_transport_factory,
 )
@@ -322,6 +323,83 @@ def test_energy_down_commands_run_while_a_motion_is_still_in_flight(
         mover.join()
 
 
+def test_get_tcp_runs_while_a_motion_is_still_in_flight(
+        fake_session: Session) -> None:
+    """位姿读取必须与运动**并行** —— 否则运动期间 X/Y/Z 会冻结。
+
+    ⚠ 这条钉的是 `READ_COMMANDS` 走 `_read_executor` 这件事: 只把 `get_tcp` 排除出
+    运动互斥是不够的, 它仍会排在阻塞到 `move_timeout` 的 `movej` 后面 (实测 2s 的
+    movej 会让 `get_tcp` 等 1.8s)。位姿轮询恰恰在最需要它的时候被冻住。
+    """
+    arm = fake_session._arm
+    real_movej = arm.movej
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_movej(*args, **kwargs):
+        started.set()
+        release.wait(2.0)
+        return real_movej(*args, **kwargs)
+
+    arm.movej = slow_movej  # type: ignore[method-assign]
+    mover = threading.Thread(
+        target=lambda: fake_session.execute("movej", {"q": Q7, "speed": 0.3}))
+    mover.start()
+    try:
+        assert started.wait(2.0), "movej 没跑起来 —— 用例前提不成立"
+        t0 = time.monotonic()
+        pose = fake_session.execute("get_tcp", {})
+        read_dt = time.monotonic() - t0
+        assert isinstance(pose, (list, tuple)) and len(pose) == 6, pose
+        # 运动仍在飞 —— 位姿是在它**中间**读到的, 不是等它停稳之后。
+        assert fake_session.motion_in_flight() is True
+        assert read_dt < 0.3, f"get_tcp 排在了运动后面 ({read_dt:.3f}s)"
+    finally:
+        release.set()
+        mover.join()
+
+
+def test_a_cartesian_move_serializes_pose_reads(fake_session: Session) -> None:
+    """`move_l` 收尾自己会调 `get_tcp`, 只读通道必须等它跑完再读。
+
+    ⚠ 线上没有请求 id: 两条**同名** `get_tcp` 并发时, 后一条写之前的清队会吃掉
+    前一条的应答。`move_l` 的 `_tcp_reached` 正是这样一条内部 `get_tcp`, 所以
+    整条 `move_l` 持 `_tcp_gate`。这条用例把"读要等"钉住。
+    """
+    arm = fake_session._arm
+    real_move_l = arm.move_l
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_move_l(*args, **kwargs):
+        started.set()
+        release.wait(2.0)
+        return real_move_l(*args, **kwargs)
+
+    arm.move_l = slow_move_l  # type: ignore[method-assign]
+    mover = threading.Thread(
+        target=lambda: fake_session.execute("movel", {"pose": POSE, "speed": 0.3}))
+    reader: Optional[threading.Thread] = None
+    mover.start()
+    try:
+        assert started.wait(2.0), "movel 没跑起来 —— 用例前提不成立"
+        reader = threading.Thread(
+            target=lambda: fake_session.execute("get_tcp", {}))
+        reader.start()
+        time.sleep(0.2)
+        assert reader.is_alive(), "get_tcp 没有等 move_l 的 _tcp_gate"
+    finally:
+        release.set()
+        mover.join()
+        if reader is not None:
+            reader.join()
+
+
+def test_read_commands_set_is_exactly_get_tcp() -> None:
+    """哨兵: 并行的只读通道只收 `get_tcp`, 不许顺手扩成配置读取。"""
+    assert READ_COMMANDS == frozenset({"get_tcp"})
+
+
 def test_energy_down_set_is_exactly_estop_and_disable() -> None:
     """哨兵: 这条并行通道只收安全动作, 不许顺手把别的命令塞进来。
 
@@ -462,6 +540,32 @@ def test_state_push_rate_feeds_the_3d_preview() -> None:
     assert STATE_PUSH_INTERVAL_S <= 1 / 30, (
         f"默认推送间隔 {STATE_PUSH_INTERVAL_S}s 太慢, 3D 预览会卡"
         f" (旧客户端给 3D 的是一条 60Hz 快通道)")
+
+
+def test_state_push_reaches_the_configured_cadence() -> None:
+    """实际推送频率必须接近配置值 —— Windows 的定时器粒度回归会在这里红。
+
+    ⚠ 这条测的是**实际 loop 频率**, 不是常量。Windows 上等待对象 (Event/Condition)
+    的粒度是系统 tick(默认 15.6ms), 20ms 的 wait 会被抬到 ~31ms ⇒ 50Hz 掉成 ~33Hz。
+    更早的版本用 `Event.wait` 补睡时, 只看常量的用例完全抓不到这个回归。
+
+    阈值取 40Hz: Linux 假会话实测 ~50Hz, 留 20% 余量; 33Hz 必红。
+    """
+    s = Session(fake=True, poll_period=0.02, state_push_interval=0.02,
+                reconnect=False)
+    assert s.connect() is True
+    try:
+        assert _wait(lambda: s.connected), f"假会话没连上: {s.arm_info()}"
+        seen: list[dict] = []
+        s.add_listener(
+            lambda ev: seen.append(ev) if ev.get("t") == "state" else None)
+        time.sleep(2.0)
+        hz = len(seen) / 2.0
+        assert hz >= 40.0, (
+            f"状态推送只有 {hz:.1f}Hz (期望 ~50Hz) —— "
+            f"Windows 上 Event.wait 会把 20ms 的等待抬到 ~31ms")
+    finally:
+        s.close()
 
 
 def test_state_is_pushed_to_listeners(fake_session: Session) -> None:

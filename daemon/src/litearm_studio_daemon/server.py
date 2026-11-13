@@ -46,7 +46,7 @@ from starlette.types import Scope
 from . import __version__, logread, obs, ui_language, window
 from .errors import error_to_dict
 from .statemap import jsonable
-from .session import ENERGY_DOWN_COMMANDS, Session
+from .session import ENERGY_DOWN_COMMANDS, READ_COMMANDS, Session
 
 log = logging.getLogger("litearm_studio_daemon.server")
 
@@ -172,6 +172,26 @@ def _is_energy_down_frame(raw: str) -> bool:
         return False
     method = msg.get("m")
     return method in ENERGY_DOWN_COMMANDS or method == "gripper.stop"
+
+
+def _is_parallel_read_frame(raw: str) -> bool:
+    """这条上行帧是不是可以绕开有序队列的只读查询 (`get_tcp`)。
+
+    ⚠ 只读帧不改变机器状态, 却会被**同一条**有序 worker 挡住: 一条 `movej` 在途时,
+    worker 正 `await` 它, 后面排队的 `get_tcp` 直到运动结束才被取出来 —— 这正是
+    UI 上 X/Y/Z 在运动期间冻结的原因。把它旁路到独立任务后, 它的 `res` 可以与
+    在途运动并行; 真正的 SDK 串行/同名命令配对由 `Session` 的只读通道与
+    `_tcp_gate` 负责。
+
+    ⚠ 仍然只认 `t == "cmd"`; 坏 JSON / 别的帧交给 `_on_upstream` 回 BadMessage。
+    """
+    try:
+        msg = json.loads(raw)
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(msg, dict) or msg.get("t") != "cmd":
+        return False
+    return msg.get("m") in READ_COMMANDS
 
 
 #: `pick_free_http_port` 从 `start` 起最多试几个端口。⚠ 复用探测
@@ -516,10 +536,12 @@ class Daemon:
         #: (前端有依赖顺序的连招: set_speed 之后再 movej)。**有界**, 见
         #: `_enqueue_uplink`。
         queue: asyncio.Queue[str] = asyncio.Queue(maxsize=UPLINK_QUEUE_MAX)
-        #: 降能量方向的安全帧**不进队列** —— 直接起任务, 于是不必等在途运动结束。
-        #: 这是「急停永远可达」在传输层的另一半 (另一半是 `Session` 的专用执行器):
-        #: 原来的 `await self._on_upstream(...)` 会把 `receive_text` 也一起挡住,
-        #: 连急停帧都读不出来。
+        #: **不进有序队列**的帧 —— 直接起任务, 于是不必等在途运动结束。两类:
+        #: * 降能量方向的安全帧: 「急停永远可达」在传输层的另一半 (另一半是
+        #:   `Session` 的专用执行器); 原来的 `await self._on_upstream(...)` 会把
+        #:   `receive_text` 也一起挡住, 连急停帧都读不出来。
+        #: * 只读查询 (`get_tcp`): 它在一条 `movej` 后面排队, 就是运动期间 UI 位姿
+        #:   冻结的原因; 只读帧不改变机器状态, 不需要与运动保序。
         bypass: set[asyncio.Task] = set()
         pump: Optional[asyncio.Task] = None
         worker: Optional[asyncio.Task] = None
@@ -529,7 +551,7 @@ class Daemon:
             bypass.discard(task)
             if not task.cancelled() and task.exception() is not None:
                 # 客户端可能已经走了 ⇒ 回帧失败很正常, 记 debug 即可, 不许炸事件循环。
-                log.debug("旁路安全命令处理异常", exc_info=task.exception())
+                log.debug("旁路帧处理异常", exc_info=task.exception())
 
         try:
             # ⚠ **先把两条握手帧写完, 再把客户端注册进 `self.clients`**: 一旦注册,
@@ -575,7 +597,7 @@ class Daemon:
                 raw = await ws.receive_text()
                 # 上行帧是最强的"操作员还在"证据, 连上之后立刻补一次 (连接本身也算)。
                 self.stamp_gripper_heartbeat()
-                if _is_energy_down_frame(raw):
+                if _is_energy_down_frame(raw) or _is_parallel_read_frame(raw):
                     task = asyncio.create_task(
                         self._on_upstream(ws, client, raw, trace_id, execute))
                     bypass.add(task)

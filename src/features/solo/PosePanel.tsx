@@ -16,9 +16,11 @@ export function PosePanel({
   jointPose,
   cartPose,
   cartHintKey,
+  cartPoseHintKey = null,
+  cartPoseNotice = null,
 }: {
   jointPose: PoseRow[]
-  /** null = 笛卡尔不可用，读不到 TCP 位姿（不是"还没读到"）。 */
+  /** null = 没有可显示的 TCP 位姿（未连接 / 还没读到 / 读取失败 / 笛卡尔不可用）。 */
   cartPose: PoseRow[] | null
   /**
    * 笛卡尔不可用时该说的那一句（`useSoloState.cartHintKey`）——**与笛卡尔面板、与
@@ -27,6 +29,13 @@ export function PosePanel({
    * null 只是兜底：`cartPose` 为 null 而调用方没给原因时，至少说清"读不到"，不编数。
    */
   cartHintKey: string | null
+  /**
+   * `cartPose` 为 null 时更具体的一句：正在读 / 读取失败 / 未连接 / 仿真。
+   * 缺省时回落到 `cartHintKey`，保持旧调用方的行为。
+   */
+  cartPoseHintKey?: string | null
+  /** 有旧读数但已过期时的提示（例如 daemon 暂时读不到）。 */
+  cartPoseNotice?: string | null
 }) {
   const { t } = useTranslation(['common', 'solo'])
 
@@ -36,10 +45,17 @@ export function PosePanel({
       <div className="grid min-h-0 grid-cols-2 gap-x-5">
         <PoseColumn items={jointPose} labelOf={(_row, i) => t('solo:pose.jointLabel', { n: i + 1 })} />
         {cartPose ? (
-          <PoseColumn items={cartPose} labelOf={(row) => `${row.k}:`} />
+          <div className="flex min-h-0 flex-col">
+            <PoseColumn items={cartPose} labelOf={(row) => `${row.k}:`} />
+            {cartPoseNotice ? (
+              <div className="mt-1 text-[0.6875rem] leading-tight text-warn">
+                {t(cartPoseNotice)}
+              </div>
+            ) : null}
+          </div>
         ) : (
           <div className="flex items-center px-2 text-center text-[0.71875rem] leading-relaxed text-muted-foreground">
-            {t(cartHintKey ?? 'solo:cartesian.poseUnavailable')}
+            {t(cartPoseHintKey ?? cartHintKey ?? 'solo:cartesian.poseUnavailable')}
           </div>
         )}
       </div>

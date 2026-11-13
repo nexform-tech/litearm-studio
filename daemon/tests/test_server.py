@@ -21,6 +21,7 @@ from litearm_studio_daemon.server import (
     _Client,
     _is_energy_down_frame,
     _is_loopback,
+    _is_parallel_read_frame,
     create_app,
     origin_allowed,
     pick_free_http_port,
@@ -881,6 +882,51 @@ def test_ws_estop_does_not_wait_for_a_command_in_flight() -> None:
                     f"急停应先在途命令返回, 实际先回的是 id={first['id']}")
     finally:
         session.close()
+
+
+def test_ws_pose_read_does_not_wait_for_a_command_in_flight() -> None:
+    """位姿轮询不许排在在途运动后面 —— 否则运动期间 UI 的 X/Y/Z 冻结。
+
+    ⚠ 光给 daemon 加只读执行器是不够的: WS 这边每个客户端只有**一条**有序 worker,
+    它 `await` 着 `movej` 时, 后面的 `get_tcp` 根本取不出来。只读帧必须像急停一样
+    旁路到独立任务, 与运动并行。
+    """
+    session, app = _client()
+    try:
+        def fake_execute(m, p=None, *, on_event=None, trace=None):
+            if m == "movej":
+                time.sleep(0.5)
+            if m == "get_tcp":
+                return [0.3, 0.0, 0.4, 0.0, 0.0, 0.0]
+            return None
+
+        session.execute = fake_execute  # type: ignore[method-assign]
+        with TestClient(app) as client:
+            with client.websocket_connect("/ws") as ws:
+                ws.receive_json()               # hello
+                ws.receive_json()               # conn
+                ws.receive_json()               # log_meta
+                ws.send_json({"t": "cmd", "id": 1, "m": "movej",
+                              "p": {"q": [0.1] * 7}})
+                ws.send_json({"t": "cmd", "id": 2, "m": "get_tcp", "p": {}})
+                first = await_response(ws)
+                assert first["t"] == "res"
+                assert first["id"] == 2, (
+                    f"位姿读取应先在途运动返回, 实际先回的是 id={first['id']}")
+                assert first["v"] == [0.3, 0.0, 0.4, 0.0, 0.0, 0.0]
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ('{"t":"cmd","id":1,"m":"get_tcp","p":{}}', True),
+    ('{"t":"cmd","id":1,"m":"movej","p":{}}', False),
+    ('{"t":"cmd","id":1,"m":"estop","p":{}}', False),   # 安全帧走另一条判据
+    ('{"t":"connect"}', False),
+    ("这不是 JSON", False),
+])
+def test_parallel_read_frame_detection(raw: str, expected: bool) -> None:
+    assert _is_parallel_read_frame(raw) is expected
 
 
 @pytest.mark.parametrize("raw,expected", [
