@@ -199,6 +199,20 @@ export function useSoloState() {
     })
   }, [t])
 
+  /**
+   * 真机操作前的统一门禁：未连接 / 仿真模式给出明确提示，而不是静默 return。
+   * `true` = 可以继续下发。
+   */
+  const ensureRealConnected = useCallback((): boolean => {
+    if (s.real && connected) return true
+    if (!s.real) {
+      toast.warning(t('solo:cartesian.simHint'), { id: 'solo-sim-only' })
+    } else {
+      toast.warning(t('common:errors.notConnected'), { id: 'solo-not-connected' })
+    }
+    return false
+  }, [s.real, connected, t])
+
   // 笛卡尔位姿（X/Y/Z/RX/RY/RZ）是**独立的 RPC**，不在状态广播里。
   // `null` = 还没有成功读过（不是 0）；`cartPoseError` 只影响提示，不清掉最后一帧 ——
   // 运动期间宁可显示上一帧并标「已过期」，也不要突然把数字清空。
@@ -548,6 +562,8 @@ export function useSoloState() {
 
     poseJoint,
     poseCart,
+    /** 实机且已连接：笛卡尔面板/按钮是否可操作。 */
+    realConnected: connected && s.real,
     /** 笛卡尔不可用（固件确报不支持，或探测没问出来）：面板与笛卡尔读数据此收手。 */
     cartUnsupported,
     /** 探测没问出来（`conn.cartProbeSilent`）—— 与上一条配对，决定说哪一句话。 */
@@ -609,43 +625,51 @@ export function useSoloState() {
      *  过流、过温这类轴级报警恢复后用它点亮不起来的报警灯；它**不保证**放行系统级
      *  的 fault 状态机（见 `solo:fault.stateHint`）。 */
     clearFault: () => {
+      if (!ensureRealConnected()) return
       update({ fault: false })
-      if (!connected || !s.real) return
       setLastError(null)
       armClient.clearFaults().catch((err) => reportError('solo:controlBar.clearFault', err))
     },
     /** 复位：复位控制器（`reset` 0x14）。SDK 的措辞是 "clear faults + re-anchor"
      *  ——比 `clear_faults` 多一步把规划器重新锚定到当前位姿，且**不是**整机重启。 */
     resetArm: () => {
+      if (!ensureRealConnected()) return
       update({ fault: false })
-      if (!connected || !s.real) return
       setLastError(null)
       armClient.reset().catch((err) => reportError('solo:controlBar.reset', err))
     },
     homeJoints: () => {
+      // 未连接 / 仿真 / 未使能时不要把滑条先拨到目标再静默不动 —— 那会让操作员
+      // 以为姿态已经变了。先给提示，再决定要不要下发。
+      if (!ensureRealConnected()) return
+      if (!enableOn) {
+        toast.warning(t('common:errors.notEnabled'), { id: 'solo-not-enabled' })
+        return
+      }
       // 就绪姿态 Home [0, 0.5, 0, -1, 0, 0.6, 0]（按当前轴数裁剪/补齐）
       const target = fitJoints(HOME_JOINTS, jointCount)
       setS((p) => ({ ...p, jointPct: target.map((rad, i) => toPct(rad, i)) }))
-      if (connected && s.real && enableOn) {
-        // ⚠ 这里**只**发这条运动的倍率，不写固件调速器：后者是全局且持续的上限，
-        // 回零/就绪姿态顺手写它会让之后的滑条被一个看不见的上限夹住（issue #236）。
-        armClient
-          .movej(target, s.speed / 100)
-          .then(() => setLastError(null))
-          .catch((err) => reportError('solo:controlBar.readyPose', err))
-      }
+      // ⚠ 这里**只**发这条运动的倍率，不写固件调速器：后者是全局且持续的上限，
+      // 回零/就绪姿态顺手写它会让之后的滑条被一个看不见的上限夹住（issue #236）。
+      armClient
+        .movej(target, s.speed / 100)
+        .then(() => setLastError(null))
+        .catch((err) => reportError('solo:controlBar.readyPose', err))
     },
     zeroJoints: () => {
+      if (!ensureRealConnected()) return
+      if (!enableOn) {
+        toast.warning(t('common:errors.notEnabled'), { id: 'solo-not-enabled' })
+        return
+      }
       // 直立零位 Zero [0, 0, 0, 0, 0, 0, 0]（固件低速度回零）
       const target = fitJoints(ZERO_JOINTS, jointCount)
       setS((p) => ({ ...p, jointPct: target.map((rad, i) => toPct(rad, i)) }))
-      if (connected && s.real && enableOn) {
-        // 回零走固件自己的低速曲线；同样**不**写全局调速器（issue #236）。
-        armClient
-          .home()
-          .then(() => setLastError(null))
-          .catch((err) => reportError('solo:controlBar.home', err))
-      }
+      // 回零走固件自己的低速曲线；同样**不**写全局调速器（issue #236）。
+      armClient
+        .home()
+        .then(() => setLastError(null))
+        .catch((err) => reportError('solo:controlBar.home', err))
     },
     // 使能按钮不再单独染色：六颗按钮的图标一律继承按钮文字色，由 ControlBar 统一画。
     // 当前状态由按钮的绿底与文字（使能/失能）表示。
@@ -690,7 +714,7 @@ export function useSoloState() {
     },
 
     movelTarget: async (targetPos: [number, number, number], targetRpy: [number, number, number]) => {
-      if (!connected || !s.real) return
+      if (!ensureRealConnected()) return
       if (cartHintKey) {
         // 笛卡尔不可用：movel 一定被拒。与其让操作员看到一句固件内部的报错，不如直说。
         // ⚠ 说哪一句由成因决定 —— "固件没编"与"没探测出来"是两件不同的事。
@@ -710,7 +734,7 @@ export function useSoloState() {
       }
     },
     syncCurrentTcpPose: async () => {
-      if (!connected || !s.real) return null
+      if (!ensureRealConnected()) return null
       try {
         const pose = await armClient.getTcpPose()
         // daemon 在读不到时会回 `null`（短帧）—— 那不是 (0,0,0)，按失败处理。
@@ -745,8 +769,9 @@ export function useSoloState() {
     setTransStep: (v: string) => update({ transStep: v }),
     setRotStep: (v: string) => update({ rotStep: v }),
     onJogPress: (label: string) => {
-      // 仿真模式纯前端：笛卡尔点动需要 IK/位姿 RPC，不与真机交互，直接忽略。
-      if (!s.real || !connected) return
+      // 仿真模式纯前端：笛卡尔点动需要 IK/位姿 RPC，不与真机交互；未连接同理。
+      // 面板通常已置灰，这里兜住其它调用方并给出提示，而不是静默。
+      if (!ensureRealConnected()) return
       // 固件没有笛卡尔规划：点动的每一段都会以 movel 下发并被拒。面板已置灰，这里
       // 兜住任何其它调用方，免得变成一串重复的固件报错。
       if (cartHintKey) {

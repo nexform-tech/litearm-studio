@@ -79,6 +79,8 @@ function PoseField({
  */
 export function CartesianPanel({
   simMode = false,
+  /** 实机已连接；未连接时点动/movel/同步都没有可下发的对象。 */
+  connected = true,
   /** 笛卡尔不可用（`conn.cart === false`）：两张卡都不可用。 */
   cartUnsupported = false,
   /** 不可用的成因是"探测没答上来"而非"固件确报不支持" —— 只影响那句提示怎么说。 */
@@ -98,6 +100,7 @@ export function CartesianPanel({
   onSyncCurrentPose,
 }: {
   simMode?: boolean
+  connected?: boolean
   cartUnsupported?: boolean
   cartProbeSilent?: boolean
   frames: SegItem[]
@@ -124,9 +127,9 @@ export function CartesianPanel({
   const [syncing, setSyncing] = useState(false)
   const [moving, setMoving] = useState(false)
 
-  // 面板不可用的两种原因：仿真模式（不下发指令）与固件缺少笛卡尔规划。
+  // 面板不可用的三种原因：仿真模式（不下发指令）、未连接、固件缺少笛卡尔规划。
   // 头部控件仍然可点，便于在不可用时查看坐标系/步长设置。
-  const inactive = simMode || cartUnsupported
+  const inactive = simMode || cartUnsupported || !connected
   const disabledStyle = inactive ? { opacity: 0.45, pointerEvents: 'none' as const } : undefined
 
   const handleSyncPose = async () => {
