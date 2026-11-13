@@ -224,6 +224,20 @@ jobs:
             --version "$VERSION" \
             --outdir upload
 
+      # The package is built on 22.04 (the glibc floor) but has to start on newer
+      # LTS releases, where the system GTK/WebKit stack is newer. v0.25.0 shipped
+      # 22.04's libstdc++ inside the bundle, which shadowed the target's copy and
+      # stopped the window from opening on 26.04; only starting the package on the
+      # target release catches that. This runs before the checksums and the upload,
+      # so a package that cannot open its window is never attached to a release.
+      - name: Smoke-test the Debian package on Ubuntu 24.04 and 26.04
+        if: runner.os == 'Linux'
+        working-directory: litearm-studio
+        shell: bash
+        run: |
+          "$PYTHON" packaging/smoke.py \
+            "upload/litearm-studio_${VERSION#v}_amd64.deb"
+
       - name: Name the artifact (windows)
         if: runner.os == 'Windows'
         working-directory: litearm-studio
