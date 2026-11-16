@@ -135,7 +135,10 @@ export class GripperClient {
   private _busy: GripperBusy = { busy: false, what: '' }
 
   private _lastStateNotify = 0
-  private static readonly STATE_NOTIFY_INTERVAL_MS = 100
+  /** 夹爪遥测（位置/力/力矩/温度等）的最大通知频率：本客户端把通知压在每
+   *  50ms 一次（20Hz；daemon 那边以 50Hz 推送，见 `gripper.constants.TELEMETRY_HZ`）。
+   *  安全相关字段变化立即通知，不受此限。 */
+  private static readonly STATE_NOTIFY_INTERVAL_MS = 50
 
   private connListeners = new Set<Listener>()
   private stateListeners = new Set<Listener>()
@@ -349,8 +352,9 @@ export class GripperClient {
     const prev = this._state
     if (next === prev) return
     this._state = next
-    // 安全相关的字段变化立即通知；其余读数最多每 100ms 一次（50Hz 全灌 React
-    // 只会让整页每 20ms 重渲染一次，而操作员看不出差别）。
+    // 安全相关的字段变化立即通知；其余读数最多每 50ms 一次（20Hz；daemon 以
+    // 50Hz 推送，50Hz 全灌 React 只会让整页每 20ms 重渲染一次，而操作员看不出
+    // 差别）。
     const significant =
       !prev ||
       !next ||
