@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import statistics
 import threading
 import time
 from typing import Optional
@@ -40,6 +41,16 @@ def _wait(pred, timeout: float = 15.0) -> bool:
             return True
         time.sleep(0.02)
     return False
+
+
+def _median_sleep(duration: float, count: int = 10) -> float:
+    """Median wall time of `time.sleep(duration)` — a timer-resolution probe."""
+    samples = []
+    for _ in range(count):
+        t0 = time.perf_counter()
+        time.sleep(duration)
+        samples.append(time.perf_counter() - t0)
+    return statistics.median(samples)
 
 
 @pytest.fixture
@@ -743,17 +754,35 @@ def test_state_push_reaches_the_configured_cadence() -> None:
     """
     s = Session(fake=True, poll_period=0.02, state_push_interval=0.02,
                 reconnect=False)
+    work: list[float] = []
+    orig_poll_once = s._poll_once
+
+    def timed_poll_once(now: float):
+        t0 = time.perf_counter()
+        try:
+            return orig_poll_once(now)
+        finally:
+            work.append(time.perf_counter() - t0)
+
+    s._poll_once = timed_poll_once  # type: ignore[method-assign]
     assert s.connect() is True
     try:
         assert _wait(lambda: s.connected), f"假会话没连上: {s.arm_info()}"
-        seen: list[dict] = []
+        stamps: list[float] = []
         s.add_listener(
-            lambda ev: seen.append(ev) if ev.get("t") == "state" else None)
+            lambda ev: stamps.append(time.perf_counter())
+            if ev.get("t") == "state" else None)
         time.sleep(2.0)
-        hz = len(seen) / 2.0
+        hz = len(stamps) / 2.0
+        intervals = [b - a for a, b in zip(stamps, stamps[1:])]
+        median_interval = statistics.median(intervals) if intervals else 0.0
+        median_work = statistics.median(work) if work else 0.0
         assert hz >= 40.0, (
             f"状态推送只有 {hz:.1f}Hz (期望 ~50Hz) —— "
-            f"Windows 上 Event.wait 会把 20ms 的等待抬到 ~31ms")
+            f"median interval {median_interval * 1000:.1f}ms, "
+            f"median poll work {median_work * 1000:.2f}ms, "
+            f"sleep(20ms) {_median_sleep(0.02) * 1000:.1f}ms, "
+            f"sleep(5ms) {_median_sleep(0.005) * 1000:.1f}ms")
     finally:
         s.close()
 
