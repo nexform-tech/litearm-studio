@@ -758,6 +758,37 @@ def test_state_push_reaches_the_configured_cadence() -> None:
         s.close()
 
 
+def test_windows_timer_resolution_brackets_the_poll_thread(monkeypatch) -> None:
+    """The Windows timer bump must be paired with a matching timeEndPeriod.
+
+    The rate test above can only run on Windows, so this one pins the pairing on
+    every platform: a missing timeEndPeriod would leave the process at the 1 ms
+    timer resolution after the poll thread stops.
+    """
+    import ctypes
+
+    from litearm_studio_daemon import session as session_mod
+
+    calls: list[tuple[str, int | None]] = []
+
+    class FakeWinMM:
+        def timeBeginPeriod(self, period_ms: int) -> int:
+            calls.append(("begin", period_ms))
+            return 0
+
+        def timeEndPeriod(self, period_ms: int) -> int:
+            calls.append(("end", period_ms))
+            return 0
+
+    monkeypatch.setattr(session_mod.sys, "platform", "win32")
+    monkeypatch.setattr(ctypes, "WinDLL", lambda _name: FakeWinMM(), raising=False)
+
+    with session_mod._windows_timer_resolution():
+        calls.append(("inside", None))
+
+    assert calls == [("begin", 1), ("inside", None), ("end", 1)]
+
+
 def test_state_is_pushed_to_listeners(fake_session: Session) -> None:
     seen: list[dict] = []
     fake_session.add_listener(lambda ev: seen.append(ev))

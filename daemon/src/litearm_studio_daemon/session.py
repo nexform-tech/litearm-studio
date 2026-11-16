@@ -32,8 +32,10 @@ import binascii
 import logging
 import secrets
 import struct
+import sys
 import threading
 import time
+from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -70,14 +72,50 @@ POLL_PERIOD_S = 0.02
 #: 给 3D 预览单独留了一条直读 SDK 缓存的 60Hz 快通道, 而新架构下前端读不到那个缓存,
 #: 只能吃本推送 ⇒ 10Hz 会让 3D 孪生明显发卡, 而"状态与 3D 实时刷新"是这一版的明确目标。
 #: 代价可忽略: 回环上一个状态帧约 400B (7 轴), 50Hz ≈ 20KB/s; 且前端自己把 **React
-#: 通知**节流在 10Hz (`ArmClient.STATE_NOTIFY_INTERVAL_MS`), 提速率只喂给 3D 那条
+#: 通知**节流在 20Hz (`ArmClient.STATE_NOTIFY_INTERVAL_MS`), 提速率只喂给 3D 那条
 #: 快订阅, 不会让整页重渲染。该判据由 `test_state_push_rate_feeds_the_3d_preview` 钉住。
 #: ⚠ **状态串变化 / 故障变化一律立即推** (见 `_poll_loop`), 节流只管"同样内容重复推"。
 STATE_PUSH_INTERVAL_S = 0.02
 
+
+@contextmanager
+def _windows_timer_resolution(period_ms: int = 1):
+    """Raise the Windows timer resolution while the state poll thread runs.
+
+    `time.sleep` alone is not enough on every Windows build: GitHub's
+    `windows-latest` rounds a 20 ms sleep up to the 15.6 ms system tick, which
+    puts the loop back at ~33 Hz. `timeBeginPeriod(1)` makes short sleeps
+    accurate; `timeEndPeriod` restores the previous setting when the poll
+    thread stops. No-op on non-Windows platforms and when winmm is unavailable.
+    """
+    if sys.platform != "win32":
+        yield
+        return
+    try:
+        import ctypes
+        win_dll = getattr(ctypes, "WinDLL", None)
+        if win_dll is None:
+            yield
+            return
+        winmm = win_dll("winmm")
+        if winmm.timeBeginPeriod(period_ms) != 0:
+            yield
+            return
+    except (OSError, AttributeError):
+        yield
+        return
+    try:
+        yield
+    finally:
+        try:
+            winmm.timeEndPeriod(period_ms)
+        except (OSError, AttributeError):
+            pass
+
+
 #: 采样记录的抽稀间隔 (秒)。50Hz 的状态轮询**不是**日志: 每一拍都写一条, 5MB 的文件
 #: 几分钟就见底, 而操作员真正要读的是事件。1Hz 足够画出趋势与"那一刻的读数"; 完整的
-#: 10Hz 采样仍由页面写在自己的采样表里 (见 `telemetryRecorder`)。
+#: 20Hz 采样仍由页面写在自己的采样表里 (见 `telemetryRecorder`)。
 SAMPLE_RECORD_INTERVAL_S = 1.0
 
 #: 链路"没声音"多久即判为断 (秒) —— 判据是**固件那条 100Hz 被动状态流的到达时刻**。
@@ -1213,25 +1251,28 @@ class Session:
         永远回最后一帧好数据, 于是广播把同一帧一直重放。所以"这一拍还有没有新帧"必须
         单独判 —— 见 `_poll_once` 开头的存活判据。
         """
-        while not (self._stop.is_set() or self._poll_stop.is_set()):
-            t0 = time.monotonic()
-            event = None
-            try:
-                event = self._poll_once(t0)
-            except Exception:  # noqa: BLE001 - 轮询线程绝不能死
-                log.debug("状态轮询这一拍失败 (已跳过)", exc_info=True)
-            if event is not None:
-                self._broadcast(event)
-            rest = self._poll_period - (time.monotonic() - t0)
-            if rest > 0:
-                # ⚠ **不要改回 `self._poll_stop.wait(rest)`。** Windows 上等待对象
-                # (Event/Condition) 的定时粒度是系统 tick(默认 15.6ms), 20ms 的等待
-                # 会被抬到 ~31ms ⇒ 50Hz 直接掉成 ~33Hz(实测 Windows 11 + Python 3.14:
-                # `Event.wait(0.02)` 中位 30.64ms, `time.sleep(0.02)` 中位 20.27ms)。
-                # `time.sleep` 在 Python 3.11+ 的 Windows 上走高精度可等待定时器,
-                # 所以 50Hz 成立; 代价只是"停止轮询"最多多等一拍(≤20ms) —— `_stop_polling`
-                # 的 join 上限是 1s, 这点延迟无关紧要。
-                time.sleep(rest)
+        with _windows_timer_resolution():
+            while not (self._stop.is_set() or self._poll_stop.is_set()):
+                t0 = time.monotonic()
+                event = None
+                try:
+                    event = self._poll_once(t0)
+                except Exception:  # noqa: BLE001 - 轮询线程绝不能死
+                    log.debug("状态轮询这一拍失败 (已跳过)", exc_info=True)
+                if event is not None:
+                    self._broadcast(event)
+                rest = self._poll_period - (time.monotonic() - t0)
+                if rest > 0:
+                    # ⚠ **不要改回 `self._poll_stop.wait(rest)`。** Windows 上等待对象
+                    # (Event/Condition) 的定时粒度是系统 tick(默认 15.6ms), 20ms 的等待
+                    # 会被抬到 ~31ms ⇒ 50Hz 直接掉成 ~33Hz(实测 Windows 11 + Python 3.14:
+                    # `Event.wait(0.02)` 中位 30.64ms, `time.sleep(0.02)` 中位 20.27ms)。
+                    # `time.sleep` 在 Python 3.11+ 的 Windows 上走高精度可等待定时器,
+                    # 但 GitHub 的 windows-latest 仍会把 20ms 抬到系统 tick; 所以整个
+                    # 轮询线程套 `_windows_timer_resolution()` 把粒度拉到 1ms。
+                    # 代价只是"停止轮询"最多多等一拍(≤20ms) —— `_stop_polling` 的 join
+                    # 上限是 1s, 这点延迟无关紧要。
+                    time.sleep(rest)
 
     def _poll_once(self, now: float) -> Optional[dict]:
         arm = self._arm
