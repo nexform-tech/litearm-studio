@@ -44,7 +44,7 @@ litearm-python  ──USB CDC (1d50:606f)──>  STM32  ──CAN──>  motor
     raw fields and exceptions, and JSONL export; the daemon's history is read back
     over `/api/logs`, which is how the page still shows earlier records after a reload.
 - **Telemetry**
-  - 10 Hz joint sampling (angles, velocities, torques, temperatures, driver error codes),
+  - 20 Hz joint sampling (angles, velocities, torques, temperatures, driver error codes),
     recorded in the browser with a configurable retention cap and CSV export;
   - 1 Hz state records in the daemon's log file as `kind: "sample"`, so a session's
     numbers sit next to its events.

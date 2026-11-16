@@ -47,8 +47,10 @@ export const METRIC_DEFS = [
   { id: 'tau', name: '力矩', unit: 'Nm', axis: 'tau (Nm)', amp: 0.78 },
 ] as const
 
-const SERIES_INTERVAL_MS = 100
-const SERIES_MAX_LEN = 100
+// 20Hz 采样、200 点 ≈ 10s 窗口：与 `ArmClient` 的 20Hz 通知同频，
+// 同时保住原来 100 点 × 100ms 的 10 秒历史长度。
+const SERIES_INTERVAL_MS = 50
+const SERIES_MAX_LEN = 200
 
 // 仿真波形每条通道的基准值；通道数由 jointCount 决定，基准值不够长时按 0 起算。
 const SIM_TEMP_SEED = [40, 41, 39, 42, 38, 37, 39]

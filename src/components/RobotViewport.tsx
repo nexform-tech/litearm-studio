@@ -237,13 +237,16 @@ export const RobotViewport = forwardRef<RobotViewportHandle, RobotViewportProps>
     setJointPositions: (angles: number[]) => {
       const robot = robotRef.current
       if (!robot) return
+      let changed = false
       JOINT_NAMES.forEach((name, i) => {
         const joint = robot.joints?.[name]
         if (joint && typeof angles[i] === 'number') {
-          joint.setJointValue(angles[i])
+          // `setJointValue` 自己会判"角度没变"并返回 false。机械臂静止时 50Hz
+          // 广播重复同一组角度 —— 不排渲染帧，连接期间才不会一直空转 50fps。
+          changed = joint.setJointValue(angles[i]) || changed
         }
       })
-      scheduleRenderRef.current()
+      if (changed) scheduleRenderRef.current()
     },
   }))
 

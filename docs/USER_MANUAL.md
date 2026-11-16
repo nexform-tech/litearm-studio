@@ -258,7 +258,7 @@ The daemon writes every event to a JSONL file of its own, and this tab is a view
 The Samples tab keeps two different records, and they are worth telling apart:
 
 - **Daemon samples** — one row per second: run state, peak temperature, peak speed, peak torque and the fault axes, written by the daemon's own log at DEBUG — and that log defaults to INFO, so they are recorded only when the daemon runs with `--log-level DEBUG`;
-- **Browser sessions** — while the console is connected it records the state stream at 10 Hz into this browser's local storage:
+- **Browser sessions** — while the console is connected it records the state stream at 20 Hz into this browser's local storage:
   - Session list: chronologically displays recording sessions with start time, duration, sample count, and storage size;
   - Detailed inspection: select any session to inspect per-timestamp joint angles, velocities, torques, and driver temperatures;
   - Storage retention limit:

@@ -60,6 +60,8 @@ _TRACE_UNSET: Any = object()
 #: 不节流的话轮询线程会以 GIL 允许的最高速率空转 (实测能把整套用例拖慢一个量级)。
 #: ⚠ 循环体里的 sleep 只保证"周期**不小于**本值" (工作耗时叠加在上面), 这与
 #: "不要依赖帧到达速率"是同一个口径 —— 我们是主动方, 不跟固件的 100Hz 对齐。
+#: ⚠ 补睡必须用 `time.sleep`, 不要用 `Event.wait`: Windows 的等待对象粒度是系统
+#: tick(默认 15.6ms), 20ms 会被抬到 ~31ms ⇒ 50Hz 掉成 ~33Hz (见 `_poll_loop`)。
 POLL_PERIOD_S = 0.02
 
 #: 状态推送节流 (秒) —— 20ms = 50Hz, 与轮询同频。
@@ -97,6 +99,15 @@ LINK_STALE_AFTER_S = 2.0
 #: 不该让守护进程永远在后台攥着这个口。窗口用尽后如实上报 (见 `_recover_link`), 由
 #: 操作员决定是否重连 —— 这正是 issue #48 接受的两条出路 ("自愈, 或者明确告诉人")。
 RECONNECT_PERIOD_S = 1.0
+
+#: 运动命令超时后的"结果未知"窗口 (秒)。SDK 的 `_arrive` 只是**停止等待**, 并不
+#: 叫停机械臂; 一条超时的 movej/home 可能仍在走。此时立刻把 `motion_in_flight`
+#: 清零会让顶栏报 ready、并放行下一条运动 —— 与物理事实相反。
+#: 处理: 超时后继续按"运动中"对待, 直到**连续观察到静止帧**或本窗口耗尽。
+MOTION_UNKNOWN_MAX_S = 30.0
+#: 判"真的停了"的连续帧数与帧间位置差 (rad) —— 与 SDK `_arrive` 的口径一致。
+MOTION_UNKNOWN_SETTLE_FRAMES = 3
+MOTION_UNKNOWN_STEP_RAD = 0.001
 RECONNECT_WINDOW_S = 60.0
 
 #: 会触发**固件整扇区擦写**的命令 —— 擦写窗口里 CPU 取指停顿, 100Hz 被动状态流会**断**,
@@ -122,6 +133,31 @@ FLASH_STALL_GRACE_S = 12.0
 #: ⚠ `estop`/`disable`/`zero_g_stop` **不在此列**: 降能量方向的动作永远可达,
 #: 这正是原则 4 要的 (急停不能因为"运动互斥"而被挡住)。
 MOTION_COMMANDS = frozenset({"home", "movej", "movel"})
+
+#: 只读、可运动并行的查询 —— 走 `_read_executor`, 不排在在途运动后面。
+#:
+#: 目前只有 `get_tcp`: 位姿轮询是 UI 的"数字反馈", 运动期间正需要它; 而它不改变
+#: 机器状态, SDK 的应答队列按帧 id 区分, 与 `movej`/`home` 并发是安全的。
+#: ⚠ `movel` 是例外: `move_l(wait=True)` 收尾时自己会调一次 `get_tcp`, 两条同名
+#:   命令并发时线上无法配对 ⇒ 由 `_tcp_gate` 单独串行 (见 `Session.__init__`)。
+#: ⚠ 别顺手把 `get_joint_params`/`get_ff_*` 加进来: 那些是低频配置读取, 串在命令
+#:   通道上没有危害; 而每多一条并发写者, 就要多论证一次它与固件应答 FIFO 的关系。
+READ_COMMANDS = frozenset({"get_tcp"})
+
+
+def is_gripper_command(method: str) -> bool:
+    """`gripper.` 前缀是夹爪命令的唯一判据 (与 `server` 的分流同一口径)。"""
+    return method.startswith("gripper.")
+
+#: 运动中**允许接管**的动作 —— 目前只有"松开点动盘时受控停住"。
+#:
+#: `stop_jog` 发一条 `movej` 到**最近的关节角**; 固件收到新的 `movej` 会先
+#: `cart_invalidate_before_motion()` 作废在途笛卡尔规划, 然后从当前状态收口 ——
+#: SDK 文档把这条语义称为"受控接管", 比 `estop`(丢位置环) 温和, 比等 16×步长
+#: 的续段走完安全。
+#: ⚠ 它必须**不排在**在途运动后面, 所以走自己的执行器; 也**不能**与急停抢
+#: `_safety_executor` —— 操作员松手后立刻按 STOP 时, 急停仍要最先可达。
+TAKEOVER_COMMANDS = frozenset({"stop_jog"})
 
 #: 降能量方向的安全命令 —— 不仅豁免运动互斥, 还**不排在**普通命令的执行器后面。
 #:
@@ -187,6 +223,7 @@ COMMANDS: Dict[str, str] = {
     "home": "固件低速度回零 (arm.home)",
     "movej": "关节运动 (arm.movej)",
     "movel": "笛卡尔直线 (arm.move_l)",
+    "stop_jog": "受控停止点动: movej 到最近一帧状态的关节角 (作废在途笛卡尔规划)",
     "set_speed": "全局调速 0-100 (arm.set_speed)",
     "get_tcp": "当前末端位姿 (arm.get_tcp)",
     "ik": "逆解 (arm.ik)",
@@ -393,6 +430,11 @@ class Session:
         self._zero_g_since: Optional[float] = None
         #: 运动在飞计数 (不是 bool: 同一瞬间可能既有在途、又有刚提交的)
         self._motion_count = 0
+        #: 超时后的"结果未知"状态 (见 `MOTION_UNKNOWN_MAX_S`)。
+        self._motion_unknown = False
+        self._motion_unknown_deadline = 0.0
+        self._motion_unknown_prev_q: Optional[List[float]] = None
+        self._motion_unknown_still = 0
         #: 固件擦写停滞的让路截止时刻 (见 `FLASH_STALL_GRACE_S`); 0.0 = 没在让路。
         self._flash_grace_until = 0.0
         #: 断线自愈在途 (`_recover_link`) —— `disconnect()` 靠它把"取消了一次自愈"
@@ -432,6 +474,37 @@ class Session:
         #: `thread_name_prefix` 便于排障时一眼看出是谁。
         self._executor = ThreadPoolExecutor(max_workers=1,
                                             thread_name_prefix="litearm-cmd")
+        #: 只读查询 (目前只有 `get_tcp`) 的专用单线程通道 —— 与运动命令**并行**。
+        #:
+        #: ⚠ 为什么需要它: `get_tcp` 曾和 `movej/movel/home` 共用 `_executor`, 而后者
+        #:   默认阻塞到机械臂停稳 (最长 `move_timeout=15s`)。于是运动期间位姿轮询全部
+        #:   排在它后面, UI 上的 X/Y/Z 数字冻结 —— 恰恰是最需要位姿反馈的时候。
+        #:   SDK 的读线程/应答队列本来就支持并发读 (不同帧 id 各走各的队列;
+        #:   `_wait_settled` 的注释也明确承认并发 `get_tcp`), 所以单线程串行是 daemon
+        #:   自己加的、可以去掉的限制。
+        #: ⚠ 仍然单线程: 两条**同一条** `get_tcp` 并发时线上没有请求 id, 无法配对;
+        #:   这个通道必须继续把同类读请求串起来。
+        self._read_executor = ThreadPoolExecutor(max_workers=1,
+                                                 thread_name_prefix="litearm-read")
+        #: `get_tcp` 与 `move_l` 的互斥闸 —— SDK 的**同名命令并发无法配对**
+        #: (线上没有请求 id, `_raw_write` 会在写之前清掉对方的应答队列)。
+        #: `move_l(wait=True)` 在收尾时自己也会调一次 `get_tcp` (`_tcp_reached`),
+        #: 所以只读通道不能和它同时读。把它套在整条 `move_l` 外面: 笛卡尔运动期间
+        #: 位姿轮询会等到停稳才返回 (UI 侧会按超时标「已过期」), 而 `movej`/`home`
+        #: 不碰 `get_tcp`, 所以关节运动/零重力拖拽期间位姿仍按 10Hz 更新。
+        self._tcp_gate = threading.Lock()
+        #: 受控接管命令 (`stop_jog`) 专用 —— 与在途运动并行, 但不占安全通道。
+        #: ⚠ 不能放进 `_safety_executor`: 松手后马上按 STOP 时, 急停不许排在
+        #: 一条几百毫秒的停止 movej 后面 (「永远可达」优先于「松手即停」)。
+        self._takeover_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="litearm-takeover")
+        #: 受控接管的 `movej` 专用 —— 它与在途运动**必须并行**, 所以不能挤在
+        #: `_executor` 的单线程里。2 条 worker 是刻意的上限: 旧命令被接管后不会
+        #: 立即返回 (SDK 的 `_arrive` 要等满 `move_timeout` 才知道自己的目标没到),
+        #: 每条会占住一个 worker 最多 15s; 开得更多只会放大这个滞留。
+        #: ⚠ 第 3 条接管命令会在这个执行器的队列里等, 而不是被拒 —— 这是保守的一侧。
+        self._supersede_executor = ThreadPoolExecutor(
+            max_workers=2, thread_name_prefix="litearm-supersede")
         #: 降能量方向的安全命令专用 (见 `ENERGY_DOWN_COMMANDS`) —— 单线程保证两条急停
         #: 之间仍串行, 但它**不排队等运动**: 这是「永远可达」的实现点。
         self._safety_executor = ThreadPoolExecutor(max_workers=1,
@@ -484,7 +557,60 @@ class Session:
     def motion_in_flight(self) -> bool:
         """「运动在飞」这个布尔量 —— 计划 2 节原则 3 要求对外暴露。"""
         with self._lock:
-            return self._motion_count > 0
+            return self._motion_in_flight_locked()
+
+    def _motion_in_flight_locked(self) -> bool:
+        """**调用方须持 `self._lock`**。超时后的结果未知也算在飞 (见 `MOTION_UNKNOWN_MAX_S`)。"""
+        return self._motion_count > 0 or self._motion_unknown
+
+    def _mark_motion_unknown_locked(self) -> None:
+        """运动命令超时 —— 臂可能还在走, 先按"在飞"对待, 等静止观察或窗口耗尽。
+
+        **调用方须持 `self._lock`**。强制下一拍推一条状态 (状态串可能从 ready 变
+        moving, 或反之), 否则页面要等下一个内容变化才看见。
+        """
+        self._motion_unknown = True
+        self._motion_unknown_deadline = time.monotonic() + MOTION_UNKNOWN_MAX_S
+        q = getattr(self._state, "q", None) if self._state is not None else None
+        self._motion_unknown_prev_q = list(q) if q else None
+        self._motion_unknown_still = 0
+        self._last_emit_key = None
+
+    def _observe_motion_unknown_locked(self, state: Any, now: float) -> bool:
+        """观察超时后的静止窗口; 真的停了 (或窗口耗尽) 就清掉 unknown。
+
+        **调用方须持 `self._lock`**。判据与 SDK `_arrive` 同款: 连续
+        `MOTION_UNKNOWN_SETTLE_FRAMES` 帧的逐轴位置差 < `MOTION_UNKNOWN_STEP_RAD`。
+        """
+        if not self._motion_unknown:
+            return False
+        cleared = False
+        if now >= self._motion_unknown_deadline:
+            cleared = True
+        else:
+            q = list(getattr(state, "q", []) or [])
+            prev = self._motion_unknown_prev_q
+            if (q and prev and len(prev) == len(q)
+                    and max(abs(a - b) for a, b in zip(q, prev))
+                    < MOTION_UNKNOWN_STEP_RAD):
+                self._motion_unknown_still += 1
+                if self._motion_unknown_still >= MOTION_UNKNOWN_SETTLE_FRAMES:
+                    cleared = True
+            else:
+                self._motion_unknown_still = 0
+                if q:
+                    self._motion_unknown_prev_q = q
+        if cleared:
+            self._clear_motion_unknown_locked()
+        return cleared
+
+    def _clear_motion_unknown_locked(self) -> None:
+        """**调用方须持 `self._lock`**。"""
+        self._motion_unknown = False
+        self._motion_unknown_deadline = 0.0
+        self._motion_unknown_prev_q = None
+        self._motion_unknown_still = 0
+        self._last_emit_key = None
 
     def arm_info(self) -> dict:
         """`conn` 帧 / `/api/health` 的公共部分 (计划 3.1)。"""
@@ -669,6 +795,11 @@ class Session:
                 self._last_error = None
                 self._resolved_port = target
                 self._connected_at = time.monotonic()
+                # 新链路 = 新会话账目; 上一条链路留下的"结果未知"不许带过来。
+                self._motion_unknown = False
+                self._motion_unknown_deadline = 0.0
+                self._motion_unknown_prev_q = None
+                self._motion_unknown_still = 0
         if stale:
             # 握手/自愈期间用户按了「断开」(或进程在收尾) —— 这个会话没人要了。
             # ⚠ 必须在这里把它关掉: 否则串口被一个「已断开」的会话占着。
@@ -746,6 +877,7 @@ class Session:
             self._last_emit_key = None
             self._zero_g_since = None
             self._motion_count = 0
+            self._clear_motion_unknown_locked()
             self._status = "disconnected"
             self._last_error = None
             closed_port = self._resolved_port
@@ -889,6 +1021,7 @@ class Session:
             self._state_stamp = 0.0
             self._last_emit_key = None
             self._zero_g_since = None
+            self._clear_motion_unknown_locked()
             gen = self._connect_gen
             reconnect = self._reconnect
         log.warning("链路已断开 (port=%s): %s", last_port, reason)
@@ -1025,8 +1158,13 @@ class Session:
         with self._lock:
             self._connect_gen += 1
         self._stop_polling()
-        # 先等在途命令收尾, 免得关链路时还有命令在写。
+        # 先等在途命令收尾, 免得关链路时还有命令在写。只读通道也一起等:
+        # 一条在途的 `get_tcp` 同样会在链路关上之后报 NotConnected, 但它手里的
+        # SDK 读线程/应答队列不该与 `Arm.close()` 抢同一个会话。
         self._executor.shutdown(wait=True)
+        self._read_executor.shutdown(wait=True)
+        self._takeover_executor.shutdown(wait=True)
+        self._supersede_executor.shutdown(wait=True)
         arm = self._take_arm()
         if arm is not None:
             self._close_arm(arm)
@@ -1086,8 +1224,14 @@ class Session:
                 self._broadcast(event)
             rest = self._poll_period - (time.monotonic() - t0)
             if rest > 0:
-                # 用 Event.wait 而不是 sleep: 关闭时能被立刻唤醒, 不必等满一拍。
-                self._poll_stop.wait(rest)
+                # ⚠ **不要改回 `self._poll_stop.wait(rest)`。** Windows 上等待对象
+                # (Event/Condition) 的定时粒度是系统 tick(默认 15.6ms), 20ms 的等待
+                # 会被抬到 ~31ms ⇒ 50Hz 直接掉成 ~33Hz(实测 Windows 11 + Python 3.14:
+                # `Event.wait(0.02)` 中位 30.64ms, `time.sleep(0.02)` 中位 20.27ms)。
+                # `time.sleep` 在 Python 3.11+ 的 Windows 上走高精度可等待定时器,
+                # 所以 50Hz 成立; 代价只是"停止轮询"最多多等一拍(≤20ms) —— `_stop_polling`
+                # 的 join 上限是 1s, 这点延迟无关紧要。
+                time.sleep(rest)
 
     def _poll_once(self, now: float) -> Optional[dict]:
         arm = self._arm
@@ -1110,11 +1254,14 @@ class Session:
         with self._lock:
             self._state = state
             self._state_stamp = now
+            # 先在旧 unknown 状态下观察这一帧是否静止; 清掉后下面的 state 串才会
+            # 从 moving 回到 ready, 并且 `_last_emit_key=None` 会强制推这一拍。
+            self._observe_motion_unknown_locked(state, now)
             self._state_dict = statemap.state_to_dict(
                 state,
                 enabled=bool(getattr(state, "enabled", False)),
                 zero_g_active=self._zero_g_active_locked(),
-                motion_in_flight=self._motion_count > 0,
+                motion_in_flight=self._motion_in_flight_locked(),
             )
             doc = dict(self._state_dict)
             # 推送判据: "内容变了" = 派生状态串 / 故障面 / 逐轴误差 任一变化。
@@ -1270,16 +1417,22 @@ class Session:
                     self._no_session_message(present),
                     reason=(NOT_CONNECTED_DFU_PRESENT if present
                             else NOT_CONNECTED_NO_SESSION))
+        #: 只有 `movej` 带显式的 `supersede` 才允许接管在途运动 —— 固件收到新的
+        #: `movej` 会先作废在途笛卡尔规划, 再从当前状态收口 (SDK 称为受控接管)。
+        #: `movel`/`home` 仍受运动互斥, 不许无提示地抢占。
+        supersede = m == "movej" and params.get("supersede") is True
         with self._lock:
             if m not in COMMANDS:
                 raise UnknownCommandError(m, sorted(COMMANDS))
-            if m in MOTION_COMMANDS and self._motion_count > 0:
+            if m in MOTION_COMMANDS and self._motion_in_flight_locked() and not supersede:
                 raise MotionBusyError(m)
             if m in MOTION_COMMANDS:
                 # 运动命令一起步就占坑: 提交是同步的, 所以"在途"从这一刻起成立,
                 # 于是同一瞬间来的第二条运动命令必然看到 (而不会两条都过审)。
                 self._motion_count += 1
 
+        #: 本次运动是否以"等不到到位"收场 —— 收场时 `finally` 要把它记成结果未知。
+        motion_timed_out = False
         try:
             if m == "activate":
                 # ⚠ 激活**不占**命令执行器等网络, 见 `_activate` 的两段式说明。
@@ -1291,11 +1444,27 @@ class Session:
             # ⚠ 降能量方向的动作走**另一条**执行器: 与在途运动并行, 不排队等它结束
             # (见 `ENERGY_DOWN_COMMANDS`)。这是「急停永远可达」的落点 —— 只在准入处
             # 豁免运动互斥是不够的, 那样它仍会排在阻塞十几秒的 movej 后面。
-            executor = (self._safety_executor if m in ENERGY_DOWN_COMMANDS
-                        else self._executor)
+            # ⚠ 只读的 `get_tcp` 也走自己的通道 (见 `READ_COMMANDS`): 位姿反馈不该
+            # 被在途运动冻结。
+            if m in ENERGY_DOWN_COMMANDS:
+                executor = self._safety_executor
+            elif supersede:
+                # 接管命令必须与在途 `movej` 并行 —— 在 `_executor` 上会排在它后面。
+                executor = self._supersede_executor
+            elif m in TAKEOVER_COMMANDS:
+                executor = self._takeover_executor
+            elif m in READ_COMMANDS:
+                executor = self._read_executor
+            else:
+                executor = self._executor
             try:
                 return executor.submit(self._run_command, arm, m, params,
                                        on_event).result()
+            except litearm.MotionTimeoutError:
+                # 超时 = 停止等待, **不是**叫停机械臂。臂可能还在走, 交给
+                # `_mark_motion_unknown_locked` 继续按在飞对待, 直到看见静止帧。
+                motion_timed_out = True
+                raise
             except litearm.TransportError as e:
                 self._note_link_lost(arm, f"命令 {m} 失败: {type(e).__name__}: {e}")
                 raise
@@ -1303,6 +1472,11 @@ class Session:
             if m in MOTION_COMMANDS:
                 with self._lock:
                     self._motion_count = max(0, self._motion_count - 1)
+                    if motion_timed_out:
+                        self._mark_motion_unknown_locked()
+                    elif supersede:
+                        # 接管 movej 成功到位 ⇒ 旧的"结果未知"已经被这一条覆盖。
+                        self._clear_motion_unknown_locked()
 
     def _note_command(self, m: str, params: dict, value: Any,
                       exc: Optional[BaseException], *, duration_ms: float,
@@ -1366,14 +1540,35 @@ class Session:
                 return _state_result(arm.movej(_q(p), _speed(p)))
             if m == "movel":
                 # 位姿统一用 SDK 原生的 6 元组 `[x, y, z, rx, ry, rz]` (计划 3.4)。
-                return statemap.jsonable(arm.move_l(_pose(p), _speed(p)))
+                # ⚠ 整条 `move_l` 持 `_tcp_gate`: 它收尾时的 `_tcp_reached` 会调
+                # `get_tcp`, 不能与只读通道的位姿轮询并发 (见 `_tcp_gate`)。
+                with self._tcp_gate:
+                    return statemap.jsonable(arm.move_l(_pose(p), _speed(p)))
+            if m == "stop_jog":
+                # 受控停止：目标 = 最近一帧状态的关节角。固件收到新的 movej 会先
+                # 作废在途笛卡尔规划，再从当前状态收口；与在途 movel 并行是安全的
+                # (SDK 明确把 movej 称为"受控接管")。
+                with self._lock:
+                    state = self._state
+                q = None if state is None else list(getattr(state, "q", []) or [])
+                if not q:
+                    raise ValueError("尚未收到状态帧 —— 无法确定点动停止目标")
+                if len(q) != int(getattr(arm, "n", len(q))):
+                    raise ValueError(
+                        f"停止目标关节数 {len(q)} 与当前会话 {arm.n} 不一致")
+                # 没给速度时用 0.5：这是"停住"，不是一条新轨迹，别用默认 1.0 猛停。
+                speed = _speed(p) if p.get("speed") is not None else 0.5
+                arm.movej([float(v) for v in q], speed)
+                return None
             if m == "set_speed":
                 arm.set_speed(_percent(p))
                 return int(p["percent"])
             if m == "get_tcp":
                 # ⚠ 2.0 起读一帧的 getter 返回 `Msg` 信封, 读值要 `.value`
                 # (这里**不进** `_state_result`: 位姿就是位姿, 与状态帧无关)。
-                return statemap.jsonable(arm.get_tcp().value)
+                # 与 `move_l` 共用互斥闸: 两条同名命令并发时线上无法配对。
+                with self._tcp_gate:
+                    return statemap.jsonable(arm.get_tcp().value)
             if m == "ik":
                 # 逆解恒为**模型 7 轴** (固件 KIN_N=7), 与关节数解耦 ⇒ 原样回。
                 return statemap.jsonable(arm.ik(_pose(p)))
@@ -1531,7 +1726,7 @@ class Session:
                 self._state,
                 enabled=bool(getattr(self._state, "enabled", False)),
                 zero_g_active=active,
-                motion_in_flight=self._motion_count > 0)
+                motion_in_flight=self._motion_in_flight_locked())
             if doc is not None:
                 self._state_dict = doc
                 self._last_emit_key = None          # 强制下一拍推一条

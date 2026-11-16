@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import type { PadCell } from '../../components/DirectionPad'
 import type { SegItem } from '../../components/SegmentedControl'
-import { armClient, formatArmError, useArmConnection, useArmState, useArmMetrics, type Pose6, type SeriesSample } from '@/lib/arm'
+import { armClient, formatArmError, isMotionSuperseded, useArmConnection, useArmState, useArmMetrics, type Pose6, type SeriesSample } from '@/lib/arm'
 import { DEFAULT_JOINT_COUNT, resolveJointCount } from '@/lib/arm/axes'
 import { jogPose, rpyToMat3, mat3ToRpy, type Mat3 } from '@/lib/arm/geometry'
 import {
@@ -52,11 +52,15 @@ export type SoloState = {
   expanded: boolean
   jointPct: number[]
   releaseOnly: boolean
-  cart: { X: number; Y: number; Z: number; RX: number; RY: number; RZ: number }
   transStep: string
   rotStep: string
   fault: boolean
 }
+
+/** 位姿轮询周期：100ms = 10Hz。比原来的 400ms 快 4 倍，但仍低于状态广播的 50Hz。 */
+const POSE_POLL_MS = 100
+/** 超过这么久没有新的位姿读数，就把已有数字标成「已过期」（不直接清空）。 */
+const POSE_STALE_MS = 1500
 
 const INITIAL_STATE: SoloState = {
   enabled: true,
@@ -68,7 +72,6 @@ const INITIAL_STATE: SoloState = {
   expanded: false,
   jointPct: [...SEED_JOINT_PCT],
   releaseOnly: true,
-  cart: { X: 0.3241, Y: -0.0182, Z: 0.487, RX: 0, RY: 1.5701, RZ: -0.0004 },
   transStep: '10 mm',
   rotStep: '5 °',
   fault: false,
@@ -188,6 +191,8 @@ export function useSoloState() {
     { opKey: string; opVars?: Record<string, unknown>; msg: string } | null
   >(null)
   const reportError = useCallback((opKey: string, err: unknown, vars?: Record<string, unknown>) => {
+    // 被更新目标接管的旧运动不是失败：它晚到的超时/拒绝不该弹红框。
+    if (isMotionSuperseded(err)) return
     console.error(`${opKey} failed`, err)
     const msg = formatArmError(err)
     setLastError({ opKey, opVars: vars, msg })
@@ -196,7 +201,26 @@ export function useSoloState() {
     })
   }, [t])
 
+  /**
+   * 真机操作前的统一门禁：未连接 / 仿真模式给出明确提示，而不是静默 return。
+   * `true` = 可以继续下发。
+   */
+  const ensureRealConnected = useCallback((): boolean => {
+    if (s.real && connected) return true
+    if (!s.real) {
+      toast.warning(t('solo:cartesian.simHint'), { id: 'solo-sim-only' })
+    } else {
+      toast.warning(t('common:errors.notConnected'), { id: 'solo-not-connected' })
+    }
+    return false
+  }, [s.real, connected, t])
+
+  // 笛卡尔位姿（X/Y/Z/RX/RY/RZ）是**独立的 RPC**，不在状态广播里。
+  // `null` = 还没有成功读过（不是 0）；`cartPoseError` 只影响提示，不清掉最后一帧 ——
+  // 运动期间宁可显示上一帧并标「已过期」，也不要突然把数字清空。
   const [cartPose, setCartPose] = useState<Pose6 | null>(null)
+  const [cartPoseError, setCartPoseError] = useState<string | null>(null)
+  const [cartPoseAt, setCartPoseAt] = useState<number | null>(null)
 
   const armStateRef = useRef(armState)
   armStateRef.current = armState
@@ -288,7 +312,7 @@ export function useSoloState() {
   // 提交内覆盖为实际关节角；未连接则回到初始姿态）。
   useEffect(() => {
     if (!s.real) return
-    setS((p) => ({ ...p, jointPct: [...INITIAL_STATE.jointPct], cart: { ...INITIAL_STATE.cart }, fault: false }))
+    setS((p) => ({ ...p, jointPct: [...INITIAL_STATE.jointPct], fault: false }))
   }, [s.real])
 
   // 实机模式：jointPct 跟随广播的实际关节角（JointSpacePanel 拖动时会用本地
@@ -305,27 +329,74 @@ export function useSoloState() {
     })
   }, [armState, s.real, toPct, jointCount])
 
-  // Cartesian pose is fetched on demand (RPC, not part of the state broadcast).
+  // Cartesian pose is fetched on an RPC, not part of the state broadcast.
   // 关节与笛卡尔现在**同时可见**（不再用页签二选一），所以只要连着就轮询；
   // 固件没有笛卡尔规划时不轮询——那条读口必然失败。
+  //
+  // ⚠ 这里是**自调度**而不是 `setInterval`: 上一条 `get_tcp` 没回来就不发下一条。
+  // 否则一次丢应答 (SDK 默认 0.6s 超时) 叠上 400ms 的定时器会把请求越排越多,
+  // 而它们排在 daemon 的有序上行队列里, 会把后续运动命令一起拖慢。
+  // 100ms = 10Hz: 位姿是操作员盯着看的数字, 2.5Hz 太慢; daemon 侧已经给
+  // `get_tcp` 单独一条只读通道, 关节运动不会把位姿轮询排在后面。`movel` 是例外
+  // (它收尾要读 TCP, 两条同名读不能并发), 那条通道会等它停稳 —— 此时下面的
+  // `cartPoseStale` 会把旧读数标成「已过期」, 不再假装是实时值。
   useEffect(() => {
     if (!s.real || !connected || cartUnsupported) return
     let cancelled = false
-    const tick = () => {
-      armClient
-        .getTcpPose()
-        .then((pose) => {
-          if (!cancelled) setCartPose(pose)
-        })
-        .catch(() => {})
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const tick = async () => {
+      if (cancelled) return
+      let failed = false
+      try {
+        const pose = await armClient.getTcpPose()
+        if (cancelled) return
+        // daemon 在短帧/读不到时会回 `null`; 那不是 0,0,0 —— 按失败处理。
+        if (!Array.isArray(pose) || pose.length < 6 || pose.some((v) => !Number.isFinite(v))) {
+          throw new Error('empty tcp pose')
+        }
+        setCartPose(pose)
+        setCartPoseError(null)
+        setCartPoseAt(Date.now())
+      } catch (err) {
+        failed = true
+        if (!cancelled) setCartPoseError(formatArmError(err) || String(err))
+      } finally {
+        // 失败时 SDK 自己已经等了 0.6s; 再等 500ms 再试, 不要把失败也打成 10Hz。
+        if (!cancelled) timer = setTimeout(() => void tick(), failed ? 500 : POSE_POLL_MS)
+      }
     }
-    tick()
-    const id = setInterval(tick, 400)
+    void tick()
     return () => {
       cancelled = true
-      clearInterval(id)
+      if (timer) clearTimeout(timer)
     }
   }, [connected, cartUnsupported, s.real])
+
+  // 离开实机/断开/笛卡尔不可用时，位姿必须作废：上一会话的数字不能挂在新会话上。
+  useEffect(() => {
+    if (s.real && connected && !cartUnsupported) return
+    setCartPose(null)
+    setCartPoseError(null)
+    setCartPoseAt(null)
+  }, [connected, cartUnsupported, s.real])
+
+  const cartPoseStale =
+    cartPose != null &&
+    (cartPoseError != null ||
+      (cartPoseAt != null && Date.now() - cartPoseAt > POSE_STALE_MS))
+  // 没有位姿时 PosePanel 显示的那一句：能力缺失 (cartHintKey) 之外，还要区分
+  // 「正在读」「读失败」「未连接」「仿真」—— 不能一律说成固件不支持。
+  const cartPoseHintKey = cartUnsupported
+    ? cartHintKey
+    : !s.real
+      ? 'solo:cartesian.poseSim'
+      : !connected
+        ? 'solo:cartesian.poseDisconnected'
+        : cartPoseError
+          ? 'solo:cartesian.poseReadFailed'
+          : 'solo:cartesian.poseReading'
+  const cartPoseNotice =
+    cartPose != null && cartPoseStale ? 'solo:cartesian.poseStale' : null
 
   const armErrs = s.real && armState ? (armState.errs ?? []) : []
   const realEnabled = s.real && connected && armState != null && armState.enabled && ARM_OPERATIONAL_STATES.has(armState.state)
@@ -371,27 +442,19 @@ export function useSoloState() {
 
   // 关节与笛卡尔同时展示（不再用页签二选一）。顺序取 daemon `get_tcp` 的原生顺序：
   // 先位置后姿态。两列网格下因此排成 (X,Y) (Z,RX) (RY,RZ) 三行。
-  // ⚠ 固件没有笛卡尔规划时返回 null：这条 RPC 必然失败，退回本地兜底的 `s.cart`
-  // 初始值会把假数当真实位姿显示（见 useSoloState.cart.test.ts）。
-  const poseCart = cartUnsupported
+  // ⚠ **没有成功读数就返回 null，不回退任何本地/初始值**：`INITIAL_STATE.cart` 是
+  // 一串写死的数字，把它当实时位姿显示会让操作员读到假数。PosePanel 会按
+  // `cartPoseHintKey` 说明「正在读 / 读失败 / 未连接 / 仿真」。
+  const poseCart = cartUnsupported || !cartPose
     ? null
-    : cartPose
-      ? [
-          { k: 'X', v: cartPose[0].toFixed(4), u: 'm' },
-          { k: 'Y', v: cartPose[1].toFixed(4), u: 'm' },
-          { k: 'Z', v: cartPose[2].toFixed(4), u: 'm' },
-          { k: 'RX', v: cartPose[3].toFixed(4), u: 'rad' },
-          { k: 'RY', v: cartPose[4].toFixed(4), u: 'rad' },
-          { k: 'RZ', v: cartPose[5].toFixed(4), u: 'rad' },
-        ]
-      : [
-          { k: 'X', v: s.cart.X.toFixed(4), u: 'm' },
-          { k: 'Y', v: s.cart.Y.toFixed(4), u: 'm' },
-          { k: 'Z', v: s.cart.Z.toFixed(4), u: 'm' },
-          { k: 'RX', v: s.cart.RX.toFixed(4), u: 'rad' },
-          { k: 'RY', v: s.cart.RY.toFixed(4), u: 'rad' },
-          { k: 'RZ', v: s.cart.RZ.toFixed(4), u: 'rad' },
-        ]
+    : [
+        { k: 'X', v: cartPose[0].toFixed(4), u: 'm' },
+        { k: 'Y', v: cartPose[1].toFixed(4), u: 'm' },
+        { k: 'Z', v: cartPose[2].toFixed(4), u: 'm' },
+        { k: 'RX', v: cartPose[3].toFixed(4), u: 'rad' },
+        { k: 'RY', v: cartPose[4].toFixed(4), u: 'rad' },
+        { k: 'RZ', v: cartPose[5].toFixed(4), u: 'rad' },
+      ]
 
   const joints = jointPct.map((pct, i) => {
     // 实机：按驱动状态码逐关节显示（0=未使能、1=正常/运动中、≥8=故障）；
@@ -501,12 +564,18 @@ export function useSoloState() {
 
     poseJoint,
     poseCart,
+    /** 实机且已连接：笛卡尔面板/按钮是否可操作。 */
+    realConnected: connected && s.real,
     /** 笛卡尔不可用（固件确报不支持，或探测没问出来）：面板与笛卡尔读数据此收手。 */
     cartUnsupported,
     /** 探测没问出来（`conn.cartProbeSilent`）—— 与上一条配对，决定说哪一句话。 */
     cartProbeSilent,
     /** 笛卡尔不可用时该显示的文案键；可用时为 `null`。 */
     cartHintKey,
+    /** 没有位姿读数时 PosePanel 该显示的那一句（读取中/失败/未连接/仿真/不支持）。 */
+    cartPoseHintKey,
+    /** 有旧读数但已过期时的提示键；否则 `null`。 */
+    cartPoseNotice,
 
     ...metricsState,
 
@@ -558,43 +627,51 @@ export function useSoloState() {
      *  过流、过温这类轴级报警恢复后用它点亮不起来的报警灯；它**不保证**放行系统级
      *  的 fault 状态机（见 `solo:fault.stateHint`）。 */
     clearFault: () => {
+      if (!ensureRealConnected()) return
       update({ fault: false })
-      if (!connected || !s.real) return
       setLastError(null)
       armClient.clearFaults().catch((err) => reportError('solo:controlBar.clearFault', err))
     },
     /** 复位：复位控制器（`reset` 0x14）。SDK 的措辞是 "clear faults + re-anchor"
      *  ——比 `clear_faults` 多一步把规划器重新锚定到当前位姿，且**不是**整机重启。 */
     resetArm: () => {
+      if (!ensureRealConnected()) return
       update({ fault: false })
-      if (!connected || !s.real) return
       setLastError(null)
       armClient.reset().catch((err) => reportError('solo:controlBar.reset', err))
     },
     homeJoints: () => {
+      // 未连接 / 仿真 / 未使能时不要把滑条先拨到目标再静默不动 —— 那会让操作员
+      // 以为姿态已经变了。先给提示，再决定要不要下发。
+      if (!ensureRealConnected()) return
+      if (!enableOn) {
+        toast.warning(t('common:errors.notEnabled'), { id: 'solo-not-enabled' })
+        return
+      }
       // 就绪姿态 Home [0, 0.5, 0, -1, 0, 0.6, 0]（按当前轴数裁剪/补齐）
       const target = fitJoints(HOME_JOINTS, jointCount)
       setS((p) => ({ ...p, jointPct: target.map((rad, i) => toPct(rad, i)) }))
-      if (connected && s.real && enableOn) {
-        // ⚠ 这里**只**发这条运动的倍率，不写固件调速器：后者是全局且持续的上限，
-        // 回零/就绪姿态顺手写它会让之后的滑条被一个看不见的上限夹住（issue #236）。
-        armClient
-          .movej(target, s.speed / 100)
-          .then(() => setLastError(null))
-          .catch((err) => reportError('solo:controlBar.readyPose', err))
-      }
+      // ⚠ 这里**只**发这条运动的倍率，不写固件调速器：后者是全局且持续的上限，
+      // 回零/就绪姿态顺手写它会让之后的滑条被一个看不见的上限夹住（issue #236）。
+      armClient
+        .movej(target, s.speed / 100, { supersede: true })
+        .then(() => setLastError(null))
+        .catch((err) => reportError('solo:controlBar.readyPose', err))
     },
     zeroJoints: () => {
+      if (!ensureRealConnected()) return
+      if (!enableOn) {
+        toast.warning(t('common:errors.notEnabled'), { id: 'solo-not-enabled' })
+        return
+      }
       // 直立零位 Zero [0, 0, 0, 0, 0, 0, 0]（固件低速度回零）
       const target = fitJoints(ZERO_JOINTS, jointCount)
       setS((p) => ({ ...p, jointPct: target.map((rad, i) => toPct(rad, i)) }))
-      if (connected && s.real && enableOn) {
-        // 回零走固件自己的低速曲线；同样**不**写全局调速器（issue #236）。
-        armClient
-          .home()
-          .then(() => setLastError(null))
-          .catch((err) => reportError('solo:controlBar.home', err))
-      }
+      // 回零走固件自己的低速曲线；同样**不**写全局调速器（issue #236）。
+      armClient
+        .home()
+        .then(() => setLastError(null))
+        .catch((err) => reportError('solo:controlBar.home', err))
     },
     // 使能按钮不再单独染色：六颗按钮的图标一律继承按钮文字色，由 ControlBar 统一画。
     // 当前状态由按钮的绿底与文字（使能/失能）表示。
@@ -615,7 +692,7 @@ export function useSoloState() {
       if (connected && s.real) {
         const target = next.map((v, i) => toRad(v, i))
         armClient
-          .movej(target, s.speed / 100)
+          .movej(target, s.speed / 100, { supersede: true })
           // 运动成功即清掉旧错误：被"正在运动"拦下后，下一次成功运动要让提示消失。
           .then(() => setLastError(null))
           .catch((err) => reportError('solo:ops.jointMotion', err, { n: key + 1 }))
@@ -632,14 +709,14 @@ export function useSoloState() {
       if (connected && s.real) {
         const target = clamped.map((v, i) => toRad(v, i))
         armClient
-          .movej(target, s.speed / 100)
+          .movej(target, s.speed / 100, { supersede: true })
           .then(() => setLastError(null))
           .catch((err) => reportError('solo:ops.jointMotionAll', err))
       }
     },
 
     movelTarget: async (targetPos: [number, number, number], targetRpy: [number, number, number]) => {
-      if (!connected || !s.real) return
+      if (!ensureRealConnected()) return
       if (cartHintKey) {
         // 笛卡尔不可用：movel 一定被拒。与其让操作员看到一句固件内部的报错，不如直说。
         // ⚠ 说哪一句由成因决定 —— "固件没编"与"没探测出来"是两件不同的事。
@@ -659,9 +736,17 @@ export function useSoloState() {
       }
     },
     syncCurrentTcpPose: async () => {
-      if (!connected || !s.real) return null
+      if (!ensureRealConnected()) return null
       try {
         const pose = await armClient.getTcpPose()
+        // daemon 在读不到时会回 `null`（短帧）—— 那不是 (0,0,0)，按失败处理。
+        if (!Array.isArray(pose) || pose.length < 6 || pose.some((v) => !Number.isFinite(v))) {
+          throw new Error('empty tcp pose')
+        }
+        // 手动同步也是一次成功读数：顺手把轮询缓存刷新，避免两处显示不一致。
+        setCartPose(pose)
+        setCartPoseError(null)
+        setCartPoseAt(Date.now())
         // 同一类错误的成功必须把它清掉：否则「读取位姿失败」会一直挂在故障灯旁边，
         // 哪怕紧接着这次读取已经成功。只清这条读操作自己的错误 —— 读通了不代表运动
         // 链路恢复，一次成功的读取不能抹掉「运动失败」那个更重的结论。
@@ -686,8 +771,9 @@ export function useSoloState() {
     setTransStep: (v: string) => update({ transStep: v }),
     setRotStep: (v: string) => update({ rotStep: v }),
     onJogPress: (label: string) => {
-      // 仿真模式纯前端：笛卡尔点动需要 IK/位姿 RPC，不与真机交互，直接忽略。
-      if (!s.real || !connected) return
+      // 仿真模式纯前端：笛卡尔点动需要 IK/位姿 RPC，不与真机交互；未连接同理。
+      // 面板通常已置灰，这里兜住其它调用方并给出提示，而不是静默。
+      if (!ensureRealConnected()) return
       // 固件没有笛卡尔规划：点动的每一段都会以 movel 下发并被拒。面板已置灰，这里
       // 兜住任何其它调用方，免得变成一串重复的固件报错。
       if (cartHintKey) {
@@ -706,11 +792,19 @@ export function useSoloState() {
       void runJog(gen, baseAxis, isRot, step, s.frame, s.speed)
     },
     onJogRelease: () => {
-      // 松开只停止续段；在途的单段 movel 让它自己走完（急停是独立的 STOP 按钮）。
+      // 松手：作废续段链路，并**受控停住在途续段**。只按一下（首段 1 个步长）不需要
+      // 额外停止命令，让它走完这一步即可。
       jogHoldingRef.current = false
       if (jogContinuousRef.current) {
         jogGenRef.current++ // 作废在途连续链路
         jogContinuousRef.current = false
+        if (connected && s.real) {
+          // `stop_jog` 走 daemon 的受控接管通道，不排队等这条 movel 结束；
+          // 固件收到新的 movej 会作废在途笛卡尔规划，从当前状态收口。
+          void armClient
+            .stopJog(s.speed / 100)
+            .catch((err) => reportError('solo:ops.stopJog', err))
+        }
       }
     },
   }

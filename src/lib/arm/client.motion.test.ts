@@ -56,7 +56,7 @@ class FakeWebSocket {
   }
 }
 
-const { ArmClient } = await import('./client')
+const { ArmClient, isMotionSuperseded } = await import('./client')
 
 /** 建一个已通过 WS 握手、daemon 报 connected 的客户端。 */
 function connectedClient() {
@@ -167,7 +167,7 @@ describe('ArmClient motion mutex and notify throttle', () => {
     expect(client.motionBusy).toBe(false)
   })
 
-  it('coalesces ordinary telemetry inside the 100ms notify window', () => {
+  it('coalesces ordinary telemetry inside the 50ms notify window', () => {
     const { client, ws } = connectedClient()
     let notifications = 0
     client.subscribeState(() => notifications++)
@@ -181,21 +181,49 @@ describe('ArmClient motion mutex and notify throttle', () => {
     ws.receive({ t: 'state', state: { q: [1], errs: [1], state: 'ready' } })
     expect(notifications).toBe(1)
 
-    now.mockReturnValue(1_050)
+    now.mockReturnValue(1_030)
     ws.receive({ t: 'state', state: { q: [2], errs: [1], state: 'ready' } })
-    // 状态本身已更新，命令式消费方（3D 预览）每帧跟随；但 React 侧的订阅被 100ms
+    // 状态本身已更新，命令式消费方（3D 预览）每帧跟随；但 React 侧的订阅被 50ms
     // 节流挡住，窗口内的普通遥测不重复通知 —— 否则 daemon 的 50Hz 广播
     // （session.STATE_PUSH_INTERVAL_S）会把整页反复重渲染。
     expect(client.state?.q).toEqual([2])
     expect(fast).toBe(2)
     expect(notifications).toBe(1)
 
-    now.mockReturnValue(1_100)
+    now.mockReturnValue(1_050)
     ws.receive({ t: 'state', state: { q: [3], errs: [1], state: 'ready' } })
-    // 到窗口边界（>=100ms）就放行：节流是"合并窗口内的"，不是把遥测永久停掉。
+    // 到窗口边界（>=50ms）就放行：节流是"合并窗口内的"，不是把遥测永久停掉。
     expect(client.state?.q).toEqual([3])
     expect(fast).toBe(3)
     expect(notifications).toBe(2)
+  })
+
+  it('lets a superseding movej take over and hides the old late failure', async () => {
+    const { client, ws } = connectedClient()
+
+    const first = client.movej([0.1], 0.5)
+    const firstFrame = ws.frames().filter((f) => f.m === 'movej').at(-1)!
+    expect(client.motionBusy).toBe(true)
+
+    // 不带 supersede 的新运动仍然被本地互斥拒掉。
+    await expect(client.movej([0.2], 0.5)).rejects.toThrow()
+
+    // 带 supersede 的放行，并且参数里真的带上了标记。
+    const second = client.movej([0.3], 0.5, { supersede: true })
+    const secondFrame = ws.frames().filter((f) => f.m === 'movej').at(-1)!
+    expect(secondFrame.p).toMatchObject({ supersede: true })
+
+    ws.receive({ t: 'res', id: secondFrame.id, ok: true, v: null })
+    await second
+    expect(client.motionBusy).toBe(false)
+
+    // 旧命令晚到的超时不是操作员该看到的失败 —— 它被标成 superseded。
+    ws.receive({
+      t: 'res', id: firstFrame.id, ok: false,
+      err: { kind: 'MotionTimeoutError', msg: '未到位, 超时 15.0s' },
+    })
+    const oldError = await first.then(() => null, (e) => e)
+    expect(isMotionSuperseded(oldError)).toBe(true)
   })
 
   it('walks the reconnect backoff up to the 30s clamp', async () => {

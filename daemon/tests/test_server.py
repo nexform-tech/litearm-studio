@@ -20,7 +20,10 @@ from litearm_studio_daemon.server import (
     Daemon,
     _Client,
     _is_energy_down_frame,
+    _is_gripper_frame,
     _is_loopback,
+    _is_parallel_frame,
+    _is_supersede_frame,
     create_app,
     origin_allowed,
     pick_free_http_port,
@@ -881,6 +884,171 @@ def test_ws_estop_does_not_wait_for_a_command_in_flight() -> None:
                     f"急停应先在途命令返回, 实际先回的是 id={first['id']}")
     finally:
         session.close()
+
+
+def test_ws_pose_read_does_not_wait_for_a_command_in_flight() -> None:
+    """位姿轮询不许排在在途运动后面 —— 否则运动期间 UI 的 X/Y/Z 冻结。
+
+    ⚠ 光给 daemon 加只读执行器是不够的: WS 这边每个客户端只有**一条**有序 worker,
+    它 `await` 着 `movej` 时, 后面的 `get_tcp` 根本取不出来。只读帧必须像急停一样
+    旁路到独立任务, 与运动并行。
+    """
+    session, app = _client()
+    try:
+        def fake_execute(m, p=None, *, on_event=None, trace=None):
+            if m == "movej":
+                time.sleep(0.5)
+            if m == "get_tcp":
+                return [0.3, 0.0, 0.4, 0.0, 0.0, 0.0]
+            return None
+
+        session.execute = fake_execute  # type: ignore[method-assign]
+        with TestClient(app) as client:
+            with client.websocket_connect("/ws") as ws:
+                ws.receive_json()               # hello
+                ws.receive_json()               # conn
+                ws.receive_json()               # log_meta
+                ws.send_json({"t": "cmd", "id": 1, "m": "movej",
+                              "p": {"q": [0.1] * 7}})
+                ws.send_json({"t": "cmd", "id": 2, "m": "get_tcp", "p": {}})
+                first = await_response(ws)
+                assert first["t"] == "res"
+                assert first["id"] == 2, (
+                    f"位姿读取应先在途运动返回, 实际先回的是 id={first['id']}")
+                assert first["v"] == [0.3, 0.0, 0.4, 0.0, 0.0, 0.0]
+    finally:
+        session.close()
+
+
+def test_ws_stop_jog_does_not_wait_for_a_command_in_flight() -> None:
+    """松手停止不许排在续段 `movel` 后面 —— 否则"松手即停"仍然是假的。"""
+    session, app = _client()
+    try:
+        def fake_execute(m, p=None, *, on_event=None, trace=None):
+            if m == "movel":
+                time.sleep(0.5)
+            return None
+
+        session.execute = fake_execute  # type: ignore[method-assign]
+        with TestClient(app) as client:
+            with client.websocket_connect("/ws") as ws:
+                ws.receive_json()               # hello
+                ws.receive_json()               # conn
+                ws.receive_json()               # log_meta
+                ws.send_json({"t": "cmd", "id": 1, "m": "movel",
+                              "p": {"pose": [0.3, 0.0, 0.4, 0.0, 0.0, 0.0]}})
+                ws.send_json({"t": "cmd", "id": 2, "m": "stop_jog", "p": {}})
+                first = await_response(ws)
+                assert first["t"] == "res"
+                assert first["id"] == 2, (
+                    f"stop_jog 应先在途 movel 返回, 实际先回的是 id={first['id']}")
+    finally:
+        session.close()
+
+
+class _FakeGripper:
+    """握手 + 命令都够用的夹爪替身；`execute` 立刻返回。"""
+
+    def add_listener(self, _cb) -> None:
+        pass
+
+    def conn_info(self) -> dict:
+        return {"status": "connected", "port": "can0"}
+
+    def connected(self) -> bool:
+        return True
+
+    def state(self):
+        return None
+
+    def heartbeat(self) -> None:
+        pass
+
+    def execute(self, _m, _p=None):
+        return None
+
+
+def test_ws_superseding_movej_does_not_wait_for_the_old_movej() -> None:
+    """带 `supersede` 的 movej 不许排在旧 movej 后面 —— 否则"允许接管"只在准入层成立。"""
+    session, app = _client()
+    try:
+        def fake_execute(m, p=None, *, on_event=None, trace=None):
+            if m == "movej" and not (p or {}).get("supersede"):
+                time.sleep(0.5)
+            return None
+
+        session.execute = fake_execute  # type: ignore[method-assign]
+        with TestClient(app) as client:
+            with client.websocket_connect("/ws") as ws:
+                ws.send_json({"t": "cmd", "id": 1, "m": "movej",
+                              "p": {"q": [0.1] * 7}})
+                ws.send_json({"t": "cmd", "id": 2, "m": "movej",
+                              "p": {"q": [0.2] * 7, "supersede": True}})
+                first = await_response(ws)
+                assert first["t"] == "res"
+                assert first["id"] == 2, (
+                    f"接管 movej 应先在旧命令返回, 实际先回的是 id={first['id']}")
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ('{"t":"cmd","id":1,"m":"movej","p":{"q":[0.1],"supersede":true}}', True),
+    ('{"t":"cmd","id":1,"m":"movej","p":{"q":[0.1]}}', False),
+    ('{"t":"cmd","id":1,"m":"movel","p":{"pose":[0,0,0,0,0,0],"supersede":true}}', False),
+    ('{"t":"cmd","id":1,"m":"movej"}', False),
+    ("这不是 JSON", False),
+])
+def test_supersede_frame_detection(raw: str, expected: bool) -> None:
+    assert _is_supersede_frame(raw) is expected
+
+
+def test_ws_gripper_command_does_not_wait_for_an_arm_command() -> None:
+    """夹爪命令必须有自己的有序 worker —— 不许排在臂运动后面 (issue #250)。"""
+    session = Session(port_finder=lambda: None)
+    app = create_app(session, gripper=_FakeGripper(), version=VERSION,
+                     repo_dist=Path("/nonexistent-ui"))
+    try:
+        def fake_execute(m, p=None, *, on_event=None, trace=None):
+            if m == "movej":
+                time.sleep(0.5)
+            return None
+
+        session.execute = fake_execute  # type: ignore[method-assign]
+        with TestClient(app) as client:
+            with client.websocket_connect("/ws") as ws:
+                ws.send_json({"t": "cmd", "id": 1, "m": "movej",
+                              "p": {"q": [0.1] * 7}})
+                ws.send_json({"t": "cmd", "id": 2, "m": "gripper.open", "p": {}})
+                first = await_response(ws)
+                assert first["t"] == "res"
+                assert first["id"] == 2, (
+                    f"夹爪命令应先在途运动返回, 实际先回的是 id={first['id']}")
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ('{"t":"cmd","id":1,"m":"gripper.open","p":{}}', True),
+    ('{"t":"cmd","id":1,"m":"gripper.stop","p":{}}', True),
+    ('{"t":"cmd","id":1,"m":"movej","p":{}}', False),
+    ('{"t":"connect"}', False),
+    ("这不是 JSON", False),
+])
+def test_gripper_frame_detection(raw: str, expected: bool) -> None:
+    assert _is_gripper_frame(raw) is expected
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ('{"t":"cmd","id":1,"m":"get_tcp","p":{}}', True),
+    ('{"t":"cmd","id":1,"m":"stop_jog","p":{}}', True),
+    ('{"t":"cmd","id":1,"m":"movej","p":{}}', False),
+    ('{"t":"cmd","id":1,"m":"estop","p":{}}', False),   # 安全帧走另一条判据
+    ('{"t":"connect"}', False),
+    ("这不是 JSON", False),
+])
+def test_parallel_frame_detection(raw: str, expected: bool) -> None:
+    assert _is_parallel_frame(raw) is expected
 
 
 @pytest.mark.parametrize("raw,expected", [

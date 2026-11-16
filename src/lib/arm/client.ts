@@ -178,6 +178,24 @@ function numArray(v: unknown): number[] {
 }
 
 /**
+ * 这条运动命令已被更新的一条接管 —— **不是失败**。
+ *
+ * 前端把最新目标发出去后，旧命令的 promise 仍会晚些落地（daemon 侧旧 `movej`
+ * 要等满 `move_timeout` 才知道自己的目标没到）。调用方不该为它弹红框。
+ */
+export class MotionSupersededError extends Error {
+  readonly superseded = true
+  constructor() {
+    super('superseded by a newer motion')
+    this.name = 'MotionSupersededError'
+  }
+}
+
+export function isMotionSuperseded(err: unknown): boolean {
+  return !!err && typeof err === 'object' && (err as { superseded?: unknown }).superseded === true
+}
+
+/**
  * 归一化 daemon 的 `state` 帧：保证消费方拿到的数组与数值字段均有效存在，
  * 缺失字段退化为空数组/零，杜绝渲染崩溃。daemon 正常情况下字段齐全。
  */
@@ -248,15 +266,20 @@ export class ArmClient {
   private _conn: ConnInfo | null = null
   private _state: RobotState | null = null
   private _motionPending = false
+  /** 运动命令的代号。只有**最新**那条落地时才允许把 `motionBusy` 放回 false。 */
+  private _motionSeq = 0
+  private _activeMotionSeq = 0
 
   private _lastStateNotify = 0
   private _lastRawState: unknown = null
   private _cachedNormalizedState: RobotState | null = null
 
   /** 遥测状态（关节角/温度/力矩等）的最大通知频率：**本客户端**把通知压在
-   *  每 100ms 一次（daemon 那边以 50Hz 推送，见 `session.STATE_PUSH_INTERVAL_S`，
-   *  别把两者混为一谈）。安全相关字段（状态串/故障）变化立即通知，不受此限。 */
-  private static readonly STATE_NOTIFY_INTERVAL_MS = 100
+   *  每 50ms 一次（20Hz；daemon 那边以 50Hz 推送，见 `session.STATE_PUSH_INTERVAL_S`，
+   *  别把两者混为一谈）。安全相关字段（状态串/故障）变化立即通知，不受此限。
+   *  ⚠ 不要回到 100ms：数字/滑条与 3D 的快订阅并排看时，"数字慢半拍"会被当成
+   *    反馈速度问题；20Hz 是整页重渲染成本与可读性的折中。 */
+  private static readonly STATE_NOTIFY_INTERVAL_MS = 50
 
   private statusListeners = new Set<Listener>()
   private stateListeners = new Set<Listener>()
@@ -326,6 +349,8 @@ export class ArmClient {
         // 开头 + `onclose`）—— 一个看起来"实时"的旧姿态/故障位比空白更危险，而
         // `GripperClient` 出于同样的理由也在清。
         this._clearState()
+        // 链路没了, 没有"更新的运动"在接管: 旧命令的失败不该被吞成 superseded。
+        this._activeMotionSeq = 0
         this._setMotionBusy(false)
         this._setStatus(s)
       }
@@ -504,6 +529,7 @@ export class ArmClient {
     }
     this._wantSession = false
     this._clearState()
+    this._activeMotionSeq = 0
     this._setMotionBusy(false)
     this._conn = null
     this._clearConnectError()
@@ -548,14 +574,33 @@ export class ArmClient {
     return this._guardMotion(() => this._sendCmd('home'))
   }
 
-  /** 关节运动——运动中禁止再次发起，避免并发指令竞态。 */
-  movej(q: number[], speed?: number): Promise<unknown> {
-    return this._guardMotion(() => this._sendCmd('movej', speed == null ? { q } : { q, speed }))
+  /**
+   * 关节运动。默认仍受运动互斥；`supersede: true` 表示**这条目标要接管在途运动**
+   * （滑块松手/就绪姿态），daemon 会把它发到独立的接管通道，固件从当前状态收口。
+   */
+  movej(q: number[], speed?: number, opts?: { supersede?: boolean }): Promise<unknown> {
+    const params = speed == null ? { q } : { q, speed }
+    return this._guardMotion(
+      () => this._sendCmd('movej', opts?.supersede ? { ...params, supersede: true } : params),
+      opts?.supersede === true,
+    )
   }
 
   /** 笛卡尔直线运动（6 元组位姿），运动中禁止再次发起。 */
   movel(pose: Pose6, speed?: number): Promise<unknown> {
     return this._guardMotion(() => this._sendCmd('movel', speed == null ? { pose } : { pose, speed }))
+  }
+
+  /**
+   * 受控停止点动：让 daemon 发一条 `movej` 到最近一帧状态的关节角。
+   *
+   * ⚠ **不能走 `_guardMotion`**：调用它的时候，续段 `movel` 正在途，`_motionPending`
+   * 本来就是 true —— 走守卫只会被本地拒绝，松手后机械臂继续走完 16×步长。daemon
+   * 侧把 `stop_jog` 当作受控接管（不占运动互斥），固件收到新的 `movej` 会先作废
+   * 在途笛卡尔规划，再从当前状态收口。
+   */
+  stopJog(speed?: number): Promise<unknown> {
+    return this._sendCmd('stop_jog', speed == null ? {} : { speed })
   }
 
   async setSpeed(percent: number): Promise<unknown> {
@@ -818,7 +863,7 @@ export class ArmClient {
     this._state = next
     // 命令式消费方（3D 预览）每帧跟随。
     for (const l of this.stateFastListeners) l()
-    // 状态串/故障变化立即通知，普通遥测最多每 100ms 通知一次。
+    // 状态串/故障变化立即通知，普通遥测最多每 50ms 通知一次（20Hz）。
     const now = performance.now()
     const significant =
       !prev ||
@@ -862,15 +907,29 @@ export class ArmClient {
    * 运动互斥：上一运动命令未返回时拒绝新的运动指令（daemon 侧也有同样的判定，
    * 这里提前拦截，避免 UI 在上一条在途时再下发）。
    */
-  private async _guardMotion<T>(fn: () => Promise<T>): Promise<T> {
-    if (this._motionPending) {
+  private async _guardMotion<T>(fn: () => Promise<T>, supersede = false): Promise<T> {
+    if (this._motionPending && !supersede) {
       throw new Error(i18n.t('common:transport.busy'))
     }
+    const seq = ++this._motionSeq
+    this._activeMotionSeq = seq
     this._setMotionBusy(true)
     try {
-      return await fn()
+      const value = await fn()
+      // 旧命令晚到的成功不能清掉新命令的错误/状态。
+      if (this._activeMotionSeq !== seq && this._activeMotionSeq !== 0) {
+        throw new MotionSupersededError()
+      }
+      return value
+    } catch (err) {
+      // 接管后旧命令的失败 (典型: 15s 后 `未到位`) 不是操作员要看的错误。
+      if (this._activeMotionSeq !== seq && this._activeMotionSeq !== 0) {
+        throw new MotionSupersededError()
+      }
+      throw err
     } finally {
-      this._setMotionBusy(false)
+      // 只有最新那条运动落地才释放互斥；旧命令的 finally 不许抢。
+      if (this._activeMotionSeq === seq) this._setMotionBusy(false)
     }
   }
 

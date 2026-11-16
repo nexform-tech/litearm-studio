@@ -101,4 +101,13 @@ describe('CartesianPanel capability notice', () => {
     expect(screen.getByText('仿真模式仅支持关节空间操作')).toBeTruthy()
     expect(screen.queryByText(/未编译笛卡尔规划/)).toBeNull()
   })
+
+  it('disables the cartesian controls while the arm is disconnected', () => {
+    renderPanel({ connected: false })
+
+    const movel = screen.getByRole('button', { name: /运动到目标位姿/ }) as HTMLButtonElement
+    expect(movel.disabled).toBe(true)
+    const sync = screen.getByRole('button', { name: /同步当前位姿/ }) as HTMLButtonElement
+    expect(sync.disabled).toBe(true)
+  })
 })

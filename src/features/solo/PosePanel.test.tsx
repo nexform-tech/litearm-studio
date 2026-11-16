@@ -56,4 +56,33 @@ describe('PosePanel', () => {
     expect(screen.getByText(i18n.t('solo:cartesian.probeSilentHint'))).toBeTruthy()
     expect(screen.queryByText(i18n.t('solo:cartesian.poseUnavailable'))).toBeNull()
   })
+
+  it('says the pose is still being read instead of inventing one', () => {
+    render(
+      <PosePanel
+        jointPose={joint}
+        cartPose={null}
+        cartHintKey={null}
+        cartPoseHintKey="solo:cartesian.poseReading"
+      />,
+    )
+
+    expect(screen.getByText(i18n.t('solo:cartesian.poseReading'))).toBeTruthy()
+    expect(screen.queryByText('X:')).toBeNull()
+  })
+
+  it('keeps the last pose but marks it stale when reads fail', () => {
+    render(
+      <PosePanel
+        jointPose={joint}
+        cartPose={cart}
+        cartHintKey={null}
+        cartPoseNotice="solo:cartesian.poseStale"
+      />,
+    )
+
+    // 旧读数仍然显示（运动期间不清空），但旁边明确说它已过期。
+    expect(screen.getByText('0.3241')).toBeTruthy()
+    expect(screen.getByText(i18n.t('solo:cartesian.poseStale'))).toBeTruthy()
+  })
 })

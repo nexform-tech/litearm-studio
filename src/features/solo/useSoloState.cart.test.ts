@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   getJointParams: vi.fn(),
   getTcpPose: vi.fn(),
   movel: vi.fn(),
+  movej: vi.fn(),
   // 连接时的调速器归一化（issue #236）会走这条；缺了 effect 里会抛 `not a function`。
   setSpeed: vi.fn(),
   toastWarning: vi.fn(),
@@ -33,9 +34,11 @@ vi.mock('@/lib/arm', () => ({
     getJointParams: mocks.getJointParams,
     getTcpPose: mocks.getTcpPose,
     movel: mocks.movel,
+    movej: mocks.movej,
     setSpeed: mocks.setSpeed,
   },
   formatArmError: (e: unknown) => (e instanceof Error ? e.message : String(e)),
+  isMotionSuperseded: () => false,
   useArmConnection: () => ({ status: mocks.status, conn: mocks.conn }),
   useArmState: () => mocks.armState,
   useArmMetrics: () => ({}),
@@ -161,9 +164,11 @@ describe('useSoloState cartesian capability gating', () => {
 
     act(() => result.current.viewTabs.find((tab) => tab.key === 'sim')?.onClick())
 
-    // 仿真模式本就不下发指令，能力缺失不是它的原因：读数不该被撤掉。
+    // 仿真模式本就不下发指令，能力缺失不是它的原因；但也没有实机位姿可显示 ——
+    // 不能拿本地初值当读数，提示语要说"仿真模式"。
     expect(result.current.cartUnsupported).toBe(false)
-    expect(result.current.poseCart).not.toBeNull()
+    expect(result.current.poseCart).toBeNull()
+    expect(result.current.cartPoseHintKey).toBe('solo:cartesian.poseSim')
   })
 
   it('does not blame the firmware while disconnected', async () => {
@@ -173,7 +178,8 @@ describe('useSoloState cartesian capability gating', () => {
 
     // 没有 conn 帧就没有能力结论；未连接发不出指令，与固件是否支持笛卡尔无关。
     expect(result.current.cartUnsupported).toBe(false)
-    expect(result.current.poseCart).not.toBeNull()
+    expect(result.current.poseCart).toBeNull()
+    expect(result.current.cartPoseHintKey).toBe('solo:cartesian.poseDisconnected')
   })
 
   // ── `cart=false` 的两种成因要分开说 ─────────────────────────────────────────
@@ -279,5 +285,59 @@ describe('useSoloState operation error lifecycle', () => {
     })
     expect(result.current.faultReason).toContain('运动被拒')
     consoleError.mockRestore()
+  })
+})
+
+describe('useSoloState unavailable feedback', () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage('zh')
+    mocks.getJointParams.mockReset().mockResolvedValue(LIMITS)
+    mocks.getTcpPose.mockReset().mockResolvedValue([0.32, 0, 0.45, 0, 1.57, 0])
+    mocks.movel.mockReset().mockResolvedValue(null)
+    mocks.movej.mockReset().mockResolvedValue(null)
+    mocks.setSpeed.mockReset().mockResolvedValue(null)
+    mocks.toastWarning.mockReset()
+    mocks.toastError.mockReset()
+    mocks.status = 'connected'
+    mocks.conn = { cart: true }
+    mocks.armState = ENABLED_ARM
+  })
+
+  it('warns instead of silently doing nothing when disconnected', async () => {
+    mocks.status = 'disconnected'
+    mocks.conn = null
+    const { result } = await renderSolo()
+
+    await act(async () => {
+      result.current.homeJoints()
+      result.current.zeroJoints()
+      result.current.clearFault()
+      result.current.resetArm()
+      result.current.onJogPress('X+')
+      await result.current.movelTarget([0.3, 0, 0.4], [0, 1.57, 0])
+      await result.current.syncCurrentTcpPose()
+    })
+
+    // 没有下发任何东西，但每类操作都给出了「未连接」提示；关节滑条也不该被拨动。
+    expect(mocks.movej).not.toHaveBeenCalled()
+    expect(mocks.movel).not.toHaveBeenCalled()
+    expect(mocks.getTcpPose).not.toHaveBeenCalled()
+    expect(mocks.toastWarning).toHaveBeenCalled()
+  })
+
+  it('warns when the arm is connected but not enabled', async () => {
+    mocks.armState = { ...ENABLED_ARM, enabled: false, state: 'disabled' }
+    const { result } = await renderSolo()
+
+    await act(async () => {
+      result.current.homeJoints()
+      result.current.zeroJoints()
+    })
+
+    expect(mocks.movej).not.toHaveBeenCalled()
+    expect(mocks.toastWarning).toHaveBeenCalledWith(
+      expect.stringContaining('使能'),
+      { id: 'solo-not-enabled' },
+    )
   })
 })
