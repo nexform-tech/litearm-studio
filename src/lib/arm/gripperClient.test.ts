@@ -94,6 +94,7 @@ describe('GripperClient (daemon WebSocket)', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals()
+    vi.restoreAllMocks()
   })
 
   it('is absent until a gripper_conn frame arrives', () => {
@@ -153,8 +154,48 @@ describe('GripperClient (daemon WebSocket)', () => {
       temps: { mosTemp: 31, coilTemp: 34 },
       gate: 'READY',
     })
-    // 安全相关的字段变化立即通知，不受 100ms 节流影响。
+    // 安全相关的字段变化立即通知，不受 50ms 节流影响。
     expect(seen.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('coalesces ordinary gripper telemetry inside the 50ms notify window', () => {
+    const { client, ws } = connected()
+    let notifications = 0
+    client.subscribeState(() => notifications++)
+    const now = vi.spyOn(performance, 'now')
+
+    const frame = (positionMm: number, stamp: number) => ({
+      t: 'gripper_state',
+      stamp,
+      state: {
+        positionMm,
+        forceN: 1,
+        torqueNm: 0.1,
+        velocityMmS: 0,
+        enabled: true,
+        state: 'holding',
+        errorCode: 0,
+        temps: { mosTemp: 30, coilTemp: 31 },
+        fresh: true,
+        gate: 'READY',
+        gateReason: '',
+      },
+    })
+
+    now.mockReturnValue(1_000)
+    ws.receive(frame(10, 1))
+    expect(notifications).toBe(1)
+
+    now.mockReturnValue(1_030)
+    ws.receive(frame(11, 2))
+    // The state itself updates for imperative consumers, but React is coalesced.
+    expect(client.state?.positionMm).toBe(11)
+    expect(notifications).toBe(1)
+
+    now.mockReturnValue(1_050)
+    ws.receive(frame(12, 3))
+    expect(client.state?.positionMm).toBe(12)
+    expect(notifications).toBe(2)
   })
 
   it('routes gripper_calib progress and gripper_busy', () => {
