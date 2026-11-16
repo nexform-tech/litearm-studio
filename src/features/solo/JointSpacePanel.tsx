@@ -65,8 +65,10 @@ export function JointSpacePanel({
 
   return (
     /* 吃掉中列剩余高度：关节列表是这一列唯一能自然拉长的一块（多出来的空间
-       分给各行，而不是在笛卡尔卡片里留一片空白）。 */
-    <Card className="flex-1 gap-2.5 rounded-[0.875rem] px-4 py-3.5">
+       分给各行，而不是在笛卡尔卡片里留一片空白）。basis 取 auto 而不是 0、
+       且不参与收缩：窗口矮时这块要按内容高度撑住，让中列滚动，而不是被压扁
+       后裁掉。 */
+    <Card className="flex-[1_0_auto] gap-2.5 rounded-[0.875rem] px-4 py-3.5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-baseline gap-[0.5625rem]">
           <div className="text-[0.90625rem] font-semibold text-foreground">{t('jointSpace.title')}</div>

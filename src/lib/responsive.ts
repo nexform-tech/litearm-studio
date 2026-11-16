@@ -12,6 +12,12 @@ export const SIDE_COL_WIDE: CSSProperties = { flex: '0 1 clamp(20rem, 27vw, 31re
 
 // A scrollable flex column: content that doesn't fit the viewport height
 // scrolls inside its own panel instead of being clipped by the page.
+//
+// ⚠ Panels that should fill the remaining height must use `flex: 1 0 auto`,
+// never a bare `flex: 1`: basis 0 + shrink lets a short viewport squeeze them
+// below their content, and `Card`'s `overflow-hidden` then clips that content
+// with nothing to scroll — the column's scrollHeight equals its clientHeight,
+// so no scrollbar appears.
 export const SCROLL_COLUMN: CSSProperties = { display: 'flex', flexDirection: 'column', minHeight: '0rem', overflowY: 'auto' }
 
 // Last-resort escape hatch for the 3-column rows: if every column is already

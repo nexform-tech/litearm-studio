@@ -54,7 +54,10 @@ export function SoloConsole() {
 
         {simMode ? <SimModeBanner /> : null}
 
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '0.75rem', minHeight: '0rem' }}>
+        {/* 关节 + 笛卡尔的整块内容：窗口够高时吃掉中列剩余高度（关节列表把余量分给
+            各行），窗口不够高时保持内容高度、绝不压缩 —— 否则这里的 flex:1 会把
+            关节卡片挤到内容高度以下，再被卡片的 overflow-hidden 裁掉，中列反而不滚。 */}
+        <div style={{ flex: '1 0 auto', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
           <JointSpacePanel
             joints={vm.joints}
             releaseOnly={vm.releaseOnly}

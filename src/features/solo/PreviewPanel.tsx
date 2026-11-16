@@ -93,7 +93,9 @@ export function PreviewPanel(vm: { viewTabs: SegItem[]; viewBadge: string; previ
   }
 
   return (
-    <Card className="flex-1 gap-2 rounded-[0.875rem] p-3">
+    /* 吃掉左列剩余高度；窗口矮时按内容高度（标题 + 视口 15rem 下限）撑住，
+       让左列滚动，而不是把 3D 视口压扁后裁掉。 */
+    <Card className="flex-[1_0_auto] gap-2 rounded-[0.875rem] p-3">
       {/* 标题行：视口工具与实机/仿真都收在这一行，正文整块留给 3D */}
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
         <div className="flex items-center gap-2 text-[0.90625rem] font-semibold text-foreground">

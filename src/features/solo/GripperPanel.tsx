@@ -123,7 +123,7 @@ export function GripperPanel() {
     <Card
       id="gripper-panel"
       data-testid="gripper-panel"
-      className="flex flex-1 flex-col justify-between gap-3 rounded-[0.875rem] border border-line bg-card p-3.5 shadow-sm"
+      className="flex flex-[1_0_auto] flex-col justify-between gap-3 rounded-[0.875rem] border border-line bg-card p-3.5 shadow-sm"
     >
       {/* ── 顶部标题与通讯状态 ─────────────────────────────────── */}
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line pb-2.5">
