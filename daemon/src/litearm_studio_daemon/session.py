@@ -32,10 +32,8 @@ import binascii
 import logging
 import secrets
 import struct
-import sys
 import threading
 import time
-from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -76,41 +74,6 @@ POLL_PERIOD_S = 0.02
 #: 快订阅, 不会让整页重渲染。该判据由 `test_state_push_rate_feeds_the_3d_preview` 钉住。
 #: ⚠ **状态串变化 / 故障变化一律立即推** (见 `_poll_loop`), 节流只管"同样内容重复推"。
 STATE_PUSH_INTERVAL_S = 0.02
-
-
-@contextmanager
-def _windows_timer_resolution(period_ms: int = 1):
-    """Raise the Windows timer resolution while the state poll thread runs.
-
-    `time.sleep` alone is not enough on every Windows build: GitHub's
-    `windows-latest` rounds a 20 ms sleep up to the 15.6 ms system tick, which
-    puts the loop back at ~33 Hz. `timeBeginPeriod(1)` makes short sleeps
-    accurate; `timeEndPeriod` restores the previous setting when the poll
-    thread stops. No-op on non-Windows platforms and when winmm is unavailable.
-    """
-    if sys.platform != "win32":
-        yield
-        return
-    try:
-        import ctypes
-        win_dll = getattr(ctypes, "WinDLL", None)
-        if win_dll is None:
-            yield
-            return
-        winmm = win_dll("winmm")
-        if winmm.timeBeginPeriod(period_ms) != 0:
-            yield
-            return
-    except (OSError, AttributeError):
-        yield
-        return
-    try:
-        yield
-    finally:
-        try:
-            winmm.timeEndPeriod(period_ms)
-        except (OSError, AttributeError):
-            pass
 
 
 #: 采样记录的抽稀间隔 (秒)。50Hz 的状态轮询**不是**日志: 每一拍都写一条, 5MB 的文件
@@ -1251,28 +1214,31 @@ class Session:
         永远回最后一帧好数据, 于是广播把同一帧一直重放。所以"这一拍还有没有新帧"必须
         单独判 —— 见 `_poll_once` 开头的存活判据。
         """
-        with _windows_timer_resolution():
-            while not (self._stop.is_set() or self._poll_stop.is_set()):
-                t0 = time.monotonic()
-                event = None
-                try:
-                    event = self._poll_once(t0)
-                except Exception:  # noqa: BLE001 - 轮询线程绝不能死
-                    log.debug("状态轮询这一拍失败 (已跳过)", exc_info=True)
-                if event is not None:
-                    self._broadcast(event)
-                rest = self._poll_period - (time.monotonic() - t0)
-                if rest > 0:
-                    # ⚠ **不要改回 `self._poll_stop.wait(rest)`。** Windows 上等待对象
-                    # (Event/Condition) 的定时粒度是系统 tick(默认 15.6ms), 20ms 的等待
-                    # 会被抬到 ~31ms ⇒ 50Hz 直接掉成 ~33Hz(实测 Windows 11 + Python 3.14:
-                    # `Event.wait(0.02)` 中位 30.64ms, `time.sleep(0.02)` 中位 20.27ms)。
-                    # `time.sleep` 在 Python 3.11+ 的 Windows 上走高精度可等待定时器,
-                    # 但 GitHub 的 windows-latest 仍会把 20ms 抬到系统 tick; 所以整个
-                    # 轮询线程套 `_windows_timer_resolution()` 把粒度拉到 1ms。
-                    # 代价只是"停止轮询"最多多等一拍(≤20ms) —— `_stop_polling` 的 join
-                    # 上限是 1s, 这点延迟无关紧要。
-                    time.sleep(rest)
+        while not (self._stop.is_set() or self._poll_stop.is_set()):
+            # ⚠ 两个时钟: `perf_counter` 用于轮询节拍与推送节流 —— Windows 的
+            # `time.monotonic()` 只有 ~15.6ms 分辨率, 20ms 周期会被量成
+            # 15.6/31.2ms, 推送随之掉到 ~31Hz; `monotonic` 只用于和 SDK
+            # `Msg.timestamp` (也是 monotonic) 比较的链路存活判据。
+            t0 = time.perf_counter()
+            mono_now = time.monotonic()
+            event = None
+            try:
+                event = self._poll_once(mono_now)
+            except Exception:  # noqa: BLE001 - 轮询线程绝不能死
+                log.debug("状态轮询这一拍失败 (已跳过)", exc_info=True)
+            if event is not None:
+                self._broadcast(event)
+            rest = self._poll_period - (time.perf_counter() - t0)
+            if rest > 0:
+                # ⚠ **不要改回 `self._poll_stop.wait(rest)`。** Windows 上等待对象
+                # (Event/Condition) 的定时粒度是系统 tick(默认 15.6ms), 20ms 的等待
+                # 会被抬到 ~31ms ⇒ 50Hz 直接掉成 ~33Hz(实测 Windows 11 + Python 3.14:
+                # `Event.wait(0.02)` 中位 30.64ms, `time.sleep(0.02)` 中位 20.27ms)。
+                # `time.sleep` 在 Python 3.11+ 的 Windows 上走高精度可等待定时器,
+                # 所以补睡本身是准的; 节拍与推送判据另外用 `perf_counter` 计时, 见上。
+                # 代价只是"停止轮询"最多多等一拍(≤20ms) —— `_stop_polling` 的 join
+                # 上限是 1s, 这点延迟无关紧要。
+                time.sleep(rest)
 
     def _poll_once(self, now: float) -> Optional[dict]:
         arm = self._arm
@@ -1309,11 +1275,15 @@ class Session:
             # 只看 state 串会漏掉"同一模式下温度/误差在变"这类该让面板刷新的事。
             key = (doc["state"], doc["faulted"], doc["cartBusy"], tuple(doc["errs"]))
             changed = key != self._last_emit_key
-            due = (now - self._last_emit_at) >= self._state_push_interval
+            # ⚠ 推送节流用 perf_counter, 不用 `now`: Windows 的 monotonic 分辨率
+            # 是 ~15.6ms, 20ms 的 due 判据会隔一拍才成立。1ms 容差吸收 sleep 抖动,
+            # 否则 19.99ms 的实际周期也会退化成"隔一拍推一次"。
+            emit_now = time.perf_counter()
+            due = (emit_now - self._last_emit_at) >= (self._state_push_interval - 0.001)
             if not (changed or due):
                 return None
             self._last_emit_key = key
-            self._last_emit_at = now
+            self._last_emit_at = emit_now
             # ⚠ 采样记录的节拍与**推送**节拍是两件事: 推送 50Hz/变化即推, 采样 1Hz。
             sample_due = (now - self._last_sample_at) >= SAMPLE_RECORD_INTERVAL_S
             if sample_due:
