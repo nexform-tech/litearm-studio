@@ -104,3 +104,35 @@ jobs:
           python3 -c "import json; json.load(open('.releaserc.json'))"
           python3 -c "import json; json.load(open('.markdownlint.json'))"
           echo "repository standards OK"
+
+  # The full suite stays on the required `test` job (a matrix would rename the
+  # required status check). This job covers the platform-specific timer behavior
+  # behind #244: `Event.wait` is quantised on Windows and drops the 50 Hz push
+  # to ~33 Hz, so the rate regression has to run on a Windows runner.
+  windows-state-push:
+    name: windows-state-push
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          path: litearm-studio
+          submodules: recursive
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install the arm SDK and the daemon
+        working-directory: litearm-studio
+        # litegrip is Linux-only (it imports fcntl / PF_CAN); the state-push test
+        # needs only litearm and the daemon's test extra.
+        run: |
+          python -m pip install --upgrade pip
+          pip install ./sdk/litearm-python
+          pip install -e "daemon[test]"
+
+      - name: State push rate (Windows)
+        working-directory: litearm-studio
+        run: python -m pytest daemon/tests/test_session.py -q -k state_push_reaches_the_configured_cadence
