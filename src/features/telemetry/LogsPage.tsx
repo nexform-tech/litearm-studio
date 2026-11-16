@@ -643,7 +643,7 @@ export function LogsPage() {
 
         <TabsContent value="samples" className="flex min-h-0 flex-1 flex-col gap-3">
           {/* daemon 侧的采样 (1Hz 抽稀, `kind=sample`) —— 与事件同一套 schema。
-              ⚠ 与下面那张会话表不是一回事: 那张是本浏览器以 10Hz 记的, 可以导出 CSV;
+              ⚠ 与下面那张会话表不是一回事: 那张是本浏览器以 20Hz 记的, 可以导出 CSV;
               这一张是守护进程记的, 关掉页面、换台机器都还在。 */}
           <Card className="flex max-h-[16rem] min-h-0 flex-none flex-col gap-2 rounded-[0.875rem] px-4 py-3">
             <div className="flex items-center justify-between gap-2">

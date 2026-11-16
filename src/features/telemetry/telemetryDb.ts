@@ -3,7 +3,7 @@
  *
  * 数据完全留在本机（浏览器应用数据目录），不需要管理服务：
  * - sessions：一次臂连接（断线 30s 内重连则延续）对应一个会话
- * - samples：RobotState 采样（10Hz 降采样后的 q/dq/tau/temps/errs/faults）
+ * - samples：RobotState 采样（20Hz 降采样后的 q/dq/tau/temps/errs/faults）
  */
 import i18n from '@/i18n'
 

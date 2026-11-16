@@ -230,7 +230,7 @@ export function useSoloState() {
     s.real && armState ? (armState.state === 'zero_gravity' ? '零重力' : '位置') : null
 
   // 模式意图对账：广播追上意图即清除意图，回到"以广播为准"。依赖的是派生出的
-  // 模式字符串而非 armState 本身，否则 10Hz 广播会不停重置下面的超时定时器。
+  // 模式字符串而非 armState 本身，否则 20Hz 广播会不停重置下面的超时定时器。
   useEffect(() => {
     if (!s.modeIntent) return
     if (!s.real || broadcastMode === s.modeIntent) {
