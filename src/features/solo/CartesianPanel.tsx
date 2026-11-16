@@ -158,13 +158,16 @@ export function CartesianPanel({
   }
 
   return (
-    /* 左右两张卡：右卡固定 13rem，左卡吃掉其余宽度。卡片给一个明确的高度下限
-       （比"贴合内容"高一截，盘面才不至于挤成一条），剩下的竖向空间留给关节列表。
-       盘面宽度按 12rem 封顶：按钮随之变小，省下的横向空间给右边的 movel 卡（18rem）。
-       窄列放不下时 movel 整卡折到盘面下方，而不是把点动盘压扁。
-       注：根字号是流式的 clamp(13px, 1.522vh, 36px)，所以 13rem 在 900px 高的
-       窗口下约 178px，不是 208px。 */
-    <div className="flex flex-none flex-wrap items-stretch gap-3">
+    /* 左右两张卡：右卡在同一行时固定 18rem，左卡吃掉其余宽度。卡片给一个明确的
+       高度下限（比"贴合内容"高一截，盘面才不至于挤成一条），剩下的竖向空间留给
+       关节列表。盘面宽度按 12rem 封顶：按钮随之变小，省下的横向空间给右边的
+       movel 卡（18rem）。窄列放不下时 movel 整卡折到盘面下方，而不是把点动盘压扁；
+       折下去以后它独占一行，这时撑满整行宽度，而不是在右边留一段空白。
+       断点=左卡 basis 20rem + 间距 0.75rem + 右卡 18rem：容器够宽时两张并排，
+       不够宽时这个 100% 宽度本身就会把右卡挤到下一行（两档之间没有悬空区间）。
+       注：根字号是流式的 clamp(13px, 1.522vh, 36px)，所以 18rem 在 900px 高的
+       窗口下约 246px，不是 288px。 */
+    <div className="@container flex flex-none flex-wrap items-stretch gap-3">
       {/* 左：方向点动 */}
       <Card className="flex-[1_1_20rem] gap-3 rounded-[0.875rem] px-4 py-3.5 min-h-[23rem]">
         <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2 border-b pb-2.5">
@@ -209,8 +212,8 @@ export function CartesianPanel({
         </div>
       </Card>
 
-      {/* 右：目标位姿直线运动 */}
-      <Card className="flex w-[18rem] flex-none flex-col gap-2.5 rounded-[0.875rem] px-3.5 py-3">
+      {/* 右：目标位姿直线运动 —— 与点动盘并排时 18rem；容器窄到要折行时撑满整行。 */}
+      <Card className="flex w-full flex-none flex-col gap-2.5 rounded-[0.875rem] px-3.5 py-3 @[38.75rem]:w-[18rem]">
         <div className="flex items-center gap-1.5 text-[0.90625rem] font-semibold text-foreground">
           <MoveRight className="size-4 text-primary" />
           {t('solo:cartesian.targetSubMode')}
