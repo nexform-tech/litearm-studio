@@ -1059,6 +1059,65 @@ def test_disconnect_cancels_an_in_flight_recovery(monkeypatch) -> None:
         s.close()
 
 
+def test_manual_connect_does_not_dial_while_a_recovery_dial_is_in_flight(monkeypatch) -> None:
+    """自愈正在 `_dial` 时来了手工连接: 两次打开必须**排队**, 不许重叠。
+
+    现场 (2026-11-19 13:10:58): 自愈线程正在重试, 页面加载自动发了 `connect()`
+    (`src/main.tsx:19`)。两条 `_dial` 同时打开 `/dev/ttyACM0`, SDK 的进程内登记表
+    (`transport._claim_port`) 让后到的那条报"端口已被本进程内另一个传输占用" ——
+    本该由自愈完成的连接反而以 `error` 收场。锁必须覆盖"打开 → 认领/丢弃"整段,
+    只锁 `_dial` 本身不够: 先打开的那条会以"还没登记给会话"的身份继续占着口。
+    """
+    s = _connected_session(reconnect=True, reconnect_period=0.05, reconnect_window=5.0,
+                           link_stale_after=0.1)
+    guard = threading.Lock()
+    active = {"now": 0, "max": 0}
+    dialing = threading.Event()
+    second_dialing = threading.Event()
+    release = threading.Event()
+
+    def dial(self, target):
+        with guard:
+            active["now"] += 1
+            active["max"] = max(active["max"], active["now"])
+            overlapped = active["now"] > 1
+        dialing.set()
+        if overlapped:
+            second_dialing.set()
+        try:
+            # 第一条 (自愈) 停在这里, 给手工 `connect()` 足够时间挤进 `_dial`。
+            release.wait(2.0)
+            if overlapped:
+                # 与 SDK 的 `_claim_port` 同形: 第二条传输撞上仍活着的那条, 响亮失败。
+                raise litearm.TransportError(
+                    f"端口 {target} 已被本进程内另一个传输占用")
+            return Arm(port=target,
+                       transport_factory=build_fake_transport_factory()).connect()
+        finally:
+            with guard:
+                active["now"] -= 1
+
+    try:
+        monkeypatch.setattr(Session, "_dial", dial)
+        _freeze_state_stream(s, monkeypatch)
+        assert _wait(lambda: dialing.is_set(), timeout=5.0), "自愈没进到 _dial"
+        assert s.connect() is True                 # 模拟页面加载自动发的连接
+        # 修好之前, 第二条 `_dial` 会趁第一条还停在里面时挤进来 (它不必等任何锁);
+        # 修好之后它只能等在 `_dial_lock` 外 —— 这里等不到才是对的。
+        second_dialing.wait(1.0)
+        release.set()
+        assert _wait(lambda: s.connected and not s._recovering, timeout=10.0), \
+            f"手工连接没收敛到 connected: {s.arm_info()}"
+        with guard:
+            peak = active["max"]
+        assert peak == 1, (
+            f"两次 _dial 重叠了 (最多同时 {peak} 条) —— "
+            f"SDK 会报「端口已被本进程内另一个传输占用」")
+    finally:
+        release.set()
+        s.close()
+
+
 def test_stopping_the_poll_thread_really_stops_it() -> None:
     """`_stop_polling()` 必须**真的**停掉线程, 不是"等满 1s 然后留着它空转"。
 

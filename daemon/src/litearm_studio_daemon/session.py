@@ -409,7 +409,16 @@ class Session:
         self.sdk_version = sdk_version
 
         self._lock = threading.RLock()
+        #: 串口**打开**的互斥 —— 见 `_dial_and_claim`。`_dial` 是唯一会去"抢"端口的
+        #: 动作, 而 SDK 在进程内按端口名记着持有者 (`transport._claim_port`): 自愈线程
+        #: 与一次新的 `connect()` 同时 `_dial` 同一个名字时, 后到的那条会被拒成
+        #: "端口已被本进程内另一个传输占用"(2026-11-19 的日志里真实发生过一次)。
+        self._dial_lock = threading.Lock()
         self._arm: Optional[Arm] = None
+        #: 已经从会话里摘下来、但还占着串口的旧链路。自愈/重连必须先把它关掉, 否则
+        #: 同一个节点名重新枚举回来时会被进程内那张登记表挡住。它由 `_drain_retired`
+        #: 在 `_dial_lock` 里收掉 —— 手工重连与自愈谁先到都不会与对方"抢开"。
+        self._retired_arm: Optional[Arm] = None
         #: 实际连上的端口 —— **不是** `Arm.port`: SDK 的 `Arm` **没有**公开 `port`
         #: (端口在传输层对象上)。所以本会话自己记下这次连的是哪个口, 供 `conn` 帧
         #: 与 `/api/health` 显示。⚠ 上一版直接读 `arm.port`, 那会在**连接收尾**抛
@@ -709,12 +718,14 @@ class Session:
                         log.info("连接已被断开/关闭, 放弃剩余的候选口: %s", targets)
                         return
                 try:
-                    arm = self._dial(target)
+                    claimed = self._dial_and_claim(target, gen, trace)
                 except Exception as e:  # noqa: BLE001 - 见上
                     last = e
                     log.info("连接 %s 失败: %s: %s", target, type(e).__name__, e)
                     continue
-                self._commit_link(arm, target, gen, trace)
+                if claimed is None:
+                    log.info("连接已被断开/关闭, 放弃剩余的候选口: %s", targets)
+                    return
                 return
             if last is None:
                 last = litearm.TransportError(
@@ -773,12 +784,51 @@ class Session:
                    if self._fake else None)
         return Arm(port=target, transport_factory=factory).connect()
 
+    def _drain_retired(self) -> None:
+        """关掉"已不属于会话、但还占着串口"的旧链路 —— 调用者必须持有 `_dial_lock`。"""
+        with self._lock:
+            arm, self._retired_arm = self._retired_arm, None
+        if arm is not None:
+            self._close_arm(arm)
+
+    def _drain_retired_serialized(self) -> None:
+        with self._dial_lock:
+            self._drain_retired()
+
+    def _dial_and_claim(self, target: str, gen: int,
+                        trace: Optional[str] = None) -> Optional[Arm]:
+        """打开并认领一条链路 —— 从 `_dial` 到所有权落定**唯一**的入口。
+
+        ⚠ **必须整体处在 `_dial_lock` 里**: `connect()` 的 `_open`、断线自愈的
+        `_recover_link` 与升级后的重连会并发走到这里, 而 SDK 的 `_claim_port` 按端口名
+        拒绝第二个活着的传输。不串行化的话, 一次正常的手工重连 (例如页面加载时前端
+        自动发的 `connect()`, 见 `src/main.tsx`) 撞上自愈线程正在 `_dial`, 就会变成
+        操作员可见的"端口已被本进程内另一个传输占用" —— 2026-11-19 13:10:58 的日志里
+        正是这一条。锁要一直持有到 arm 被会话认领或关掉 (那一步才释放登记), 只锁
+        `_dial` 本身不够: 先打开的那条会以"还没登记给会话"的身份继续占着口。
+
+        ⚠ 顺手先收掉 `_retired_arm`: 死链路还占着端口时, 这次打开同样会被登记表挡住。
+
+        返回: 认领成功的 `Arm`; `None` = 这次尝试已被 `disconnect()`/`close()` 作废
+        (或认领收尾失败, 此时 `_commit_link` 已经把 arm 关掉并落好状态)。
+        `_dial` 的异常**照原样抛给调用方** —— "设备还没回来"是预期结局, 由调用方决定
+        继续试下一个候选口还是记一次失败。
+        """
+        with self._dial_lock:
+            self._drain_retired()
+            with self._lock:
+                if self._connect_gen != gen or self._stop.is_set():
+                    return None
+            arm = self._dial(target)
+            return arm if self._commit_link(arm, target, gen, trace) else None
+
     def _commit_link(self, arm: Arm, target: str, gen: int,
                      trace: Optional[str] = None) -> bool:
         """把一条新建好的链路装进会话 —— 代次/收尾守卫不过就**丢弃它**。
 
-        两条调用者 (`connect()` 的 `_open`、断线自愈的 `_recover_link`) 共用: 差别只在
-        怎么把 `arm` 建起来 (以及失败后怎么写状态), 而"该不该认领它"必须只有一份判据。
+        唯一调用者是 `_dial_and_claim` (`connect()` 的 `_open`、断线自愈的
+        `_recover_link` 与升级后的重连都经它过来): 差别只在怎么把 `arm` 建起来 (以及
+        失败后怎么写状态), 而"该不该认领它"必须只有一份判据。
 
         ⚠ **收尾这一段也在自己的 try 里**: `_open` 跑在**没人读取的 Future** 上, 抛出去
         就是静默失败。实测过一次 `AttributeError` (SDK 的 `Arm` 没有 `port` 属性): 前端
@@ -1033,12 +1083,17 @@ class Session:
         if not reconnect:
             # 没开自愈: 旧链路仍然要收掉 (它占着串口), 但**不**排在那条可能阻塞
             # 十几秒的命令执行器后面 —— 排进去会让"想手动重连"也一起等。
-            threading.Thread(target=self._close_arm, args=(arm,),
+            # 交给 `_retired_arm`: 手工重连若先到 (`_dial_and_claim` 会先收掉它),
+            # 就不会与这条关闭线程抢同一个端口。
+            with self._lock:
+                self._retired_arm = arm
+            threading.Thread(target=self._drain_retired_serialized,
                              name="litearm-close-dead", daemon=True).start()
             return True
-        th = threading.Thread(target=self._recover_link, args=(gen, last_port, arm),
+        th = threading.Thread(target=self._recover_link, args=(gen, last_port),
                               name="litearm-reconnect", daemon=True)
         with self._lock:
+            self._retired_arm = arm
             self._recovering = True
             self._recover_thread = th
         th.start()
@@ -1059,7 +1114,7 @@ class Session:
                 out.append(cand)
         return out
 
-    def _recover_link(self, gen: int, hint: Optional[str], old_arm: Arm,
+    def _recover_link(self, gen: int, hint: Optional[str],
                       trace: Optional[str] = None) -> None:
         """断线自愈 —— 关掉死链路, 重新解析 CDC 设备, 在窗口内重试建会话。
 
@@ -1074,9 +1129,12 @@ class Session:
         """
         # ⚠ 先关死链路**再**重试: 进程内那张 `port -> 持有者` 登记表按端口名判重
         # (`transport._claim_port`), 同一个节点名重新枚举回来时, 不先放掉旧句柄就永远
-        # 打不开。这一步放在自愈线程上而不是命令执行器上 —— 后者可能正被一条
-        # 阻塞到 `move_timeout` 的运动命令占着。
-        self._close_arm(old_arm)
+        # 打不开。死链路由 `_note_link_lost` 放进 `_retired_arm`, 这里与 `_dial` 放在
+        # 同一把 `_dial_lock` 下收掉 —— 手工重连若同时发生, 谁先拿到锁谁先做完, 不会
+        # 出现两条传输抢同一个端口。这一步放在自愈线程上而不是命令执行器上 —— 后者
+        # 可能正被一条阻塞到 `move_timeout` 的运动命令占着。
+        with self._dial_lock:
+            self._drain_retired()
         try:
             deadline = time.monotonic() + self._reconnect_window
             attempts = 0
@@ -1092,7 +1150,7 @@ class Session:
                     if self._connect_gen != gen or self._stop.is_set():
                         return
                     try:
-                        arm = self._dial(target)
+                        arm = self._dial_and_claim(target, gen, trace)
                     except Exception as e:  # noqa: BLE001 - 设备还没回来是**预期结局**
                         last_detail = f"{target}: {type(e).__name__}: {e}"
                         log.info("自愈第 %d 次尝试失败: %s", attempts, last_detail)
@@ -1102,7 +1160,7 @@ class Session:
                                          "error_kind": type(e).__name__},
                                  trace_id=trace)
                         continue
-                    if self._commit_link(arm, target, gen, trace):
+                    if arm is not None:
                         log.info("链路已恢复: port=%s (第 %d 次尝试)", target, attempts)
                         obs.info(obs.LINK_RECOVERED,
                                  body=f"链路已恢复: {target} (第 {attempts} 次尝试)",
@@ -2150,11 +2208,11 @@ class Session:
             attempts += 1
             for target in self._recover_candidates(hint):
                 try:
-                    arm = self._dial(target)
+                    arm = self._dial_and_claim(target, gen)
                 except Exception as e:  # noqa: BLE001 - 设备还没回来是**预期结局**
                     last = f"{target}: {type(e).__name__}: {e}"
                     continue
-                if self._commit_link(arm, target, gen):
+                if arm is not None:
                     log.info("升级后链路已恢复: port=%s (第 %d 次尝试)", target, attempts)
                     obs.info(obs.FIRMWARE_LINK_RESTORED,
                              body=f"升级后链路已恢复: {target} (第 {attempts} 次尝试)",
