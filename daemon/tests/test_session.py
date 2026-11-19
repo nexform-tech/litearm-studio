@@ -1118,6 +1118,58 @@ def test_manual_connect_does_not_dial_while_a_recovery_dial_is_in_flight(monkeyp
         s.close()
 
 
+def test_manual_connect_during_the_link_loss_broadcast_does_not_hit_the_old_port(
+        monkeypatch) -> None:
+    """链路判死与"登记死链路"必须在**同一个临界区**发布。
+
+    `_note_link_lost` 一旦把 `_arm = None` / `error` 发出去, 手工 `connect()` 就
+    允许进来 dial。如果 `_retired_arm` 要等到后面的广播之后才登记, 这段窗口里那次
+    dial 会绕开 `_dial_and_claim` 的 drain, 直接撞上旧句柄仍占着的串口 —— SDK 的
+    进程内登记表同样报"端口已被本进程内另一个传输占用"。窗口只有一次
+    `log/obs/broadcast` 那么长, 这里用阻塞的 listener 把它稳定撑开。
+    """
+    s = _connected_session(reconnect=True, reconnect_period=0.05, reconnect_window=5.0,
+                           link_stale_after=0.1)
+    old = s._arm
+    #: 提前抓住传输对象: `Arm.close()` 会把 `arm._tr` 置成 None。
+    old_tr = old._tr
+    in_window = threading.Event()
+    release_window = threading.Event()
+    dial_seen = threading.Event()
+
+    def listener(ev):
+        # 只拦链路判死那一条 —— `connect()` 自己也会推 `conn`, 拦错了会把测试自己卡住。
+        if (ev.get("t") == "conn" and ev.get("status") == "error"
+                and not in_window.is_set()):
+            in_window.set()
+            release_window.wait(5.0)
+
+    def dial(self, target):
+        dial_seen.set()
+        if not old_tr.closed:
+            # 与 SDK 的 `_claim_port` 同形: 旧句柄还活着时, 第二次打开必须响亮失败。
+            raise litearm.TransportError(
+                f"端口 {target} 已被本进程内另一个传输占用")
+        return Arm(port=target,
+                   transport_factory=build_fake_transport_factory()).connect()
+
+    try:
+        monkeypatch.setattr(Session, "_dial", dial)
+        _freeze_state_stream(s, monkeypatch)
+        s.add_listener(listener)
+        # 等 `_note_link_lost` 停在广播里: 此刻 `_arm` 已是 None, 窗口正开着。
+        assert _wait(lambda: in_window.is_set(), timeout=5.0), "没进入链路判死窗口"
+        assert s.connect() is True                 # 模拟窗口里来的手工/页面加载连接
+        assert dial_seen.wait(5.0), "手工连接没有走到 _dial"
+        release_window.set()
+        assert _wait(lambda: s.connected, timeout=10.0), \
+            f"窗口内发起的连接没收敛到 connected: {s.arm_info()}"
+        assert s.arm_info()["error"] is None, s.arm_info()
+    finally:
+        release_window.set()
+        s.close()
+
+
 def test_stopping_the_poll_thread_really_stops_it() -> None:
     """`_stop_polling()` 必须**真的**停掉线程, 不是"等满 1s 然后留着它空转"。
 

@@ -1072,6 +1072,12 @@ class Session:
             self._last_emit_key = None
             self._zero_g_since = None
             self._clear_motion_unknown_locked()
+            # ⚠ 死链路与「会话里没有 arm」**同一个临界区**发布: 一旦 `_arm` 变成 None,
+            #    `connect()` 就可能进来 dial; 若这时 `_retired_arm` 还没登记上, 那次
+            #    打开会绕开 `_dial_and_claim` 的 drain, 撞上旧句柄仍占着的串口 —— 又是
+            #    SDK 进程内登记表那条「已被本进程内另一个传输占用」。窗口只有后面的
+            #    log/obs/broadcast 那么长, 但它是同一条错误, 所以登记与清空必须一起落章。
+            self._retired_arm = arm
             gen = self._connect_gen
             reconnect = self._reconnect
         log.warning("链路已断开 (port=%s): %s", last_port, reason)
@@ -1083,17 +1089,14 @@ class Session:
         if not reconnect:
             # 没开自愈: 旧链路仍然要收掉 (它占着串口), 但**不**排在那条可能阻塞
             # 十几秒的命令执行器后面 —— 排进去会让"想手动重连"也一起等。
-            # 交给 `_retired_arm`: 手工重连若先到 (`_dial_and_claim` 会先收掉它),
-            # 就不会与这条关闭线程抢同一个端口。
-            with self._lock:
-                self._retired_arm = arm
+            # 它已在上面登记进 `_retired_arm`: 手工重连若先到 (`_dial_and_claim` 会先
+            # 收掉它), 就不会与这条关闭线程抢同一个端口。
             threading.Thread(target=self._drain_retired_serialized,
                              name="litearm-close-dead", daemon=True).start()
             return True
         th = threading.Thread(target=self._recover_link, args=(gen, last_port),
                               name="litearm-reconnect", daemon=True)
         with self._lock:
-            self._retired_arm = arm
             self._recovering = True
             self._recover_thread = th
         th.start()
