@@ -82,7 +82,10 @@ def test_the_container_script_installs_the_package_and_uses_the_fake_arm() -> No
         "xvfb",
         "dbus-run-session",
         "litearm-studio --fake --no-gripper",
-        "timeout 15 ",
+        f"timeout -k {smoke.KILL_AFTER} 15 ",
+        f"timeout {smoke.APT_UPDATE_TIMEOUT} apt-get update",
+        f"timeout {smoke.APT_INSTALL_TIMEOUT} apt-get install",
+        "Acquire::Retries=1",
         '"$installed" != "0.25.1"',
         str(smoke.STILL_RUNNING),
     ):
@@ -121,6 +124,8 @@ def test_run_release_uses_docker_with_the_target_image(monkeypatch, capsys) -> N
 
     def fake_run(command, **kwargs):
         calls.append((command, kwargs))
+        if command[0:2] == ["docker", "pull"]:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
         return SimpleNamespace(returncode=0, stdout=HEALTHY_LOG, stderr="")
 
     monkeypatch.setattr(smoke.subprocess, "run", fake_run)
@@ -128,13 +133,57 @@ def test_run_release_uses_docker_with_the_target_image(monkeypatch, capsys) -> N
 
     smoke.run_release("26.04", package, "0.25.1", timeout=30)
 
-    command, kwargs = calls[0]
-    assert command[0:2] == ["docker", "run"]
+    pull = next(command for command, _ in calls if command[0:2] == ["docker", "pull"])
+    assert pull[-1] == "ubuntu:26.04"
+    command, kwargs = next((c, k) for c, k in calls if c[0:2] == ["docker", "run"])
     assert "--privileged" in command
     assert "ubuntu:26.04" in command
     assert f"{package}:/tmp/litearm-studio.deb:ro" in command
     assert kwargs["timeout"] == 30 + smoke.SETUP_TIMEOUT
     assert "window opened and the UI connected" in capsys.readouterr().out
+
+
+def test_a_stalled_pull_names_the_image(monkeypatch) -> None:
+    """拉镜像卡住时容器根本没起来，输出是空的 —— 至少让失败点名是哪一步。"""
+    smoke = _load_smoke()
+
+    def fake_run(command, **kwargs):
+        raise smoke.subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+    monkeypatch.setattr(smoke.subprocess, "run", fake_run)
+
+    outcome = smoke.execute_release(
+        "24.04", pathlib.Path("/tmp/pkg.deb"), "0.25.1", timeout=15)
+
+    assert outcome.problems == [
+        f"pulling ubuntu:24.04 did not finish within {smoke.PULL_TIMEOUT}s"]
+
+
+def test_a_stalled_container_keeps_what_it_printed(monkeypatch) -> None:
+    """超时不能把容器的最后几行丢掉 —— 那几行正是"卡在哪一步"的唯一线索。
+
+    POSIX 上 `TimeoutExpired.stdout` 是 bytes（即使调用时 `text=True`），
+    所以这里按真实形状给 bytes。
+    """
+    smoke = _load_smoke()
+    printed = (f"[smoke] apt-get install (limit {smoke.APT_INSTALL_TIMEOUT}s)\n"
+               "Selecting previously unselected package xvfb.\n")
+
+    def fake_run(command, **kwargs):
+        if command[0:2] == ["docker", "pull"]:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        raise smoke.subprocess.TimeoutExpired(
+            command, kwargs["timeout"], output=printed.encode(), stderr=b"oops\n")
+
+    monkeypatch.setattr(smoke.subprocess, "run", fake_run)
+
+    outcome = smoke.execute_release(
+        "24.04", pathlib.Path("/tmp/pkg.deb"), "0.25.1", timeout=15)
+
+    assert "[smoke] apt-get install" in outcome.output
+    assert "oops" in outcome.output
+    assert outcome.problems == [
+        f"the container did not finish within {15 + smoke.SETUP_TIMEOUT}s"]
 
 
 def test_run_release_fails_when_the_log_is_not_healthy(monkeypatch, capsys) -> None:
