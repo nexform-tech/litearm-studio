@@ -28,7 +28,7 @@ import re
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import List, NamedTuple, Optional, Sequence
+from typing import List, NamedTuple, Optional, Sequence, Union
 
 #: The LTS releases the Linux package must start on. Keep this list aligned with
 #: docs/INSTALL.md; the package is built on 22.04, which is covered by the build
@@ -62,9 +62,29 @@ STILL_RUNNING = 124
 #: half-minute per release on every release build.
 DEFAULT_TIMEOUT = 15
 
-#: Extra wall-clock allowance for pulling the image and installing packages
-#: inside the container, on top of the app timeout.
+#: Extra wall-clock allowance for the in-container steps, on top of the app
+#: timeout. The image pull is *not* covered here: it gets its own budget, so a
+#: stalled registry is named instead of being charged to the container.
 SETUP_TIMEOUT = 600
+
+#: How long pulling the target image may take. `docker pull` has no deadline of
+#: its own — a registry connection that stops answering sits until the job-level
+#: timeout. On 2026-11-19 (v0.25.4) both containers sat out the job deadline with
+#: an empty log, and nothing could say whether the pull, apt or the app was the
+#: one stuck; that release went out with the Windows artifact only.
+PULL_TIMEOUT = 300
+
+#: How long each apt step inside the container may take before it is called a
+#: stall. On a healthy runner both steps finish in well under a minute; without a
+#: bound, apt's own per-connection waits and retries can consume the whole
+#: container budget and leave the smoke log empty.
+APT_UPDATE_TIMEOUT = 180
+APT_INSTALL_TIMEOUT = 300
+
+#: How long the app may ignore SIGTERM before `timeout` kills it outright.
+#: Without this, an app that handles the signal but never finishes shutting down
+#: would hang the container past every deadline.
+KILL_AFTER = 5
 
 
 def container_script(version: str, timeout: int,
@@ -74,7 +94,12 @@ def container_script(version: str, timeout: int,
     `version` is checked against the installed package so a stale `.deb` cannot
     silently make the smoke test green. The app is killed by `timeout`, hence
     :data:`STILL_RUNNING` is the success exit code; one that exits earlier means
-    it crashed or closed its window.
+    it crashed or closed its window, and one that has to be SIGKILLed after the
+    deadline (137) means it never finished shutting down.
+
+    Every step prints where it is and carries its own deadline, so a stall names
+    the step it happened in instead of surfacing as an empty log at the outer
+    timeout.
 
     `apt_mirror` is only for local runs where the default Ubuntu archive is slow;
     CI leaves it unset and uses the image's own sources.
@@ -92,11 +117,25 @@ def container_script(version: str, timeout: int,
     return f"""\
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
-{mirror_lines}# Force IPv4: a container with a broken IPv6 route can otherwise sit on
+{mirror_lines}echo "[smoke] container started"
+# Force IPv4: a container with a broken IPv6 route can otherwise sit on
 # a connection until the whole smoke step times out.
-apt-get update -qq -o Acquire::ForceIPv4=true
-apt-get install -y -qq -o Acquire::ForceIPv4=true --no-install-recommends \\
-    /tmp/litearm-studio.deb xvfb xauth dbus-x11 bubblewrap
+# ⚠ 每一步都自带上限, 超时时报出自己的名字: apt 默认会为每个连接等上两分钟再
+# 重试, 一次镜像站卡住就能把外层预算耗光, 而日志里只剩"the container did not
+# finish" —— 2026-11-19 的 v0.25.4 发布正是这样, 看不出卡在哪一步。
+apt_options=(-qq -o Acquire::ForceIPv4=true -o Acquire::http::Timeout=30 \\
+    -o Acquire::https::Timeout=30 -o Acquire::Retries=1)
+echo "[smoke] apt-get update (limit {APT_UPDATE_TIMEOUT}s)"
+timeout {APT_UPDATE_TIMEOUT} apt-get update "${{apt_options[@]}}" || {{
+    echo "[smoke] apt-get update failed or did not finish within {APT_UPDATE_TIMEOUT}s" >&2
+    exit 1
+}}
+echo "[smoke] apt-get install (limit {APT_INSTALL_TIMEOUT}s)"
+timeout {APT_INSTALL_TIMEOUT} apt-get install -y "${{apt_options[@]}}" \\
+    --no-install-recommends /tmp/litearm-studio.deb xvfb xauth dbus-x11 bubblewrap || {{
+    echo "[smoke] apt-get install failed or did not finish within {APT_INSTALL_TIMEOUT}s" >&2
+    exit 1
+}}
 installed="$(dpkg-query -W -f='${{Version}}' litearm-studio)"
 if [ "$installed" != "{version}" ]; then
     echo "installed version $installed, expected {version}" >&2
@@ -105,11 +144,16 @@ fi
 Xvfb :99 -screen 0 1440x900x24 >/tmp/xvfb.log 2>&1 &
 sleep 1
 export DISPLAY=:99
+echo "[smoke] starting the package (must stay up for {timeout}s)"
 set +e
-timeout {timeout} dbus-run-session -- litearm-studio --fake --no-gripper >/tmp/app.log 2>&1
+timeout -k {KILL_AFTER} {timeout} dbus-run-session -- litearm-studio --fake --no-gripper >/tmp/app.log 2>&1
 code=$?
 set -e
 cat /tmp/app.log
+if [ "$code" -eq 137 ]; then
+    echo "daemon did not exit on SIGTERM and was killed {KILL_AFTER}s past the deadline" >&2
+    exit 1
+fi
 if [ "$code" -ne {STILL_RUNNING} ]; then
     echo "daemon exited with $code instead of staying up until the timeout" >&2
     exit 1
@@ -156,6 +200,50 @@ class Outcome(NamedTuple):
     problems: List[str]
 
 
+def _timeout_output(value: Union[bytes, str, None]) -> str:
+    """What a timed-out `subprocess.run` captured, as text.
+
+    ⚠ On POSIX the exception carries the **raw bytes** even when the call passed
+    ``text=True``: decoding happens in `communicate()`, which never returns once
+    the deadline fires. Joining those bytes onto a string raises `TypeError` —
+    the crash would hide exactly the output this is meant to rescue.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", "replace")
+    return value
+
+
+def pull_image(release: str) -> List[str]:
+    """Make sure ``ubuntu:<release>`` is in the local image store.
+
+    Returns what is wrong, empty when the image is ready. This is a step of its
+    own rather than only `docker run --pull=missing`: `docker pull` has no
+    deadline, and when it stalls the container never starts, so the run's
+    captured output stays empty. :data:`PULL_TIMEOUT` turns that into a failure
+    that names the image.
+    """
+    image = f"ubuntu:{release}"
+    try:
+        result = subprocess.run(
+            ["docker", "pull", "--quiet", image],
+            capture_output=True, text=True, timeout=PULL_TIMEOUT, check=False,
+        )
+    except FileNotFoundError:
+        return ["docker is not available; the release job needs a Docker runner"]
+    except subprocess.TimeoutExpired:
+        return [f"pulling {image} did not finish within {PULL_TIMEOUT}s"]
+    except OSError as exc:
+        return [f"could not start docker: {exc}"]
+    if result.returncode != 0:
+        # 压成一行: 问题列表按 "- ..." 逐行打印, 多行的 docker 报错会把版式拆散。
+        detail = " ".join((result.stderr or result.stdout or "").split())
+        return [f"could not pull {image}: {detail}" if detail
+                else f"could not pull {image}"]
+    return []
+
+
 def execute_release(release: str, deb: Path, version: str, timeout: int,
                     apt_mirror: Optional[str] = None) -> Outcome:
     """Run one release in Docker and return its output and problems.
@@ -168,7 +256,13 @@ def execute_release(release: str, deb: Path, version: str, timeout: int,
     container (it sets up user namespaces). The container is ephemeral and only
     runs our own package, so the wider capability set buys a working window and
     nothing else.
+
+    A timeout keeps whatever the container printed before it: those last lines
+    are the only evidence of the step that stalled.
     """
+    problems = pull_image(release)
+    if problems:
+        return Outcome(release, "", problems)
     command = [
         "docker", "run", "--rm", "--privileged", "--pull=missing",
         "--volume", f"{deb.resolve()}:/tmp/litearm-studio.deb:ro",
@@ -180,11 +274,12 @@ def execute_release(release: str, deb: Path, version: str, timeout: int,
             command, capture_output=True, text=True,
             timeout=timeout + SETUP_TIMEOUT, check=False,
         )
-    except FileNotFoundError:
-        return Outcome(release, "", [
-            "docker is not available; the release job needs a Docker runner"])
-    except subprocess.TimeoutExpired:
-        return Outcome(release, "", [
+    except subprocess.TimeoutExpired as exc:
+        # ⚠ POSIX 的 `run` 把超时前读到的输出挂在异常上; 丢掉它, 日志里就只剩
+        # "did not finish within Ns" —— 2026-11-19 的 v0.25.4 发布正是这样,
+        # 没人看得出卡在 apt 还是启动应用。
+        partial = _timeout_output(exc.stdout) + _timeout_output(exc.stderr)
+        return Outcome(release, partial, [
             f"the container did not finish within {timeout + SETUP_TIMEOUT}s"])
     except OSError as exc:
         return Outcome(release, "", [f"could not start docker: {exc}"])
